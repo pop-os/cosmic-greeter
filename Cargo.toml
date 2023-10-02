@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-greetd_ipc = "0.9"
+env_logger = "0.10"
+log = "0.4"
+uzers = "0.11"
+
+[dependencies.greetd_ipc]
+version = "0.9"
+features = ["sync-codec"]
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
