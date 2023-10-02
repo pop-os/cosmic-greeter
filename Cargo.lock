@@ -484,7 +484,7 @@ checksum = "aadd183e815348c0649051b1c43418643208f8ed13c8a84da7215b4e1cf42714"
 dependencies = [
  "bitflags 2.4.0",
  "log",
- "polling 3.1.0",
+ "polling 3.2.0",
  "rustix 0.38.14",
  "slab",
  "thiserror",
@@ -2603,9 +2603,9 @@ dependencies = [
 
 [[package]]
 name = "polling"
-version = "3.1.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7571075a670bb8e02350c4d1c27d934aabdce416aa91a95d58dc9e21267dad3c"
+checksum = "62a79e457c9898100b4298d57d69ec53d06f9a6ed352431ce5f377e082d2e846"
 dependencies = [
  "cfg-if",
  "concurrent-queue",
