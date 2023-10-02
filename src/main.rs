@@ -6,29 +6,43 @@
 use cosmic::app::{message, Command, Core, Settings};
 use cosmic::{executor, iced, widget, Element};
 use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
-use std::{env, io, sync::Arc};
+use std::{env, fs, io, path::Path, sync::Arc};
 use tokio::net::UnixStream;
-use uzers::os::unix::UserExt;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
-    // This method is unsafe due to using global state (libc pwent functions).
-    let users: Vec<uzers::User> = unsafe {
-        uzers::all_users()
+    // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
+    let users: Vec<_> = /* unsafe */ {
+        pwd::Passwd::iter()
             .filter(|user| {
-                if user.uid() < 1000 {
+                if user.uid < 1000 {
                     // Skip system accounts
                     return false;
                 }
 
-                match user.shell().file_name().and_then(|x| x.to_str()) {
+                match Path::new(&user.shell).file_name().and_then(|x| x.to_str()) {
                     // Skip shell ending in false
                     Some("false") => false,
                     // Skip shell ending in nologin
                     Some("nologin") => false,
                     _ => true,
                 }
+            })
+            .map(|user| {
+                let icon_path = Path::new("/var/lib/AccountsService/icons").join(&user.name);
+                let icon_opt = if icon_path.is_file() {
+                    match fs::read(&icon_path) {
+                        Ok(icon_data) => Some(widget::image::Handle::from_memory(icon_data)),
+                        Err(err) => {
+                            log::error!("failed to read {:?}: {:?}", icon_path, err);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                (user, icon_opt)
             })
             .collect()
     };
@@ -62,7 +76,7 @@ pub enum SocketState {
 #[derive(Clone, Debug)]
 pub enum InputState {
     None,
-    Username(String),
+    Username,
     Auth(bool, String, String),
 }
 
@@ -72,7 +86,8 @@ pub enum Message {
     None,
     Socket(SocketState),
     Input(InputState),
-    Submit,
+    Username(String),
+    Auth(String),
     Login,
 }
 
@@ -144,7 +159,7 @@ async fn request(socket: Arc<UnixStream>, request: Request) -> Message {
 /// The [`App`] stores application-specific state.
 pub struct App {
     core: Core,
-    users: Vec<uzers::User>,
+    users: Vec<(pwd::Passwd, Option<widget::image::Handle>)>,
     socket_state: SocketState,
     input_state: InputState,
 }
@@ -155,7 +170,7 @@ impl cosmic::Application for App {
     type Executor = executor::Default;
 
     /// Argument received [`cosmic::Application::new`].
-    type Flags = Vec<uzers::User>;
+    type Flags = Vec<(pwd::Passwd, Option<widget::image::Handle>)>;
 
     /// Message type specific to our [`App`].
     type Message = Message;
@@ -186,7 +201,7 @@ impl cosmic::Application for App {
                 users,
                 socket_state: SocketState::Pending,
                 //TODO: set to pending until socket is open?
-                input_state: InputState::Username(String::new()),
+                input_state: InputState::Username,
             },
             Command::perform(
                 async {
@@ -213,41 +228,39 @@ impl cosmic::Application for App {
             Message::Input(input_state) => {
                 self.input_state = input_state;
             }
-            Message::Submit => match &self.socket_state {
-                SocketState::Open(socket) => match &self.input_state {
-                    InputState::None => {}
-                    InputState::Username(username) => {
-                        let socket = socket.clone();
-                        let username = username.clone();
-                        return Command::perform(
-                            async move {
-                                message::app(
-                                    request(socket, Request::CreateSession { username }).await,
+            Message::Username(username) => match &self.socket_state {
+                SocketState::Open(socket) => {
+                    let socket = socket.clone();
+                    let username = username.clone();
+                    return Command::perform(
+                        async move {
+                            message::app(request(socket, Request::CreateSession { username }).await)
+                        },
+                        |x| x,
+                    );
+                }
+                _ => todo!("socket not open but username provided"),
+            },
+            Message::Auth(value) => match &self.socket_state {
+                SocketState::Open(socket) => {
+                    let socket = socket.clone();
+                    let value = value.clone();
+                    return Command::perform(
+                        async move {
+                            message::app(
+                                request(
+                                    socket,
+                                    Request::PostAuthMessageResponse {
+                                        response: Some(value),
+                                    },
                                 )
-                            },
-                            |x| x,
-                        );
-                    }
-                    InputState::Auth(_secret, _prompt, value) => {
-                        let socket = socket.clone();
-                        let value = value.clone();
-                        return Command::perform(
-                            async move {
-                                message::app(
-                                    request(
-                                        socket,
-                                        Request::PostAuthMessageResponse {
-                                            response: Some(value),
-                                        },
-                                    )
-                                    .await,
-                                )
-                            },
-                            |x| x,
-                        );
-                    }
-                },
-                _ => todo!("socket not open but input provided"),
+                                .await,
+                            )
+                        },
+                        |x| x,
+                    );
+                }
+                _ => todo!("socket not open but authentication provided"),
             },
             Message::Login => match &self.socket_state {
                 SocketState::Open(socket) => {
@@ -277,59 +290,70 @@ impl cosmic::Application for App {
 
     /// Creates a view after each update.
     fn view(&self) -> Element<Self::Message> {
-        let mut column = widget::column::with_capacity(2);
-
-        match &self.socket_state {
-            SocketState::Pending => {
-                column = column.push(widget::text("Opening GREETD_SOCK"));
-            }
+        let content: Element<_> = match &self.socket_state {
+            SocketState::Pending => widget::text("Opening GREETD_SOCK").into(),
             SocketState::Open(_) => match &self.input_state {
-                InputState::None => {}
-                InputState::Username(username) => {
-                    column = column.push(widget::text("Username:"));
-                    column = column.push(
-                        widget::text_input("Username", &username)
-                            .on_input(|username| Message::Input(InputState::Username(username)))
-                            .on_submit(Message::Submit),
-                    );
-
-                    for user in &self.users {
-                        match user.name().to_str() {
-                            Some(user_name) => {
-                                column = column.push(widget::button(user_name).on_press(
-                                    Message::Input(InputState::Username(user_name.to_string())),
-                                ));
+                InputState::None => {
+                    //TODO
+                    widget::text("").into()
+                }
+                InputState::Username => {
+                    let mut row = widget::row::with_capacity(self.users.len()).spacing(12.0);
+                    for (user, icon_opt) in &self.users {
+                        let mut column = widget::column::with_capacity(2).spacing(12.0);
+                        match icon_opt {
+                            Some(icon) => {
+                                column = column.push(
+                                    widget::Image::new(icon.clone())
+                                        .width(iced::Length::Fixed(256.0))
+                                        .height(iced::Length::Fixed(256.0)),
+                                )
                             }
                             None => {}
                         }
+                        match &user.gecos {
+                            Some(gecos) => {
+                                column = column.push(widget::text(gecos));
+                            }
+                            None => {}
+                        }
+                        row = row.push(
+                            widget::MouseArea::new(
+                                widget::cosmic_container::container(column)
+                                    .layer(cosmic::cosmic_theme::Layer::Primary)
+                                    .padding(16)
+                                    .style(cosmic::theme::Container::Primary),
+                            )
+                            .on_press(Message::Username(user.name.clone())),
+                        );
                     }
+                    row.into()
                 }
                 InputState::Auth(secret, prompt, value) => {
+                    let mut column = widget::column::with_capacity(2)
+                        .spacing(12.0)
+                        .width(iced::Length::Fixed(400.0));
                     column = column.push(widget::text(prompt));
                     let text_input = widget::text_input("", &value)
                         .on_input(|value| {
                             Message::Input(InputState::Auth(*secret, prompt.clone(), value))
                         })
-                        .on_submit(Message::Submit);
+                        .on_submit(Message::Auth(value.clone()));
                     if *secret {
                         column = column.push(text_input.password());
                     } else {
                         column = column.push(text_input);
                     }
+                    column.into()
                 }
             },
-            SocketState::NotSet => {
-                column = column.push(widget::text("GREETD_SOCK variable not set"));
-            }
+            SocketState::NotSet => widget::text("GREETD_SOCK variable not set").into(),
             SocketState::Error(err) => {
-                column = column.push(widget::text(format!(
-                    "Failed to open GREETD_SOCK: {:?}",
-                    err
-                )))
+                widget::text(format!("Failed to open GREETD_SOCK: {:?}", err)).into()
             }
-        }
+        };
 
-        let centered = widget::container(column.spacing(12.0).width(iced::Length::Fixed(400.0)))
+        let centered = widget::container(content)
             .width(iced::Length::Fill)
             .height(iced::Length::Fill)
             .align_x(iced::alignment::Horizontal::Center)
