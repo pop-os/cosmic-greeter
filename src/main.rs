@@ -12,12 +12,11 @@ use tokio::fs::{File, OpenOptions};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = Settings::default()
         .antialiasing(true)
-        .client_decorations(false)
+        .client_decorations(true)
         .debug(false)
-        .default_icon_theme("Pop")
+        .default_icon_theme("Cosmic")
         .default_text_size(16.0)
         .scale_factor(1.0)
-        .size((1024, 768))
         .theme(cosmic::Theme::dark());
 
     cosmic::app::run::<App>(settings, ())?;
@@ -63,7 +62,7 @@ impl cosmic::Application for App {
     type Message = Message;
 
     /// The unique application ID to supply to the window manager.
-    const APP_ID: &'static str = "org.cosmic.AppDemo";
+    const APP_ID: &'static str = "com.system76.CosmicGreeter";
 
     fn core(&self) -> &Core {
         &self.core
@@ -74,7 +73,14 @@ impl cosmic::Application for App {
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(core: Core, input: Self::Flags) -> (Self, Command<Self::Message>) {
+    fn init(mut core: Core, _flags: Self::Flags) -> (Self, Command<Self::Message>) {
+        core.window.show_window_menu = false;
+        core.window.show_headerbar = false;
+        core.window.sharp_corners = true;
+        core.window.show_maximize = false;
+        core.window.show_minimize = false;
+        core.window.use_template = false;
+
         (
             App {
                 core,
