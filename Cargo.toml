@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 env_logger = "0.10"
 log = "0.4"
-uzers = "0.11"
+pwd = "1"
 
 [dependencies.greetd_ipc]
 version = "0.9"
@@ -15,7 +15,7 @@ features = ["sync-codec"]
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
-features = ["tokio", "wayland"]
+features = ["tokio", "winit"]
 
 [dependencies.tokio]
 version = "1"
