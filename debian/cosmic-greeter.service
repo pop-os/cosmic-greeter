@@ -1,0 +1,20 @@
+[Unit]
+Description=COSMIC Greeter daemon
+After=systemd-user-sessions.service plymouth-quit-wait.service
+After=getty@tty1.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+ExecStart=greetd --config /etc/greetd/cosmic-greeter.toml
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+TimeoutStopSec=30s
+KeyringMode=shared
+Restart=always
+RestartSec=1
+StartLimitBurst=5
+StartLimitInterval=30
+
+[Install]
+Alias=display-manager.service
