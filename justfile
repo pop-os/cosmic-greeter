@@ -41,7 +41,7 @@ check-json: (check '--message-format=json')
 
 # Run with debug logs
 run *args:
-    env RUST_LOG=debug RUST_BACKTRACE=1 cargo run --release {{args}}
+    env RUST_LOG=debug RUST_BACKTRACE=full cargo run --release {{args}}
 
 # Installs files
 install:
@@ -62,6 +62,5 @@ vendor:
 
 # Extracts vendored dependencies
 vendor-extract:
-    #!/usr/bin/env sh
     rm -rf vendor
     tar pxf vendor.tar

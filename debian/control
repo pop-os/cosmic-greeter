@@ -1,0 +1,15 @@
+Source: cosmic-greeter
+Section: admin
+Priority: optional
+Maintainer: Jeremy Soller <jeremy@system76.com>
+Build-Depends:
+    debhelper-compat (=13),
+    just (>= 1.13.0),
+    rust-all,
+Standards-Version: 4.6.2
+Homepage: https://github.com/pop-os/cosmic-greeter
+
+Package: cosmic-greeter
+Architecture: amd64 arm64
+Depends: greetd, ${misc:Depends}, ${shlibs:Depends}
+Description: Cosmic Greeter
