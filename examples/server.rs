@@ -36,11 +36,12 @@ async fn main() {
             println!("{:?}", request);
 
             let response = match request {
-                Request::CreateSession { username } => Response::AuthMessage {
+                Request::CreateSession { .. } => Response::AuthMessage {
                     auth_message_type: AuthMessageType::Secret,
                     auth_message: "Password:".to_string(),
                 },
-                Request::PostAuthMessageResponse { response } => Response::Success,
+                Request::PostAuthMessageResponse { .. } => Response::Success,
+                Request::StartSession { .. } => Response::Success,
                 _ => {
                     println!("unhandled request");
                     break;
