@@ -154,7 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn request(socket: Arc<UnixStream>, request: Request) -> Message {
+async fn request_message(socket: Arc<UnixStream>, request: Request) -> Message {
     //TODO: handle errors
     socket.writable().await.unwrap();
     {
@@ -181,28 +181,42 @@ async fn request(socket: Arc<UnixStream>, request: Request) -> Message {
                     } => match auth_message_type {
                         AuthMessageType::Secret => {
                             return Message::Input(InputState::Auth {
-                                secret: true,
                                 prompt: auth_message,
-                                value: String::new(),
+                                value_opt: Some(String::new()),
+                                secret: true,
                             })
                         }
                         AuthMessageType::Visible => {
                             return Message::Input(InputState::Auth {
-                                secret: false,
                                 prompt: auth_message,
-                                value: String::new(),
+                                value_opt: Some(String::new()),
+                                secret: false,
                             })
                         }
-                        _ => todo!("unsupported auth_message_type {:?}", auth_message_type),
+                        //TODO: treat error type differently?
+                        AuthMessageType::Info | AuthMessageType::Error => {
+                            return Message::Input(InputState::Auth {
+                                prompt: auth_message,
+                                value_opt: None,
+                                secret: false,
+                            })
+                        }
                     },
+                    Response::Error {
+                        error_type: _,
+                        description,
+                    } => {
+                        //TODO: use error_type?
+                        return Message::Error(description);
+                    }
                     Response::Success => match request {
                         Request::CreateSession { .. } => {
                             // User has no auth required, proceed to login
-                            return Message::Login;
+                            return Message::Login(socket);
                         }
                         Request::PostAuthMessageResponse { .. } => {
                             // All auth is completed, proceed to login
-                            return Message::Login;
+                            return Message::Login(socket);
                         }
                         Request::StartSession { .. } => {
                             // Session has been started, exit greeter
@@ -213,10 +227,6 @@ async fn request(socket: Arc<UnixStream>, request: Request) -> Message {
                             return Message::None;
                         }
                     },
-                    _ => {
-                        log::error!("unhandled response");
-                        break;
-                    }
                 }
             }
             Err(err) => match err.kind() {
@@ -230,6 +240,13 @@ async fn request(socket: Arc<UnixStream>, request: Request) -> Message {
     }
 
     Message::None
+}
+
+fn request_command(socket: Arc<UnixStream>, request: Request) -> Command<Message> {
+    Command::perform(
+        async move { message::app(request_message(socket, request).await) },
+        |x| x,
+    )
 }
 
 #[derive(Clone)]
@@ -255,9 +272,9 @@ pub enum InputState {
     None,
     Username,
     Auth {
-        secret: bool,
         prompt: String,
-        value: String,
+        value_opt: Option<String>,
+        secret: bool,
     },
 }
 
@@ -268,9 +285,10 @@ pub enum Message {
     Socket(SocketState),
     Input(InputState),
     Session(String),
-    Username(String),
-    Auth(String),
-    Login,
+    Error(String),
+    Username(Arc<UnixStream>, String),
+    Auth(Arc<UnixStream>, Option<String>),
+    Login(Arc<UnixStream>),
     Exit,
 }
 
@@ -278,10 +296,11 @@ pub enum Message {
 pub struct App {
     core: Core,
     flags: Flags,
-    session_names: Vec<String>,
-    selected_session: String,
     socket_state: SocketState,
     input_state: InputState,
+    session_names: Vec<String>,
+    selected_session: String,
+    error_opt: Option<String>,
     text_input_id: widget::Id,
 }
 
@@ -326,11 +345,12 @@ impl cosmic::Application for App {
             App {
                 core,
                 flags,
-                session_names,
-                selected_session,
                 socket_state: SocketState::Pending,
                 //TODO: set to pending until socket is open?
                 input_state: InputState::Username,
+                session_names,
+                selected_session,
+                error_opt: None,
                 text_input_id: widget::Id::unique(),
             },
             Command::perform(
@@ -363,66 +383,29 @@ impl cosmic::Application for App {
             Message::Session(selected_session) => {
                 self.selected_session = selected_session;
             }
-            Message::Username(username) => match &self.socket_state {
-                SocketState::Open(socket) => {
-                    let socket = socket.clone();
-                    let username = username.clone();
-                    return Command::perform(
-                        async move {
-                            message::app(request(socket, Request::CreateSession { username }).await)
-                        },
-                        |x| x,
-                    );
-                }
-                _ => todo!("socket not open but username provided"),
-            },
-            Message::Auth(value) => match &self.socket_state {
-                SocketState::Open(socket) => {
-                    let socket = socket.clone();
-                    let value = value.clone();
-                    return Command::perform(
-                        async move {
-                            message::app(
-                                request(
-                                    socket,
-                                    Request::PostAuthMessageResponse {
-                                        response: Some(value),
-                                    },
-                                )
-                                .await,
-                            )
-                        },
-                        |x| x,
-                    );
-                }
-                _ => todo!("socket not open but authentication provided"),
-            },
-            Message::Login => match &self.socket_state {
-                SocketState::Open(socket) => {
-                    match self.flags.sessions.get(&self.selected_session).cloned() {
-                        Some(cmd) => {
-                            let socket = socket.clone();
-                            return Command::perform(
-                                async move {
-                                    message::app(
-                                        request(
-                                            socket,
-                                            Request::StartSession {
-                                                cmd,
-                                                env: Vec::new(),
-                                            },
-                                        )
-                                        .await,
-                                    )
-                                },
-                                |x| x,
-                            );
-                        }
-                        None => todo!("session {:?} not found", self.selected_session),
+            Message::Error(error) => {
+                self.error_opt = Some(error);
+            }
+            Message::Username(socket, username) => {
+                return request_command(socket, Request::CreateSession { username });
+            }
+            Message::Auth(socket, response) => {
+                return request_command(socket, Request::PostAuthMessageResponse { response });
+            }
+            Message::Login(socket) => {
+                match self.flags.sessions.get(&self.selected_session).cloned() {
+                    Some(cmd) => {
+                        return request_command(
+                            socket,
+                            Request::StartSession {
+                                cmd,
+                                env: Vec::new(),
+                            },
+                        );
                     }
+                    None => todo!("session {:?} not found", self.selected_session),
                 }
-                _ => todo!("socket not open but attempting to log in"),
-            },
+            }
             Message::Exit => {
                 return iced::window::close();
             }
@@ -434,7 +417,7 @@ impl cosmic::Application for App {
     fn view(&self) -> Element<Self::Message> {
         let content: Element<_> = match &self.socket_state {
             SocketState::Pending => widget::text("Opening GREETD_SOCK").into(),
-            SocketState::Open(_) => match &self.input_state {
+            SocketState::Open(socket) => match &self.input_state {
                 InputState::None => {
                     //TODO
                     widget::text("").into()
@@ -466,35 +449,47 @@ impl cosmic::Application for App {
                                     .padding(16)
                                     .style(cosmic::theme::Container::Primary),
                             )
-                            .on_press(Message::Username(user.name.clone())),
+                            .on_press(Message::Username(socket.clone(), user.name.clone())),
                         );
                     }
                     row.into()
                 }
                 InputState::Auth {
-                    secret,
                     prompt,
-                    value,
+                    value_opt,
+                    secret,
                 } => {
                     let mut column = widget::column::with_capacity(2)
                         .spacing(12.0)
                         .width(iced::Length::Fixed(400.0));
                     column = column.push(widget::text(prompt));
-                    let text_input = widget::text_input("", &value)
-                        .id(self.text_input_id.clone())
-                        .on_input(|value| {
-                            Message::Input(InputState::Auth {
-                                secret: *secret,
-                                prompt: prompt.clone(),
-                                value,
-                            })
-                        })
-                        .on_submit(Message::Auth(value.clone()));
-                    if *secret {
-                        column = column.push(text_input.password());
-                    } else {
-                        column = column.push(text_input);
+
+                    match value_opt {
+                        Some(value) => {
+                            let text_input = widget::text_input("", &value)
+                                .id(self.text_input_id.clone())
+                                .on_input(|value| {
+                                    Message::Input(InputState::Auth {
+                                        prompt: prompt.clone(),
+                                        value_opt: Some(value),
+                                        secret: *secret,
+                                    })
+                                })
+                                .on_submit(Message::Auth(socket.clone(), Some(value.clone())));
+                            if *secret {
+                                column = column.push(text_input.password());
+                            } else {
+                                column = column.push(text_input);
+                            }
+                        }
+                        None => {
+                            column = column.push(
+                                widget::button("Confirm")
+                                    .on_press(Message::Auth(socket.clone(), None)),
+                            );
+                        }
                     }
+
                     column.into()
                 }
             },
@@ -510,10 +505,14 @@ impl cosmic::Application for App {
             Message::Session,
         );
 
-        let column = widget::column::with_capacity(2)
+        let mut column = widget::column::with_capacity(3)
             .push(content)
             .push(session_picker)
             .spacing(12.0);
+
+        if let Some(error) = &self.error_opt {
+            column = column.push(widget::text(error.clone()));
+        }
 
         let centered = widget::container(column)
             .width(iced::Length::Fill)
