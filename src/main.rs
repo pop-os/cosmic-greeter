@@ -282,6 +282,7 @@ pub struct App {
     selected_session: String,
     socket_state: SocketState,
     input_state: InputState,
+    text_input_id: widget::Id,
 }
 
 /// Implement [`cosmic::Application`] to integrate with COSMIC.
@@ -330,6 +331,7 @@ impl cosmic::Application for App {
                 socket_state: SocketState::Pending,
                 //TODO: set to pending until socket is open?
                 input_state: InputState::Username,
+                text_input_id: widget::Id::unique(),
             },
             Command::perform(
                 async {
@@ -355,6 +357,8 @@ impl cosmic::Application for App {
             }
             Message::Input(input_state) => {
                 self.input_state = input_state;
+                //TODO: only focus text input on changes to the page
+                return widget::text_input::focus(self.text_input_id.clone());
             }
             Message::Session(selected_session) => {
                 self.selected_session = selected_session;
@@ -477,6 +481,7 @@ impl cosmic::Application for App {
                         .width(iced::Length::Fixed(400.0));
                     column = column.push(widget::text(prompt));
                     let text_input = widget::text_input("", &value)
+                        .id(self.text_input_id.clone())
                         .on_input(|value| {
                             Message::Input(InputState::Auth {
                                 secret: *secret,
