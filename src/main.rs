@@ -138,8 +138,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions
     };
 
-    println!("{:?}", sessions);
-
     let flags = Flags { users, sessions };
 
     let settings = Settings::default()
@@ -172,9 +170,7 @@ async fn request(socket: Arc<UnixStream>, request: Request) -> Message {
         let mut bytes = Vec::<u8>::with_capacity(4096);
         match socket.try_read_buf(&mut bytes) {
             Ok(0) => break,
-            Ok(count) => {
-                log::info!("read {} bytes", count);
-
+            Ok(_count) => {
                 let mut cursor = io::Cursor::new(bytes);
                 let response = Response::read_from(&mut cursor).unwrap();
                 log::info!("{:?}", response);
@@ -184,24 +180,39 @@ async fn request(socket: Arc<UnixStream>, request: Request) -> Message {
                         auth_message,
                     } => match auth_message_type {
                         AuthMessageType::Secret => {
-                            return Message::Input(InputState::Auth(
-                                true,
-                                auth_message,
-                                String::new(),
-                            ))
+                            return Message::Input(InputState::Auth {
+                                secret: true,
+                                prompt: auth_message,
+                                value: String::new(),
+                            })
                         }
                         AuthMessageType::Visible => {
-                            return Message::Input(InputState::Auth(
-                                false,
-                                auth_message,
-                                String::new(),
-                            ))
+                            return Message::Input(InputState::Auth {
+                                secret: false,
+                                prompt: auth_message,
+                                value: String::new(),
+                            })
                         }
                         _ => todo!("unsupported auth_message_type {:?}", auth_message_type),
                     },
-                    Response::Success => {
-                        return Message::Login;
-                    }
+                    Response::Success => match request {
+                        Request::CreateSession { .. } => {
+                            // User has no auth required, proceed to login
+                            return Message::Login;
+                        }
+                        Request::PostAuthMessageResponse { .. } => {
+                            // All auth is completed, proceed to login
+                            return Message::Login;
+                        }
+                        Request::StartSession { .. } => {
+                            // Session has been started, exit greeter
+                            return Message::Exit;
+                        }
+                        Request::CancelSession => {
+                            //TODO: restart whole process
+                            return Message::None;
+                        }
+                    },
                     _ => {
                         log::error!("unhandled response");
                         break;
@@ -243,7 +254,11 @@ pub enum SocketState {
 pub enum InputState {
     None,
     Username,
-    Auth(bool, String, String),
+    Auth {
+        secret: bool,
+        prompt: String,
+        value: String,
+    },
 }
 
 /// Messages that are used specifically by our [`App`].
@@ -256,6 +271,7 @@ pub enum Message {
     Username(String),
     Auth(String),
     Login,
+    Exit,
 }
 
 /// The [`App`] stores application-specific state.
@@ -403,6 +419,9 @@ impl cosmic::Application for App {
                 }
                 _ => todo!("socket not open but attempting to log in"),
             },
+            Message::Exit => {
+                return iced::window::close();
+            }
         }
         Command::none()
     }
@@ -448,14 +467,22 @@ impl cosmic::Application for App {
                     }
                     row.into()
                 }
-                InputState::Auth(secret, prompt, value) => {
+                InputState::Auth {
+                    secret,
+                    prompt,
+                    value,
+                } => {
                     let mut column = widget::column::with_capacity(2)
                         .spacing(12.0)
                         .width(iced::Length::Fixed(400.0));
                     column = column.push(widget::text(prompt));
                     let text_input = widget::text_input("", &value)
                         .on_input(|value| {
-                            Message::Input(InputState::Auth(*secret, prompt.clone(), value))
+                            Message::Input(InputState::Auth {
+                                secret: *secret,
+                                prompt: prompt.clone(),
+                                value,
+                            })
                         })
                         .on_submit(Message::Auth(value.clone()));
                     if *secret {
