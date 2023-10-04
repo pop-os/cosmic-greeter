@@ -1,4 +1,4 @@
-use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
+use greetd_ipc::{codec::SyncCodec, AuthMessageType, ErrorType, Request, Response};
 use std::io;
 use tokio::net::UnixListener;
 
@@ -40,7 +40,15 @@ async fn main() {
                     auth_message_type: AuthMessageType::Secret,
                     auth_message: "Password:".to_string(),
                 },
-                Request::PostAuthMessageResponse { .. } => Response::Success,
+                Request::PostAuthMessageResponse { response } => {
+                    match response.as_ref().map(|x| x.as_str()) {
+                        Some("password") => Response::Success,
+                        _ => Response::Error {
+                            error_type: ErrorType::AuthError,
+                            description: "pam_authenticate: AUTH_ERR".to_string(),
+                        },
+                    }
+                }
                 Request::StartSession { .. } => Response::Success,
                 _ => {
                     println!("unhandled request");
