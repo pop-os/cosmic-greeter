@@ -5,8 +5,10 @@ edition = "2021"
 
 [dependencies]
 env_logger = "0.10"
+freedesktop_entry_parser = "1"
 log = "0.4"
 pwd = "1"
+shlex = "1"
 
 [dependencies.greetd_ipc]
 version = "0.9"
