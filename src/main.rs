@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 mod greeter;
+mod image_container;
 mod locker;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
