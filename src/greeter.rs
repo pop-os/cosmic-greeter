@@ -26,6 +26,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             })
             .map(|user| {
+                //TODO: use accountsservice
                 let icon_path = Path::new("/var/lib/AccountsService/icons").join(&user.name);
                 let icon_opt = if icon_path.is_file() {
                     match fs::read(&icon_path) {

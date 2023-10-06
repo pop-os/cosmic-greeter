@@ -10,6 +10,7 @@ log = "0.4"
 pam-client = "0.5"
 pwd = "1"
 shlex = "1"
+wayland-client = "0.31"
 
 [dependencies.greetd_ipc]
 version = "0.9"
@@ -18,7 +19,7 @@ features = ["sync-codec"]
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
-features = ["tokio", "winit"]
+features = ["tokio", "wayland"]
 
 [dependencies.tokio]
 version = "1"

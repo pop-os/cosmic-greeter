@@ -6,16 +6,48 @@ use cosmic::{
     executor,
     iced::{
         self,
+        event::wayland::{Event as WaylandEvent, OutputEvent},
         futures::{self, SinkExt},
-        subscription, Subscription,
+        subscription,
+        wayland::{
+            actions::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
+            layer_surface::{
+                destroy_layer_surface, get_layer_surface, Anchor, KeyboardInteractivity, Layer,
+            },
+        },
+        Subscription,
     },
+    iced_runtime::core::window::Id as SurfaceId,
     widget, Element,
 };
-use std::ffi::{CStr, CString};
+use std::{
+    collections::HashMap,
+    ffi::{CStr, CString},
+    fs,
+    path::Path,
+};
 use tokio::{sync::mpsc, task, time};
+use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 
 pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
-    let flags = Flags { current_user };
+    //TODO: use accountsservice
+    let icon_path = Path::new("/var/lib/AccountsService/icons").join(&current_user.name);
+    let icon_opt = if icon_path.is_file() {
+        match fs::read(&icon_path) {
+            Ok(icon_data) => Some(widget::image::Handle::from_memory(icon_data)),
+            Err(err) => {
+                log::error!("failed to read {:?}: {:?}", icon_path, err);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let flags = Flags {
+        current_user,
+        icon_opt,
+    };
 
     let settings = Settings::default()
         .antialiasing(true)
@@ -23,6 +55,7 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
         .debug(false)
         .default_icon_theme("Cosmic")
         .default_text_size(16.0)
+        .no_main_window(true)
         .scale_factor(1.0)
         .theme(cosmic::Theme::dark());
 
@@ -106,11 +139,13 @@ impl pam_client::ConversationHandler for Conversation {
 #[derive(Clone)]
 pub struct Flags {
     current_user: pwd::Passwd,
+    icon_opt: Option<widget::image::Handle>,
 }
 
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
+    OutputEvent(OutputEvent, WlOutput),
     Channel(mpsc::Sender<String>),
     Prompt(String, bool, String),
     Submit,
@@ -122,6 +157,8 @@ pub enum Message {
 pub struct App {
     core: Core,
     flags: Flags,
+    next_surface_id: SurfaceId,
+    surface_ids: HashMap<WlOutput, SurfaceId>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     prompt_opt: Option<(String, bool, String)>,
     error_opt: Option<String>,
@@ -164,6 +201,8 @@ impl cosmic::Application for App {
             App {
                 core,
                 flags,
+                next_surface_id: SurfaceId(1),
+                surface_ids: HashMap::new(),
                 value_tx_opt: None,
                 prompt_opt: None,
                 error_opt: None,
@@ -177,6 +216,71 @@ impl cosmic::Application for App {
     /// Handle application events here.
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
+            Message::OutputEvent(output_event, output) => match output_event {
+                OutputEvent::Created(_output_info_opt) => {
+                    log::info!("output {}: created", output.id());
+
+                    //TODO: COVER ALL OUTPUTS AFTER FIXING FOCUS BUG
+                    if !self.surface_ids.is_empty() {
+                        log::error!("COVER ALL OUTPUTS AFTER FIXING FOCUS BUG");
+                        return Command::none();
+                    }
+
+                    let surface_id = self.next_surface_id;
+                    self.next_surface_id.0 += 1;
+
+                    match self.surface_ids.insert(output.clone(), surface_id) {
+                        Some(old_surface_id) => {
+                            //TODO: remove old surface
+                            log::warn!(
+                                "output {}: already had surface ID {}",
+                                output.id(),
+                                old_surface_id.0
+                            );
+                        }
+                        None => {}
+                    }
+
+                    return Command::batch([
+                        get_layer_surface(SctkLayerSurfaceSettings {
+                            id: surface_id,
+                            layer: Layer::Top,
+                            keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                            pointer_interactivity: true,
+                            anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                            output: IcedOutput::Output(output),
+                            namespace: "cosmic-locker".into(),
+                            size: Some((None, None)),
+                            margin: IcedMargin {
+                                top: 0,
+                                bottom: 0,
+                                left: 0,
+                                right: 0,
+                            },
+                            exclusive_zone: 0,
+                            size_limits: iced::Limits::NONE
+                                .min_width(1.0)
+                                .min_height(1.0)
+                                .max_width(600.0),
+                        }),
+                        widget::text_input::focus(self.text_input_id.clone()),
+                    ]);
+                }
+                OutputEvent::Removed => {
+                    log::info!("output {}: removed", output.id());
+                    match self.surface_ids.remove(&output) {
+                        Some(surface_id) => {
+                            return destroy_layer_surface(surface_id);
+                        }
+                        None => {
+                            log::warn!("output {}: no surface found", output.id());
+                        }
+                    }
+                }
+                OutputEvent::InfoUpdate(output_info) => {
+                    log::info!("output {}: info update {:#?}", output.id(), output_info);
+                }
+            },
             Message::Channel(value_tx) => {
                 self.value_tx_opt = Some(value_tx);
             }
@@ -211,15 +315,20 @@ impl cosmic::Application for App {
         Command::none()
     }
 
-    /// Creates a view after each update.
+    // Not used for layer surface window
     fn view(&self) -> Element<Self::Message> {
-        let mut column = widget::column::with_capacity(3).spacing(12.0);
+        unimplemented!()
+    }
+
+    /// Creates a view after each update.
+    fn view_window(&self, id: SurfaceId) -> Element<Self::Message> {
+        let mut column = widget::column::with_capacity(3)
+            .max_width(280.0)
+            .spacing(12.0);
 
         match &self.prompt_opt {
             Some((prompt, secret, value)) => {
-                column = column.push(widget::text(prompt.clone()));
-
-                let mut text_input = widget::text_input("", &value)
+                let mut text_input = widget::text_input(&prompt, &value)
                     .id(self.text_input_id.clone())
                     .on_input(|value| Message::Prompt(prompt.clone(), *secret, value))
                     .on_submit(Message::Submit);
@@ -255,42 +364,50 @@ impl cosmic::Application for App {
 
         //TODO: how to avoid cloning this on every time subscription is called?
         let username = self.flags.current_user.name.clone();
-        subscription::channel(
-            std::any::TypeId::of::<SomeWorker>(),
-            16,
-            |mut msg_tx| async move {
-                loop {
-                    let (value_tx, value_rx) = mpsc::channel(16);
-                    msg_tx.send(Message::Channel(value_tx)).await.unwrap();
+        Subscription::batch([
+            subscription::events_with(|event, _| match event {
+                iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
+                    WaylandEvent::Output(output_event, output),
+                )) => Some(Message::OutputEvent(output_event, output)),
+                _ => None,
+            }),
+            subscription::channel(
+                std::any::TypeId::of::<SomeWorker>(),
+                16,
+                |mut msg_tx| async move {
+                    loop {
+                        let (value_tx, value_rx) = mpsc::channel(16);
+                        msg_tx.send(Message::Channel(value_tx)).await.unwrap();
 
-                    let pam_res = {
-                        let username = username.clone();
-                        let msg_tx = msg_tx.clone();
-                        task::spawn_blocking(move || {
-                            pam_thread(username, Conversation { msg_tx, value_rx })
-                        })
-                        .await
-                        .unwrap()
-                    };
+                        let pam_res = {
+                            let username = username.clone();
+                            let msg_tx = msg_tx.clone();
+                            task::spawn_blocking(move || {
+                                pam_thread(username, Conversation { msg_tx, value_rx })
+                            })
+                            .await
+                            .unwrap()
+                        };
 
-                    match pam_res {
-                        Ok(()) => {
-                            log::info!("successfully authenticated");
-                            msg_tx.send(Message::Exit).await.unwrap();
-                            break;
-                        }
-                        Err(err) => {
-                            log::info!("authentication error: {:?}", err);
-                            msg_tx.send(Message::Error(err.to_string())).await.unwrap();
+                        match pam_res {
+                            Ok(()) => {
+                                log::info!("successfully authenticated");
+                                msg_tx.send(Message::Exit).await.unwrap();
+                                break;
+                            }
+                            Err(err) => {
+                                log::info!("authentication error: {:?}", err);
+                                msg_tx.send(Message::Error(err.to_string())).await.unwrap();
+                            }
                         }
                     }
-                }
 
-                //TODO: how to properly kill this task?
-                loop {
-                    time::sleep(time::Duration::new(1, 0)).await;
-                }
-            },
-        )
+                    //TODO: how to properly kill this task?
+                    loop {
+                        time::sleep(time::Duration::new(1, 0)).await;
+                    }
+                },
+            ),
+        ])
     }
 }
