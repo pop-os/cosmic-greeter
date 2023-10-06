@@ -228,12 +228,6 @@ impl cosmic::Application for App {
                 OutputEvent::Created(_output_info_opt) => {
                     log::info!("output {}: created", output.id());
 
-                    //TODO: COVER ALL OUTPUTS AFTER FIXING FOCUS BUG
-                    if !self.surface_ids.is_empty() {
-                        log::error!("COVER ALL OUTPUTS AFTER FIXING FOCUS BUG");
-                        return Command::none();
-                    }
-
                     let surface_id = self.next_surface_id;
                     self.next_surface_id.0 += 1;
 
