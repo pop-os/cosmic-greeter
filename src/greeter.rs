@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use cosmic::app::{message, Command, Core, Settings};
-use cosmic::{executor, iced, widget, Element};
+use cosmic::{
+    executor,
+    iced::{self, alignment, Length},
+    style, widget, Element,
+};
 use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
-use std::{collections::HashMap, env, fs, io, path::Path, sync::Arc};
+use std::{collections::HashMap, env, fs, io, path::Path, process, sync::Arc};
 use tokio::net::UnixStream;
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -135,7 +139,14 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions
     };
 
-    let flags = Flags { users, sessions };
+    //TODO: use background config
+    let background = widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
+
+    let flags = Flags {
+        users,
+        sessions,
+        background,
+    };
 
     let settings = Settings::default()
         .antialiasing(true)
@@ -177,26 +188,14 @@ async fn request_message(socket: Arc<UnixStream>, request: Request) -> Message {
                         auth_message,
                     } => match auth_message_type {
                         AuthMessageType::Secret => {
-                            return Message::Input(InputState::Auth {
-                                prompt: auth_message,
-                                value_opt: Some(String::new()),
-                                secret: true,
-                            })
+                            return Message::Prompt(auth_message, true, Some(String::new()));
                         }
                         AuthMessageType::Visible => {
-                            return Message::Input(InputState::Auth {
-                                prompt: auth_message,
-                                value_opt: Some(String::new()),
-                                secret: false,
-                            })
+                            return Message::Prompt(auth_message, false, Some(String::new()));
                         }
                         //TODO: treat error type differently?
                         AuthMessageType::Info | AuthMessageType::Error => {
-                            return Message::Input(InputState::Auth {
-                                prompt: auth_message,
-                                value_opt: None,
-                                secret: false,
-                            })
+                            return Message::Prompt(auth_message, false, None);
                         }
                     },
                     Response::Error {
@@ -250,6 +249,7 @@ fn request_command(socket: Arc<UnixStream>, request: Request) -> Command<Message
 pub struct Flags {
     users: Vec<(pwd::Passwd, Option<widget::image::Handle>)>,
     sessions: HashMap<String, Vec<String>>,
+    background: widget::image::Handle,
 }
 
 #[derive(Clone, Debug)]
@@ -264,22 +264,12 @@ pub enum SocketState {
     Error(Arc<io::Error>),
 }
 
-#[derive(Clone, Debug)]
-pub enum InputState {
-    Username,
-    Auth {
-        prompt: String,
-        value_opt: Option<String>,
-        secret: bool,
-    },
-}
-
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
     None,
     Socket(SocketState),
-    Input(InputState),
+    Prompt(String, bool, Option<String>),
     Session(String),
     Error(String),
     Username(Arc<UnixStream>, String),
@@ -293,7 +283,8 @@ pub struct App {
     core: Core,
     flags: Flags,
     socket_state: SocketState,
-    input_state: InputState,
+    username_opt: Option<String>,
+    prompt_opt: Option<(String, bool, Option<String>)>,
     session_names: Vec<String>,
     selected_session: String,
     error_opt: Option<String>,
@@ -342,8 +333,9 @@ impl cosmic::Application for App {
                 core,
                 flags,
                 socket_state: SocketState::Pending,
-                //TODO: set to pending until socket is open?
-                input_state: InputState::Username,
+                //TODO: choose last used user
+                username_opt: None,
+                prompt_opt: None,
                 session_names,
                 selected_session,
                 error_opt: None,
@@ -371,8 +363,8 @@ impl cosmic::Application for App {
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
             }
-            Message::Input(input_state) => {
-                self.input_state = input_state;
+            Message::Prompt(prompt, secret, value) => {
+                self.prompt_opt = Some((prompt, secret, value));
                 //TODO: only focus text input on changes to the page
                 return widget::text_input::focus(self.text_input_id.clone());
             }
@@ -383,6 +375,7 @@ impl cosmic::Application for App {
                 self.error_opt = Some(error);
             }
             Message::Username(socket, username) => {
+                self.username_opt = Some(username.clone());
                 return request_command(socket, Request::CreateSession { username });
             }
             Message::Auth(socket, response) => {
@@ -403,7 +396,8 @@ impl cosmic::Application for App {
                 }
             }
             Message::Exit => {
-                return iced::window::close();
+                //TODO: cleaner method to exit?
+                process::exit(0);
             }
         }
         Command::none()
@@ -411,107 +405,256 @@ impl cosmic::Application for App {
 
     /// Creates a view after each update.
     fn view(&self) -> Element<Self::Message> {
-        let content: Element<_> = match &self.socket_state {
-            SocketState::Pending => widget::text("Opening GREETD_SOCK").into(),
-            SocketState::Open(socket) => match &self.input_state {
-                InputState::Username => {
-                    let mut row = widget::row::with_capacity(self.flags.users.len()).spacing(12.0);
-                    for (user, icon_opt) in &self.flags.users {
-                        let mut column = widget::column::with_capacity(2).spacing(12.0);
-                        match icon_opt {
-                            Some(icon) => {
-                                column = column.push(
-                                    widget::Image::new(icon.clone())
-                                        .width(iced::Length::Fixed(256.0))
-                                        .height(iced::Length::Fixed(256.0)),
-                                )
-                            }
-                            None => {}
-                        }
-                        match &user.gecos {
-                            Some(gecos) => {
-                                column = column.push(widget::text(gecos));
-                            }
-                            None => {}
-                        }
-                        row = row.push(
-                            widget::MouseArea::new(
-                                widget::cosmic_container::container(column)
-                                    .layer(cosmic::cosmic_theme::Layer::Primary)
-                                    .padding(16)
-                                    .style(cosmic::theme::Container::Card),
-                            )
-                            .on_press(Message::Username(socket.clone(), user.name.clone())),
-                        );
-                    }
-                    row.into()
-                }
-                InputState::Auth {
-                    prompt,
-                    value_opt,
-                    secret,
-                } => {
-                    let mut column = widget::column::with_capacity(2)
-                        .spacing(12.0)
-                        .width(iced::Length::Fixed(400.0));
-                    column = column.push(widget::text(prompt));
+        let left_element = {
+            let date_time_column = {
+                let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
 
-                    match value_opt {
-                        Some(value) => {
-                            let text_input = widget::text_input("", &value)
-                                .id(self.text_input_id.clone())
-                                .on_input(|value| {
-                                    Message::Input(InputState::Auth {
-                                        prompt: prompt.clone(),
-                                        value_opt: Some(value),
-                                        secret: *secret,
-                                    })
-                                })
-                                .on_submit(Message::Auth(socket.clone(), Some(value.clone())));
-                            if *secret {
-                                column = column.push(text_input.password());
-                            } else {
-                                column = column.push(text_input);
+                let dt = chrono::Local::now();
+
+                //TODO: localized format
+                let date = dt.format("%A, %B %-d");
+                column = column
+                    .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
+
+                //TODO: localized format
+                let time = dt.format("%R");
+                column = column.push(
+                    widget::text(format!("{}", time))
+                        .size(112.0)
+                        .style(style::Text::Accent),
+                );
+
+                column
+            };
+
+            //TODO: get actual status
+            let status_row = iced::widget::row![
+                widget::icon::from_name("network-wireless-signal-ok-symbolic",),
+                iced::widget::row![
+                    widget::icon::from_name("battery-level-50-symbolic"),
+                    widget::text("50%"),
+                ],
+            ]
+            .padding(16.0)
+            .spacing(12.0);
+
+            //TODO: implement these buttons
+            let button_row = iced::widget::row![
+                widget::button(widget::icon::from_name(
+                    "applications-accessibility-symbolic"
+                ))
+                .padding(12.0)
+                .on_press(Message::None),
+                widget::button(widget::icon::from_name("input-keyboard-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+                widget::button(widget::icon::from_name("system-users-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+                widget::button(widget::icon::from_name("application-menu-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+                widget::button(widget::icon::from_name("system-suspend-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+                widget::button(widget::icon::from_name("system-reboot-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+                widget::button(widget::icon::from_name("system-shutdown-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+            ]
+            .padding([16.0, 0.0, 0.0, 0.0])
+            .spacing(8.0);
+
+            widget::container(iced::widget::column![
+                date_time_column,
+                widget::divider::horizontal::default(),
+                status_row,
+                widget::divider::horizontal::default(),
+                button_row,
+            ])
+            .width(Length::Fill)
+            .align_x(alignment::Horizontal::Left)
+        };
+
+        let right_element = {
+            let mut column = widget::column::with_capacity(2)
+                .spacing(12.0)
+                .max_width(280.0);
+
+            match &self.socket_state {
+                SocketState::Pending => {
+                    column = column.push(widget::text("Opening GREETD_SOCK"));
+                }
+                SocketState::Open(socket) => {
+                    match &self.username_opt {
+                        Some(username) => {
+                            for (user, icon_opt) in &self.flags.users {
+                                if &user.name == username {
+                                    match icon_opt {
+                                        Some(icon) => {
+                                            column = column.push(
+                                                widget::container(
+                                                    widget::Image::new(icon.clone())
+                                                        .width(Length::Fixed(78.0))
+                                                        .height(Length::Fixed(78.0)),
+                                                )
+                                                .width(Length::Fill)
+                                                .align_x(alignment::Horizontal::Center),
+                                            )
+                                        }
+                                        None => {}
+                                    }
+                                    match &user.gecos {
+                                        Some(gecos) => {
+                                            column = column.push(
+                                                widget::container(widget::text::title4(gecos))
+                                                    .width(Length::Fill)
+                                                    .align_x(alignment::Horizontal::Center),
+                                            );
+                                        }
+                                        None => {}
+                                    }
+                                }
                             }
                         }
                         None => {
-                            column = column.push(
-                                widget::button("Confirm")
-                                    .on_press(Message::Auth(socket.clone(), None)),
-                            );
+                            let mut row =
+                                widget::row::with_capacity(self.flags.users.len()).spacing(12.0);
+                            for (user, icon_opt) in &self.flags.users {
+                                let mut column = widget::column::with_capacity(2).spacing(12.0);
+
+                                match icon_opt {
+                                    Some(icon) => {
+                                        column = column.push(
+                                            widget::container(
+                                                widget::Image::new(icon.clone())
+                                                    .width(Length::Fixed(78.0))
+                                                    .height(Length::Fixed(78.0)),
+                                            )
+                                            .width(Length::Fill)
+                                            .align_x(alignment::Horizontal::Center),
+                                        )
+                                    }
+                                    None => {}
+                                }
+                                match &user.gecos {
+                                    Some(gecos) => {
+                                        column = column.push(
+                                            widget::container(widget::text::title4(gecos))
+                                                .width(Length::Fill)
+                                                .align_x(alignment::Horizontal::Center),
+                                        );
+                                    }
+                                    None => {}
+                                }
+
+                                row = row.push(
+                                    widget::MouseArea::new(
+                                        widget::cosmic_container::container(column)
+                                            .layer(cosmic::cosmic_theme::Layer::Primary)
+                                            .padding(16)
+                                            .style(cosmic::theme::Container::Card),
+                                    )
+                                    .on_press(Message::Username(socket.clone(), user.name.clone())),
+                                );
+                            }
+                            column = column.push(row);
                         }
                     }
+                    match &self.prompt_opt {
+                        Some((prompt, secret, value_opt)) => match value_opt {
+                            Some(value) => {
+                                let mut text_input = widget::text_input(&prompt, &value)
+                                    .id(self.text_input_id.clone())
+                                    .leading_icon(
+                                        widget::icon::from_name("system-lock-screen-symbolic")
+                                            .into(),
+                                    )
+                                    .trailing_icon(
+                                        widget::icon::from_name("document-properties-symbolic")
+                                            .into(),
+                                    )
+                                    .on_input(|value| {
+                                        Message::Prompt(prompt.clone(), *secret, Some(value))
+                                    })
+                                    .on_submit(Message::Auth(socket.clone(), Some(value.clone())));
 
-                    column.into()
+                                if *secret {
+                                    text_input = text_input.password()
+                                }
+
+                                column = column.push(text_input);
+                            }
+                            None => {
+                                column = column.push(
+                                    widget::button("Confirm")
+                                        .on_press(Message::Auth(socket.clone(), None)),
+                                );
+                            }
+                        },
+                        None => {}
+                    }
                 }
-            },
-            SocketState::NotSet => widget::text("GREETD_SOCK variable not set").into(),
-            SocketState::Error(err) => {
-                widget::text(format!("Failed to open GREETD_SOCK: {:?}", err)).into()
+                SocketState::NotSet => {
+                    column = column.push(widget::text("GREETD_SOCK variable not set"));
+                }
+                SocketState::Error(err) => {
+                    column = column.push(widget::text(format!(
+                        "Failed to open GREETD_SOCK: {:?}",
+                        err
+                    )))
+                }
             }
+
+            if let Some(error) = &self.error_opt {
+                column = column.push(widget::text(error));
+            }
+
+            column = column.push(
+                //TODO: use button
+                widget::pick_list(
+                    &self.session_names,
+                    Some(self.selected_session.clone()),
+                    Message::Session,
+                ),
+            );
+
+            widget::container(column)
+                .align_x(alignment::Horizontal::Center)
+                .width(Length::Fill)
         };
 
-        let session_picker = widget::pick_list(
-            &self.session_names,
-            Some(self.selected_session.clone()),
-            Message::Session,
-        );
-
-        let mut column = widget::column::with_capacity(3)
-            .push(content)
-            .push(session_picker)
-            .spacing(12.0);
-
-        if let Some(error) = &self.error_opt {
-            column = column.push(widget::text(error.clone()));
-        }
-
-        let centered = widget::container(column)
-            .width(iced::Length::Fill)
-            .height(iced::Length::Fill)
-            .align_x(iced::alignment::Horizontal::Center)
-            .align_y(iced::alignment::Vertical::Center);
-
-        Element::from(centered)
+        crate::image_container::ImageContainer::new(
+            widget::container(
+                widget::cosmic_container::container(
+                    iced::widget::row![left_element, right_element]
+                        .align_items(alignment::Alignment::Center),
+                )
+                .layer(cosmic::cosmic_theme::Layer::Background)
+                .padding(16)
+                .style(cosmic::theme::Container::Custom(Box::new(
+                    |theme: &cosmic::Theme| {
+                        // Use background appearance as the base
+                        let mut appearance = widget::container::StyleSheet::appearance(
+                            theme,
+                            &cosmic::theme::Container::Background,
+                        );
+                        appearance.border_radius = 16.0.into();
+                        appearance
+                    },
+                )))
+                .width(Length::Fixed(800.0)),
+            )
+            .padding([32.0, 0.0, 0.0, 0.0])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Top)
+            .style(cosmic::theme::Container::Transparent),
+        )
+        .image(self.flags.background.clone())
+        .into()
     }
 }
