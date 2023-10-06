@@ -45,9 +45,13 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
         None
     };
 
+    //TODO: use background config
+    let background = widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
+
     let flags = Flags {
         current_user,
         icon_opt,
+        background,
     };
 
     let settings = Settings::default()
@@ -141,6 +145,7 @@ impl pam_client::ConversationHandler for Conversation {
 pub struct Flags {
     current_user: pwd::Passwd,
     icon_opt: Option<widget::image::Handle>,
+    background: widget::image::Handle,
 }
 
 /// Messages that are used specifically by our [`App`].
@@ -222,6 +227,12 @@ impl cosmic::Application for App {
             Message::OutputEvent(output_event, output) => match output_event {
                 OutputEvent::Created(_output_info_opt) => {
                     log::info!("output {}: created", output.id());
+
+                    //TODO: COVER ALL OUTPUTS AFTER FIXING FOCUS BUG
+                    if !self.surface_ids.is_empty() {
+                        log::error!("COVER ALL OUTPUTS AFTER FIXING FOCUS BUG");
+                        return Command::none();
+                    }
 
                     let surface_id = self.next_surface_id;
                     self.next_surface_id.0 += 1;
@@ -446,36 +457,35 @@ impl cosmic::Application for App {
                 .width(Length::Fill)
         };
 
-        widget::container(
-            widget::cosmic_container::container(
-                iced::widget::row![left_element, right_element]
-                    .align_items(alignment::Alignment::Center),
+        crate::image_container::ImageContainer::new(
+            widget::container(
+                widget::cosmic_container::container(
+                    iced::widget::row![left_element, right_element]
+                        .align_items(alignment::Alignment::Center),
+                )
+                .layer(cosmic::cosmic_theme::Layer::Background)
+                .padding(16)
+                .style(cosmic::theme::Container::Custom(Box::new(
+                    |theme: &cosmic::Theme| {
+                        // Use background appearance as the base
+                        let mut appearance = widget::container::StyleSheet::appearance(
+                            theme,
+                            &cosmic::theme::Container::Background,
+                        );
+                        appearance.border_radius = 16.0.into();
+                        appearance
+                    },
+                )))
+                .width(Length::Fixed(800.0)),
             )
-            .layer(cosmic::cosmic_theme::Layer::Background)
-            .padding(16)
-            .style(cosmic::theme::Container::Custom(Box::new(
-                |theme: &cosmic::Theme| {
-                    // Use background appearance as the base
-                    let mut appearance = widget::container::StyleSheet::appearance(
-                        theme,
-                        &cosmic::theme::Container::Background,
-                    );
-                    appearance.border_radius = 16.0.into();
-                    appearance
-                },
-            )))
-            .width(Length::Fixed(800.0)),
+            .padding([32.0, 0.0, 0.0, 0.0])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Top)
+            .style(cosmic::theme::Container::Transparent),
         )
-        .padding([32.0, 0.0, 0.0, 0.0])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(alignment::Horizontal::Center)
-        .align_y(alignment::Vertical::Top)
-        .style(cosmic::theme::Container::Custom(Box::new(|_| {
-            let mut appearance = widget::container::Appearance::default();
-            appearance.background = Some(iced::Background::Color(iced::Color::BLACK));
-            appearance
-        })))
+        .image(self.flags.background.clone())
         .into()
     }
 
