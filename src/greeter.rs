@@ -439,7 +439,7 @@ impl cosmic::Application for App {
                                 widget::cosmic_container::container(column)
                                     .layer(cosmic::cosmic_theme::Layer::Primary)
                                     .padding(16)
-                                    .style(cosmic::theme::Container::Primary),
+                                    .style(cosmic::theme::Container::Card),
                             )
                             .on_press(Message::Username(socket.clone(), user.name.clone())),
                         );

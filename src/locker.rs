@@ -5,7 +5,7 @@ use cosmic::app::{message, Command, Core, Settings};
 use cosmic::{
     executor,
     iced::{
-        self,
+        self, alignment,
         event::wayland::{Event as WaylandEvent, OutputEvent},
         futures::{self, SinkExt},
         subscription,
@@ -15,16 +15,17 @@ use cosmic::{
                 destroy_layer_surface, get_layer_surface, Anchor, KeyboardInteractivity, Layer,
             },
         },
-        Subscription,
+        Length, Subscription,
     },
     iced_runtime::core::window::Id as SurfaceId,
-    widget, Element,
+    style, widget, Element,
 };
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     fs,
     path::Path,
+    process,
 };
 use tokio::{sync::mpsc, task, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
@@ -145,6 +146,7 @@ pub struct Flags {
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
+    None,
     OutputEvent(OutputEvent, WlOutput),
     Channel(mpsc::Sender<String>),
     Prompt(String, bool, String),
@@ -216,22 +218,17 @@ impl cosmic::Application for App {
     /// Handle application events here.
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
+            Message::None => {}
             Message::OutputEvent(output_event, output) => match output_event {
                 OutputEvent::Created(_output_info_opt) => {
                     log::info!("output {}: created", output.id());
-
-                    //TODO: COVER ALL OUTPUTS AFTER FIXING FOCUS BUG
-                    if !self.surface_ids.is_empty() {
-                        log::error!("COVER ALL OUTPUTS AFTER FIXING FOCUS BUG");
-                        return Command::none();
-                    }
 
                     let surface_id = self.next_surface_id;
                     self.next_surface_id.0 += 1;
 
                     match self.surface_ids.insert(output.clone(), surface_id) {
                         Some(old_surface_id) => {
-                            //TODO: remove old surface
+                            //TODO: remove old surface?
                             log::warn!(
                                 "output {}: already had surface ID {}",
                                 output.id(),
@@ -244,7 +241,7 @@ impl cosmic::Application for App {
                     return Command::batch([
                         get_layer_surface(SctkLayerSurfaceSettings {
                             id: surface_id,
-                            layer: Layer::Top,
+                            layer: Layer::Overlay,
                             keyboard_interactivity: KeyboardInteractivity::Exclusive,
                             pointer_interactivity: true,
                             anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
@@ -258,10 +255,7 @@ impl cosmic::Application for App {
                                 right: 0,
                             },
                             exclusive_zone: 0,
-                            size_limits: iced::Limits::NONE
-                                .min_width(1.0)
-                                .min_height(1.0)
-                                .max_width(600.0),
+                            size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
                         }),
                         widget::text_input::focus(self.text_input_id.clone()),
                     ]);
@@ -309,7 +303,14 @@ impl cosmic::Application for App {
             }
             Message::Exit => {
                 self.exited = true;
-                return iced::window::close();
+
+                let mut commands = Vec::new();
+                for (_output, surface_id) in self.surface_ids.drain() {
+                    commands.push(destroy_layer_surface(surface_id));
+                }
+                //TODO: cleaner method to exit?
+                commands.push(Command::perform(async { process::exit(0) }, |x| x));
+                return Command::batch(commands);
             }
         }
         Command::none()
@@ -321,40 +322,164 @@ impl cosmic::Application for App {
     }
 
     /// Creates a view after each update.
-    fn view_window(&self, id: SurfaceId) -> Element<Self::Message> {
-        let mut column = widget::column::with_capacity(3)
-            .max_width(280.0)
+    fn view_window(&self, _id: SurfaceId) -> Element<Self::Message> {
+        let left_element = {
+            let date_time_column = {
+                let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
+
+                let dt = chrono::Local::now();
+
+                //TODO: localized format
+                let date = dt.format("%A, %B %-d");
+                column = column
+                    .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
+
+                //TODO: localized format
+                let time = dt.format("%R");
+                column = column.push(
+                    widget::text(format!("{}", time))
+                        .size(112.0)
+                        .style(style::Text::Accent),
+                );
+
+                column
+            };
+
+            //TODO: get actual status
+            let status_row = iced::widget::row![
+                widget::icon::from_name("network-wireless-signal-ok-symbolic",),
+                iced::widget::row![
+                    widget::icon::from_name("battery-level-50-symbolic"),
+                    widget::text("50%"),
+                ]
+            ]
+            .padding(16.0)
             .spacing(12.0);
 
-        match &self.prompt_opt {
-            Some((prompt, secret, value)) => {
-                let mut text_input = widget::text_input(&prompt, &value)
-                    .id(self.text_input_id.clone())
-                    .on_input(|value| Message::Prompt(prompt.clone(), *secret, value))
-                    .on_submit(Message::Submit);
+            //TODO: implement these buttons
+            let button_row = iced::widget::row![
+                widget::button(widget::icon::from_name(
+                    "applications-accessibility-symbolic"
+                ))
+                .padding(12.0)
+                .on_press(Message::None),
+                widget::button(widget::icon::from_name("input-keyboard-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+                widget::button(widget::icon::from_name("system-users-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+                widget::button(widget::icon::from_name("system-suspend-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::None),
+            ]
+            .padding([16.0, 0.0, 0.0, 0.0])
+            .spacing(8.0);
 
-                if *secret {
-                    text_input = text_input.password()
+            widget::container(iced::widget::column![
+                date_time_column,
+                widget::divider::horizontal::default(),
+                status_row,
+                widget::divider::horizontal::default(),
+                button_row,
+            ])
+            .width(Length::Fill)
+            .align_x(alignment::Horizontal::Left)
+        };
+
+        let right_element = {
+            let mut column = widget::column::with_capacity(2)
+                .spacing(12.0)
+                .max_width(280.0);
+
+            match &self.flags.icon_opt {
+                Some(icon) => {
+                    column = column.push(
+                        widget::container(
+                            widget::Image::new(icon.clone())
+                                .width(Length::Fixed(78.0))
+                                .height(Length::Fixed(78.0)),
+                        )
+                        .width(Length::Fill)
+                        .align_x(alignment::Horizontal::Center),
+                    )
                 }
-
-                column = column.push(text_input);
+                None => {}
             }
-            None => {}
-        }
+            match &self.flags.current_user.gecos {
+                Some(gecos) => {
+                    column = column.push(
+                        widget::container(widget::text::title4(gecos))
+                            .width(Length::Fill)
+                            .align_x(alignment::Horizontal::Center),
+                    );
+                }
+                None => {}
+            }
 
-        if let Some(error) = &self.error_opt {
-            column = column.push(widget::text(error));
-        }
+            match &self.prompt_opt {
+                Some((prompt, secret, value)) => {
+                    let mut text_input = widget::text_input(&prompt, &value)
+                        .id(self.text_input_id.clone())
+                        .leading_icon(widget::icon::from_name("system-lock-screen-symbolic").into())
+                        .trailing_icon(
+                            widget::icon::from_name("document-properties-symbolic").into(),
+                        )
+                        .on_input(|value| Message::Prompt(prompt.clone(), *secret, value))
+                        .on_submit(Message::Submit);
 
-        let centered = widget::container(column)
-            .width(iced::Length::Fill)
-            .height(iced::Length::Fill)
-            .align_x(iced::alignment::Horizontal::Center)
-            .align_y(iced::alignment::Vertical::Center);
+                    if *secret {
+                        text_input = text_input.password()
+                    }
 
-        Element::from(centered)
+                    column = column.push(text_input);
+                }
+                None => {}
+            }
+
+            if let Some(error) = &self.error_opt {
+                column = column.push(widget::text(error));
+            }
+
+            widget::container(column)
+                .align_x(alignment::Horizontal::Center)
+                .width(Length::Fill)
+        };
+
+        widget::container(
+            widget::cosmic_container::container(
+                iced::widget::row![left_element, right_element]
+                    .align_items(alignment::Alignment::Center),
+            )
+            .layer(cosmic::cosmic_theme::Layer::Background)
+            .padding(16)
+            .style(cosmic::theme::Container::Custom(Box::new(
+                |theme: &cosmic::Theme| {
+                    // Use background appearance as the base
+                    let mut appearance = widget::container::StyleSheet::appearance(
+                        theme,
+                        &cosmic::theme::Container::Background,
+                    );
+                    appearance.border_radius = 16.0.into();
+                    appearance
+                },
+            )))
+            .width(Length::Fixed(800.0)),
+        )
+        .padding([32.0, 0.0, 0.0, 0.0])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Top)
+        .style(cosmic::theme::Container::Custom(Box::new(|_| {
+            let mut appearance = widget::container::Appearance::default();
+            appearance.background = Some(iced::Background::Color(iced::Color::BLACK));
+            appearance
+        })))
+        .into()
     }
 
+    //TODO: subscription for date/time
     fn subscription(&self) -> Subscription<Self::Message> {
         if self.exited {
             return Subscription::none();
