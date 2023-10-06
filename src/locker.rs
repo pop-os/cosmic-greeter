@@ -104,7 +104,11 @@ impl Conversation {
 
         futures::executor::block_on(async {
             self.msg_tx
-                .send(Message::Prompt(prompt.to_string(), secret, String::new()))
+                .send(Message::Prompt(
+                    prompt.to_string(),
+                    secret,
+                    Some(String::new()),
+                ))
                 .await
         })
         .map_err(|err| {
@@ -122,6 +126,23 @@ impl Conversation {
             pam_client::ErrorCode::CONV_ERR
         })
     }
+
+    fn message(&mut self, prompt_c: &CStr) -> Result<(), pam_client::ErrorCode> {
+        let prompt = prompt_c.to_str().map_err(|err| {
+            log::error!("failed to convert prompt to UTF-8: {:?}", err);
+            pam_client::ErrorCode::CONV_ERR
+        })?;
+
+        futures::executor::block_on(async {
+            self.msg_tx
+                .send(Message::Prompt(prompt.to_string(), false, None))
+                .await
+        })
+        .map_err(|err| {
+            log::error!("failed to send prompt: {:?}", err);
+            pam_client::ErrorCode::CONV_ERR
+        })
+    }
 }
 
 impl pam_client::ConversationHandler for Conversation {
@@ -133,11 +154,24 @@ impl pam_client::ConversationHandler for Conversation {
         log::info!("prompt_echo_off {:?}", prompt_c);
         self.prompt_value(prompt_c, true)
     }
-    fn text_info(&mut self, msg: &CStr) {
-        log::warn!("TODO text_info: {:?}", msg);
+    fn text_info(&mut self, prompt_c: &CStr) {
+        log::info!("text_info {:?}", prompt_c);
+        match self.message(prompt_c) {
+            Ok(()) => (),
+            Err(err) => {
+                log::warn!("failed to send text_info: {:?}", err);
+            }
+        }
     }
-    fn error_msg(&mut self, msg: &CStr) {
-        log::info!("TODO error_msg: {:?}", msg);
+    fn error_msg(&mut self, prompt_c: &CStr) {
+        //TODO: treat error type differently?
+        log::info!("error_msg {:?}", prompt_c);
+        match self.message(prompt_c) {
+            Ok(()) => (),
+            Err(err) => {
+                log::warn!("failed to send error_msg: {:?}", err);
+            }
+        }
     }
 }
 
@@ -154,7 +188,7 @@ pub enum Message {
     None,
     OutputEvent(OutputEvent, WlOutput),
     Channel(mpsc::Sender<String>),
-    Prompt(String, bool, String),
+    Prompt(String, bool, Option<String>),
     Submit,
     Error(String),
     Exit,
@@ -167,7 +201,7 @@ pub struct App {
     next_surface_id: SurfaceId,
     surface_ids: HashMap<WlOutput, SurfaceId>,
     value_tx_opt: Option<mpsc::Sender<String>>,
-    prompt_opt: Option<(String, bool, String)>,
+    prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
     text_input_id: widget::Id,
     exited: bool,
@@ -283,23 +317,26 @@ impl cosmic::Application for App {
             Message::Channel(value_tx) => {
                 self.value_tx_opt = Some(value_tx);
             }
-            Message::Prompt(prompt, secret, value) => {
-                self.prompt_opt = Some((prompt, secret, value));
+            Message::Prompt(prompt, secret, value_opt) => {
+                self.prompt_opt = Some((prompt, secret, value_opt));
                 //TODO: only focus text input on changes to the page
                 return widget::text_input::focus(self.text_input_id.clone());
             }
             Message::Submit => match self.prompt_opt.take() {
-                Some((_prompt, _secret, value)) => match self.value_tx_opt.take() {
-                    Some(value_tx) => {
-                        return Command::perform(
-                            async move {
-                                value_tx.send(value).await.unwrap();
-                                message::app(Message::Channel(value_tx))
-                            },
-                            |x| x,
-                        );
-                    }
-                    None => log::warn!("tried to submit when value_tx_opt not set"),
+                Some((_prompt, _secret, value_opt)) => match value_opt {
+                    Some(value) => match self.value_tx_opt.take() {
+                        Some(value_tx) => {
+                            return Command::perform(
+                                async move {
+                                    value_tx.send(value).await.unwrap();
+                                    message::app(Message::Channel(value_tx))
+                                },
+                                |x| x,
+                            );
+                        }
+                        None => log::warn!("tried to submit when value_tx_opt not set"),
+                    },
+                    None => log::warn!("tried to submit without value"),
                 },
                 None => log::warn!("tried to submit without prompt"),
             },
@@ -423,22 +460,29 @@ impl cosmic::Application for App {
             }
 
             match &self.prompt_opt {
-                Some((prompt, secret, value)) => {
-                    let mut text_input = widget::text_input(&prompt, &value)
-                        .id(self.text_input_id.clone())
-                        .leading_icon(widget::icon::from_name("system-lock-screen-symbolic").into())
-                        .trailing_icon(
-                            widget::icon::from_name("document-properties-symbolic").into(),
-                        )
-                        .on_input(|value| Message::Prompt(prompt.clone(), *secret, value))
-                        .on_submit(Message::Submit);
+                Some((prompt, secret, value_opt)) => match value_opt {
+                    Some(value) => {
+                        let mut text_input = widget::text_input(&prompt, &value)
+                            .id(self.text_input_id.clone())
+                            .leading_icon(
+                                widget::icon::from_name("system-lock-screen-symbolic").into(),
+                            )
+                            .trailing_icon(
+                                widget::icon::from_name("document-properties-symbolic").into(),
+                            )
+                            .on_input(|value| Message::Prompt(prompt.clone(), *secret, Some(value)))
+                            .on_submit(Message::Submit);
 
-                    if *secret {
-                        text_input = text_input.password()
+                        if *secret {
+                            text_input = text_input.password()
+                        }
+
+                        column = column.push(text_input);
                     }
-
-                    column = column.push(text_input);
-                }
+                    None => {
+                        column = column.push(widget::text(prompt));
+                    }
+                },
                 None => {}
             }
 
