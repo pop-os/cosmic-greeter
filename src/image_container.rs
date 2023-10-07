@@ -1,4 +1,8 @@
-use cosmic::iced::widget::{image::Handle, Container};
+use cosmic::iced::widget::{
+    image::{draw, Handle},
+    Container,
+};
+use cosmic::iced::ContentFit;
 use cosmic::iced_core::event::{self, Event};
 use cosmic::iced_core::layout;
 use cosmic::iced_core::mouse;
@@ -17,6 +21,7 @@ where
 {
     container: Container<'a, Message, Renderer>,
     image_opt: Option<Handle>,
+    content_fit: ContentFit,
 }
 
 impl<'a, Message, Renderer> ImageContainer<'a, Message, Renderer>
@@ -28,11 +33,17 @@ where
         Self {
             container,
             image_opt: None,
+            content_fit: ContentFit::None,
         }
     }
 
     pub fn image(mut self, image: Handle) -> Self {
         self.image_opt = Some(image);
+        self
+    }
+
+    pub fn content_fit(mut self, content_fit: ContentFit) -> Self {
+        self.content_fit = content_fit;
         self
     }
 }
@@ -111,7 +122,7 @@ where
         viewport: &Rectangle,
     ) {
         match &self.image_opt {
-            Some(image) => renderer.draw(image.clone(), layout.bounds()),
+            Some(image) => draw(renderer, layout, image, self.content_fit),
             None => {}
         }
 
