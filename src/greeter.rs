@@ -655,6 +655,7 @@ impl cosmic::Application for App {
             .style(cosmic::theme::Container::Transparent),
         )
         .image(self.flags.background.clone())
+        .content_fit(iced::ContentFit::Cover)
         .into()
     }
 }
