@@ -45,8 +45,29 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
         None
     };
 
-    //TODO: use background config
-    let background = widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
+    //TODO: remove statically configured background
+    let mut background =
+        widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
+
+    match cosmic_bg_config::Config::helper() {
+        Ok(helper) => match cosmic_bg_config::Config::load(&helper) {
+            Ok(config) => {
+                log::info!("config: {:#?}", config);
+                match config.default_background.source {
+                    cosmic_bg_config::Source::Path(path) if path.is_file() => {
+                        background = widget::image::Handle::from_path(path);
+                    }
+                    _ => {}
+                }
+            }
+            Err(err) => {
+                log::error!("failed to load cosmic-bg config: {:?}", err);
+            }
+        },
+        Err(err) => {
+            log::error!("failed to create cosmic-bg config helper: {:?}", err);
+        }
+    }
 
     let flags = Flags {
         current_user,
