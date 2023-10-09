@@ -3,6 +3,7 @@
 
 use cosmic::app::{message, Command, Core, Settings};
 use cosmic::{
+    cosmic_config::CosmicConfigEntry,
     executor,
     iced::{
         self, alignment,
@@ -45,34 +46,25 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
         None
     };
 
-    //TODO: remove statically configured background
-    let mut background =
-        widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
-
-    match cosmic_bg_config::Config::helper() {
-        Ok(helper) => match cosmic_bg_config::Config::load(&helper) {
-            Ok(config) => {
-                log::info!("config: {:#?}", config);
-                match config.default_background.source {
-                    cosmic_bg_config::Source::Path(path) if path.is_file() => {
-                        background = widget::image::Handle::from_path(path);
-                    }
-                    _ => {}
-                }
+    let mut wallpapers = Vec::new();
+    match cosmic_bg_config::state::State::state() {
+        Ok(helper) => match cosmic_bg_config::state::State::get_entry(&helper) {
+            Ok(state) => {
+                wallpapers = state.wallpapers;
             }
             Err(err) => {
-                log::error!("failed to load cosmic-bg config: {:?}", err);
+                log::error!("failed to load cosmic-bg state: {:?}", err);
             }
         },
         Err(err) => {
-            log::error!("failed to create cosmic-bg config helper: {:?}", err);
+            log::error!("failed to create cosmic-bg state helper: {:?}", err);
         }
     }
 
     let flags = Flags {
         current_user,
         icon_opt,
-        background,
+        wallpapers,
     };
 
     let settings = Settings::default()
@@ -205,7 +197,7 @@ impl pam_client::ConversationHandler for Conversation {
 pub struct Flags {
     current_user: pwd::Passwd,
     icon_opt: Option<widget::image::Handle>,
-    background: widget::image::Handle,
+    wallpapers: Vec<(String, cosmic_bg_config::Source)>,
 }
 
 /// Messages that are used specifically by our [`App`].
@@ -228,6 +220,7 @@ pub struct App {
     next_surface_id: SurfaceId,
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
+    surface_images: HashMap<SurfaceId, widget::image::Handle>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
@@ -272,6 +265,7 @@ impl cosmic::Application for App {
                 next_surface_id: SurfaceId(1),
                 surface_ids: HashMap::new(),
                 active_surface_id_opt: None,
+                surface_images: HashMap::new(),
                 value_tx_opt: None,
                 prompt_opt: None,
                 error_opt: None,
@@ -285,62 +279,110 @@ impl cosmic::Application for App {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::None => {}
-            Message::OutputEvent(output_event, output) => match output_event {
-                OutputEvent::Created(_output_info_opt) => {
-                    log::info!("output {}: created", output.id());
+            Message::OutputEvent(output_event, output) => {
+                match output_event {
+                    OutputEvent::Created(output_info_opt) => {
+                        log::info!("output {}: created", output.id());
 
-                    let surface_id = self.next_surface_id;
-                    self.next_surface_id.0 += 1;
+                        let surface_id = self.next_surface_id;
+                        self.next_surface_id.0 += 1;
 
-                    match self.surface_ids.insert(output.clone(), surface_id) {
-                        Some(old_surface_id) => {
-                            //TODO: remove old surface?
-                            log::warn!(
-                                "output {}: already had surface ID {}",
-                                output.id(),
-                                old_surface_id.0
-                            );
+                        match self.surface_ids.insert(output.clone(), surface_id) {
+                            Some(old_surface_id) => {
+                                //TODO: remove old surface?
+                                log::warn!(
+                                    "output {}: already had surface ID {}",
+                                    output.id(),
+                                    old_surface_id.0
+                                );
+                            }
+                            None => {}
                         }
-                        None => {}
+
+                        match output_info_opt {
+                            Some(output_info) => {
+                                match output_info.name {
+                                    Some(output_name) => {
+                                        for (wallpaper_output_name, wallpaper_source) in
+                                            self.flags.wallpapers.iter()
+                                        {
+                                            if wallpaper_output_name == &output_name {
+                                                match wallpaper_source {
+                                                    cosmic_bg_config::Source::Path(path) => {
+                                                        match fs::read(path) {
+                                                            Ok(bytes) => {
+                                                                let image = widget::image::Handle::from_memory(bytes);
+                                                                self.surface_images
+                                                                    .insert(surface_id, image);
+                                                                //TODO: what to do about duplicates?
+                                                                break;
+                                                            }
+                                                            Err(err) => {
+                                                                log::warn!("output {}: failed to load wallpaper {:?}: {:?}", output.id(), path, err);
+                                                            }
+                                                        }
+                                                    }
+                                                    cosmic_bg_config::Source::Color(color) => {
+                                                        //TODO: support color sources
+                                                        log::warn!(
+                                                            "output {}: unsupported source {:?}",
+                                                            output.id(),
+                                                            color
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        log::warn!("output {}: no output name", output.id());
+                                    }
+                                }
+                            }
+                            None => {
+                                log::warn!("output {}: no output info", output.id());
+                            }
+                        }
+
+                        return Command::batch([
+                            get_layer_surface(SctkLayerSurfaceSettings {
+                                id: surface_id,
+                                layer: Layer::Overlay,
+                                keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                                pointer_interactivity: true,
+                                anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                                output: IcedOutput::Output(output),
+                                namespace: "cosmic-locker".into(),
+                                size: Some((None, None)),
+                                margin: IcedMargin {
+                                    top: 0,
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
+                                },
+                                exclusive_zone: -1,
+                                size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
+                            }),
+                            widget::text_input::focus(text_input_id(surface_id)),
+                        ]);
                     }
-
-                    return Command::batch([
-                        get_layer_surface(SctkLayerSurfaceSettings {
-                            id: surface_id,
-                            layer: Layer::Overlay,
-                            keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                            pointer_interactivity: true,
-                            anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-                            output: IcedOutput::Output(output),
-                            namespace: "cosmic-locker".into(),
-                            size: Some((None, None)),
-                            margin: IcedMargin {
-                                top: 0,
-                                bottom: 0,
-                                left: 0,
-                                right: 0,
-                            },
-                            exclusive_zone: -1,
-                            size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
-                        }),
-                        widget::text_input::focus(text_input_id(surface_id)),
-                    ]);
-                }
-                OutputEvent::Removed => {
-                    log::info!("output {}: removed", output.id());
-                    match self.surface_ids.remove(&output) {
-                        Some(surface_id) => {
-                            return destroy_layer_surface(surface_id);
-                        }
-                        None => {
-                            log::warn!("output {}: no surface found", output.id());
+                    OutputEvent::Removed => {
+                        log::info!("output {}: removed", output.id());
+                        match self.surface_ids.remove(&output) {
+                            Some(surface_id) => {
+                                self.surface_images.remove(&surface_id);
+                                return destroy_layer_surface(surface_id);
+                            }
+                            None => {
+                                log::warn!("output {}: no surface found", output.id());
+                            }
                         }
                     }
+                    OutputEvent::InfoUpdate(output_info) => {
+                        log::info!("output {}: info update {:#?}", output.id(), output_info);
+                    }
                 }
-                OutputEvent::InfoUpdate(output_info) => {
-                    log::info!("output {}: info update {:#?}", output.id(), output_info);
-                }
-            },
+            }
             Message::LayerEvent(layer_event, surface_id) => match layer_event {
                 LayerEvent::Focused => {
                     log::info!("focus surface {}", surface_id.0);
@@ -392,6 +434,7 @@ impl cosmic::Application for App {
 
                 let mut commands = Vec::new();
                 for (_output, surface_id) in self.surface_ids.drain() {
+                    self.surface_images.remove(&surface_id);
                     commands.push(destroy_layer_surface(surface_id));
                 }
                 //TODO: cleaner method to exit?
@@ -567,7 +610,11 @@ impl cosmic::Application for App {
             .align_y(alignment::Vertical::Top)
             .style(cosmic::theme::Container::Transparent),
         )
-        .image(self.flags.background.clone())
+        .image(match self.surface_images.get(&surface_id) {
+            Some(some) => some.clone(),
+            //TODO: default image
+            None => widget::image::Handle::from_pixels(1, 1, vec![0x00, 0x00, 0x00, 0xFF]),
+        })
         .content_fit(iced::ContentFit::Cover)
         .into()
     }

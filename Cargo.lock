@@ -733,7 +733,7 @@ dependencies = [
 [[package]]
 name = "cosmic-bg-config"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/cosmic-bg?branch=master_jammy#749f3ea139519fffaa2641f80b6fba1379b3ad63"
+source = "git+https://github.com/pop-os/cosmic-bg?branch=master_jammy#1e0d51cf6c95d913763cefc60714406236a8a0de"
 dependencies = [
  "colorgrad",
  "cosmic-config",
