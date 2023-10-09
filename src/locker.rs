@@ -6,7 +6,7 @@ use cosmic::{
     executor,
     iced::{
         self, alignment,
-        event::wayland::{Event as WaylandEvent, OutputEvent},
+        event::wayland::{Event as WaylandEvent, LayerEvent, OutputEvent},
         futures::{self, SinkExt},
         subscription,
         wayland::{
@@ -105,6 +105,11 @@ pub fn pam_thread(username: String, conversation: Conversation) -> Result<(), pa
     context.acct_mgmt(pam_client::Flag::NONE)?;
 
     Ok(())
+}
+
+fn text_input_id(surface_id: SurfaceId) -> widget::Id {
+    //TODO: store this in a map?
+    widget::Id(iced::id::Internal::Unique(surface_id.0 as u64))
 }
 
 pub struct Conversation {
@@ -208,6 +213,7 @@ pub struct Flags {
 pub enum Message {
     None,
     OutputEvent(OutputEvent, WlOutput),
+    LayerEvent(LayerEvent, SurfaceId),
     Channel(mpsc::Sender<String>),
     Prompt(String, bool, Option<String>),
     Submit,
@@ -221,10 +227,10 @@ pub struct App {
     flags: Flags,
     next_surface_id: SurfaceId,
     surface_ids: HashMap<WlOutput, SurfaceId>,
+    active_surface_id_opt: Option<SurfaceId>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
-    text_input_id: widget::Id,
     exited: bool,
 }
 
@@ -265,10 +271,10 @@ impl cosmic::Application for App {
                 flags,
                 next_surface_id: SurfaceId(1),
                 surface_ids: HashMap::new(),
+                active_surface_id_opt: None,
                 value_tx_opt: None,
                 prompt_opt: None,
                 error_opt: None,
-                text_input_id: widget::Id::unique(),
                 exited: false,
             },
             Command::none(),
@@ -317,7 +323,7 @@ impl cosmic::Application for App {
                             exclusive_zone: -1,
                             size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
                         }),
-                        widget::text_input::focus(self.text_input_id.clone()),
+                        widget::text_input::focus(text_input_id(surface_id)),
                     ]);
                 }
                 OutputEvent::Removed => {
@@ -335,13 +341,30 @@ impl cosmic::Application for App {
                     log::info!("output {}: info update {:#?}", output.id(), output_info);
                 }
             },
+            Message::LayerEvent(layer_event, surface_id) => match layer_event {
+                LayerEvent::Focused => {
+                    log::info!("focus surface {}", surface_id.0);
+                    self.active_surface_id_opt = Some(surface_id);
+                    return widget::text_input::focus(text_input_id(surface_id));
+                }
+                LayerEvent::Unfocused => {
+                    log::info!("unfocus surface {}", surface_id.0);
+                }
+                LayerEvent::Done => {
+                    log::info!("done with surface {}", surface_id.0);
+                }
+            },
             Message::Channel(value_tx) => {
                 self.value_tx_opt = Some(value_tx);
             }
             Message::Prompt(prompt, secret, value_opt) => {
+                let prompt_was_none = self.prompt_opt.is_none();
                 self.prompt_opt = Some((prompt, secret, value_opt));
-                //TODO: only focus text input on changes to the page
-                return widget::text_input::focus(self.text_input_id.clone());
+                if prompt_was_none {
+                    if let Some(surface_id) = self.active_surface_id_opt {
+                        return widget::text_input::focus(text_input_id(surface_id));
+                    }
+                }
             }
             Message::Submit => match self.prompt_opt.take() {
                 Some((_prompt, _secret, value_opt)) => match value_opt {
@@ -385,7 +408,7 @@ impl cosmic::Application for App {
     }
 
     /// Creates a view after each update.
-    fn view_window(&self, _id: SurfaceId) -> Element<Self::Message> {
+    fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
         let left_element = {
             let date_time_column = {
                 let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
@@ -484,7 +507,7 @@ impl cosmic::Application for App {
                 Some((prompt, secret, value_opt)) => match value_opt {
                     Some(value) => {
                         let mut text_input = widget::text_input(&prompt, &value)
-                            .id(self.text_input_id.clone())
+                            .id(text_input_id(surface_id))
                             .leading_icon(
                                 widget::icon::from_name("system-lock-screen-symbolic").into(),
                             )
@@ -562,8 +585,16 @@ impl cosmic::Application for App {
         Subscription::batch([
             subscription::events_with(|event, _| match event {
                 iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
-                    WaylandEvent::Output(output_event, output),
-                )) => Some(Message::OutputEvent(output_event, output)),
+                    wayland_event,
+                )) => match wayland_event {
+                    WaylandEvent::Output(output_event, output) => {
+                        Some(Message::OutputEvent(output_event, output))
+                    }
+                    WaylandEvent::Layer(layer_event, _surface, surface_id) => {
+                        Some(Message::LayerEvent(layer_event, surface_id))
+                    }
+                    _ => None,
+                },
                 _ => None,
             }),
             subscription::channel(
