@@ -13,6 +13,10 @@ pwd = "1"
 shlex = "1"
 wayland-client = "0.31"
 
+[dependencies.cosmic-bg-config]
+git = "https://github.com/pop-os/cosmic-bg"
+branch = "master_jammy"
+
 [dependencies.greetd_ipc]
 version = "0.9"
 features = ["sync-codec"]
