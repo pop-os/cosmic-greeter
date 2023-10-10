@@ -20,3 +20,6 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	just rootdir=$(DESTDIR) install
+
+override_dh_installsystemd:
+	dh_installsystemd -pcosmic-greeter --no-start -r cosmic-greeter.service
