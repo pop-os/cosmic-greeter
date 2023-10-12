@@ -15,7 +15,10 @@ wayland-client = "0.31"
 
 [dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"
-branch = "master_jammy"
+
+[dependencies.cosmic-config]
+git = "https://github.com/pop-os/libcosmic"
+features = ["calloop", "macro"]
 
 [dependencies.greetd_ipc]
 version = "0.9"
@@ -23,6 +26,7 @@ features = ["sync-codec"]
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
+branch = "theme-dark-light-switching"
 default-features = false
 features = ["tokio", "wayland"]
 
