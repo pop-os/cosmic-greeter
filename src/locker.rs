@@ -67,15 +67,7 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
         wallpapers,
     };
 
-    let settings = Settings::default()
-        .antialiasing(true)
-        .client_decorations(true)
-        .debug(false)
-        .default_icon_theme("Cosmic")
-        .default_text_size(16.0)
-        .no_main_window(true)
-        .scale_factor(1.0)
-        .theme(cosmic::Theme::dark());
+    let settings = Settings::default().no_main_window(true);
 
     cosmic::app::run::<App>(settings, flags)?;
 
