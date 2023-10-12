@@ -3,7 +3,6 @@
 
 use cosmic::app::{message, Command, Core, Settings};
 use cosmic::{
-    cosmic_config::CosmicConfigEntry,
     executor,
     iced::{
         self, alignment,
@@ -21,6 +20,7 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     style, widget, Element,
 };
+use cosmic_config::CosmicConfigEntry;
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
@@ -446,7 +446,7 @@ impl cosmic::Application for App {
     fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
         let left_element = {
             let date_time_column = {
-                let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
+                let mut column = widget::column::with_capacity(2).padding(16.0);
 
                 let dt = chrono::Local::now();
 
