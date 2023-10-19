@@ -198,9 +198,9 @@ dependencies = [
 
 [[package]]
 name = "async-executor"
-version = "1.5.4"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c1da3ae8dabd9c00f453a329dfe1fb28da3c0a72e2478cdcd93171740c20499"
+checksum = "4b0c4a4f319e45986f347ee47fef8bf5e81c9abc3f6f58dc2391439f30df65f0"
 dependencies = [
  "async-lock",
  "async-task",
@@ -236,7 +236,7 @@ dependencies = [
  "log",
  "parking",
  "polling 2.8.0",
- "rustix 0.37.24",
+ "rustix 0.37.26",
  "slab",
  "socket2 0.4.9",
  "waker-fn",
@@ -264,7 +264,7 @@ dependencies = [
  "cfg-if",
  "event-listener 3.0.0",
  "futures-lite",
- "rustix 0.38.18",
+ "rustix 0.38.20",
  "windows-sys 0.48.0",
 ]
 
@@ -291,7 +291,7 @@ dependencies = [
  "cfg-if",
  "futures-core",
  "futures-io",
- "rustix 0.38.18",
+ "rustix 0.38.20",
  "signal-hook-registry",
  "slab",
  "windows-sys 0.48.0",
@@ -299,15 +299,15 @@ dependencies = [
 
 [[package]]
 name = "async-task"
-version = "4.4.1"
+version = "4.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9441c6b2fe128a7c2bf680a44c34d0df31ce09e5b7e401fcca3faa483dbc921"
+checksum = "b4eb2cdb97421e01129ccb49169d8279ed21e829929144f4a22a6e54ac549ca1"
 
 [[package]]
 name = "async-trait"
-version = "0.1.73"
+version = "0.1.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc00ceb34980c03614e35a3a4e218276a0a824e911d07651cd0d858a51e8c0f0"
+checksum = "a66537f1bb974b254c98ed142ff995236e81b9d0fe4db0575f46612cb15eb0f9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -326,7 +326,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f4d45f362125ed144544e57b0ec6de8fd6a296d41a6252fc4a20c0cf12e9ed3a"
 dependencies = [
- "rustix 0.38.18",
+ "rustix 0.38.20",
  "tempfile",
  "windows-sys 0.48.0",
 ]
@@ -448,9 +448,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.4.0"
+version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4682ae6287fcf752ecaabbfcc7b6f9b72aa33933dc23a554d853aea8eea8635"
+checksum = "327762f6e5a765692301e5bb513e0d9fef63be86bbc14528052b1cd3e6f03e07"
 dependencies = [
  "serde",
 ]
@@ -530,10 +530,10 @@ version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b50b5a44d59a98c55a9eeb518f39bf7499ba19fd98ee7d22618687f3f10adbf"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "log",
  "polling 3.2.0",
- "rustix 0.38.18",
+ "rustix 0.38.20",
  "slab",
  "thiserror",
 ]
@@ -545,7 +545,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f0ea9b9476c7fad82841a8dbb380e2eae480c21910feba80725b46931ed8f02"
 dependencies = [
  "calloop",
- "rustix 0.38.18",
+ "rustix 0.38.20",
  "wayland-backend 0.3.2",
  "wayland-client 0.31.1",
 ]
@@ -736,7 +736,7 @@ version = "0.1.0"
 source = "git+https://github.com/pop-os/cosmic-bg#6a6fe4e387e46c2e159df56a9768220a6269ccf4"
 dependencies = [
  "colorgrad",
- "cosmic-config 0.1.0 (git+https://github.com/pop-os/libcosmic)",
+ "cosmic-config",
  "derive_setters",
  "image",
  "ron",
@@ -747,27 +747,13 @@ dependencies = [
 [[package]]
 name = "cosmic-config"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
-dependencies = [
- "atomicwrites",
- "cosmic-config-derive 0.1.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
- "dirs 5.0.1",
- "iced_futures 0.7.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
- "notify",
- "ron",
- "serde",
-]
-
-[[package]]
-name = "cosmic-config"
-version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#ca3870ed135fc8d748e95b924d18f3c9473642be"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "atomicwrites",
  "calloop",
- "cosmic-config-derive 0.1.0 (git+https://github.com/pop-os/libcosmic)",
+ "cosmic-config-derive",
  "dirs 5.0.1",
- "iced_futures 0.7.0 (git+https://github.com/pop-os/libcosmic)",
+ "iced_futures",
  "notify",
  "ron",
  "serde",
@@ -776,16 +762,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config-derive"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
-dependencies = [
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "cosmic-config-derive"
-version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#ca3870ed135fc8d748e95b924d18f3c9473642be"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -797,7 +774,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cosmic-bg-config",
- "cosmic-config 0.1.0 (git+https://github.com/pop-os/libcosmic)",
+ "cosmic-config",
  "env_logger 0.10.0",
  "freedesktop_entry_parser",
  "greetd_ipc",
@@ -833,10 +810,10 @@ dependencies = [
 [[package]]
 name = "cosmic-theme"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "almost",
- "cosmic-config 0.1.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "cosmic-config",
  "csscolorparser",
  "lazy_static",
  "palette",
@@ -1266,9 +1243,9 @@ dependencies = [
 
 [[package]]
 name = "flate2"
-version = "1.0.27"
+version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6c98ee8095e9d1dcbf2fcc6d95acccb90d1c81db1e44725c6a984b1dbdfb010"
+checksum = "46303f565772937ffe1d394a4fac6f411c6013172fadde9dcdb1e147a086940e"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -1619,7 +1596,7 @@ dependencies = [
  "log",
  "thiserror",
  "winapi",
- "windows 0.44.0",
+ "windows",
 ]
 
 [[package]]
@@ -1628,7 +1605,7 @@ version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc11df1ace8e7e564511f53af41f3e42ddc95b56fd07b3f4445d2a6048bc682c"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "gpu-descriptor-types",
  "hashbrown 0.14.1",
 ]
@@ -1639,7 +1616,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bf0b36e6f090b7e1d8a4b49c0cb81c1f8376f72198c65dd3ad9ff3556b8b78c"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
 ]
 
 [[package]]
@@ -1763,16 +1740,16 @@ checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
 name = "iana-time-zone"
-version = "0.1.57"
+version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fad5b825842d2b38bd206f3e81d6957625fd7f0a361e345c30e01a0ae2dd613"
+checksum = "8326b86b6cff230b97d0d312a6c40a60726df3332e721f72a1b035f451663b20"
 dependencies = [
  "android_system_properties",
  "core-foundation-sys",
  "iana-time-zone-haiku",
  "js-sys",
  "wasm-bindgen",
- "windows 0.48.0",
+ "windows-core",
 ]
 
 [[package]]
@@ -1787,11 +1764,11 @@ dependencies = [
 [[package]]
 name = "iced"
 version = "0.10.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "iced_accessibility",
- "iced_core 0.10.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
- "iced_futures 0.7.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "iced_core",
+ "iced_futures",
  "iced_renderer",
  "iced_sctk",
  "iced_widget",
@@ -1802,7 +1779,7 @@ dependencies = [
 [[package]]
 name = "iced_accessibility"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -1811,7 +1788,7 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.10.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "bitflags 1.3.2",
  "iced_accessibility",
@@ -1824,24 +1801,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "iced_core"
-version = "0.10.0"
-source = "git+https://github.com/pop-os/libcosmic#ca3870ed135fc8d748e95b924d18f3c9473642be"
-dependencies = [
- "bitflags 1.3.2",
- "instant",
- "log",
- "thiserror",
- "twox-hash",
-]
-
-[[package]]
 name = "iced_futures"
 version = "0.7.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "futures",
- "iced_core 0.10.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "iced_core",
  "log",
  "tokio",
  "wasm-bindgen-futures",
@@ -1849,27 +1814,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "iced_futures"
-version = "0.7.0"
-source = "git+https://github.com/pop-os/libcosmic#ca3870ed135fc8d748e95b924d18f3c9473642be"
-dependencies = [
- "futures",
- "iced_core 0.10.0 (git+https://github.com/pop-os/libcosmic)",
- "log",
- "wasm-bindgen-futures",
- "wasm-timer",
-]
-
-[[package]]
 name = "iced_graphics"
 version = "0.9.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "bitflags 1.3.2",
  "bytemuck",
  "glam",
  "half",
- "iced_core 0.10.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "iced_core",
  "image",
  "kamadak-exif",
  "log",
@@ -1881,7 +1834,7 @@ dependencies = [
 [[package]]
 name = "iced_renderer"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "iced_graphics",
  "iced_tiny_skia",
@@ -1894,11 +1847,11 @@ dependencies = [
 [[package]]
 name = "iced_runtime"
 version = "0.1.1"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "iced_accessibility",
- "iced_core 0.10.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
- "iced_futures 0.7.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "iced_core",
+ "iced_futures",
  "smithay-client-toolkit 0.17.0",
  "thiserror",
 ]
@@ -1906,12 +1859,12 @@ dependencies = [
 [[package]]
 name = "iced_sctk"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "enum-repr",
  "float-cmp",
  "futures",
- "iced_futures 0.7.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "iced_futures",
  "iced_graphics",
  "iced_runtime",
  "iced_style",
@@ -1930,9 +1883,9 @@ dependencies = [
 [[package]]
 name = "iced_style"
 version = "0.9.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
- "iced_core 0.10.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "iced_core",
  "once_cell",
  "palette",
 ]
@@ -1940,7 +1893,7 @@ dependencies = [
 [[package]]
 name = "iced_tiny_skia"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -1958,7 +1911,7 @@ dependencies = [
 [[package]]
 name = "iced_wgpu"
 version = "0.11.1"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "bitflags 1.3.2",
  "bytemuck",
@@ -1980,7 +1933,7 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.1.3"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "iced_renderer",
  "iced_runtime",
@@ -2100,7 +2053,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb0889898416213fab133e1d33a0e5858a48177452750691bde3666d0fdbaf8b"
 dependencies = [
  "hermit-abi 0.3.3",
- "rustix 0.38.18",
+ "rustix 0.38.20",
  "windows-sys 0.48.0",
 ]
 
@@ -2213,19 +2166,19 @@ checksum = "a08173bc88b7955d1b3145aa561539096c421ac8debde8cbc3612ec635fee29b"
 [[package]]
 name = "libcosmic"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching#65036b4d3a73d635aa57d5a58b9da7b4a211632a"
+source = "git+https://github.com/pop-os/libcosmic#f3eb41c1d2a6aaef76f40bc872a71153f90fc113"
 dependencies = [
  "apply",
  "ashpd",
- "cosmic-config 0.1.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "cosmic-config",
  "cosmic-theme",
  "css-color",
  "derive_setters",
  "fraction",
  "freedesktop-icons",
  "iced",
- "iced_core 0.10.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
- "iced_futures 0.7.0 (git+https://github.com/pop-os/libcosmic?branch=theme-dark-light-switching)",
+ "iced_core",
+ "iced_futures",
  "iced_renderer",
  "iced_runtime",
  "iced_sctk",
@@ -2284,9 +2237,9 @@ checksum = "da2479e8c062e40bf0066ffa0bc823de0a9368974af99c9f6df941d2c231e03f"
 
 [[package]]
 name = "lock_api"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1cc9717a20b1bb222f333e6a92fd32f7d8a18ddc5a3191a11af45dcbf4dcd16"
+checksum = "3c168f8615b12bc01f9c17e2eb0cc07dcae1940121185446edc3744920e8ef45"
 dependencies = [
  "autocfg",
  "scopeguard",
@@ -2559,7 +2512,7 @@ version = "6.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6205bd8bb1e454ad2e27422015fb5e4f2bcc7e08fa8f27058670d208324a4d2d"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "crossbeam-channel",
  "filetime",
  "fsevent-sys",
@@ -2793,9 +2746,9 @@ dependencies = [
 
 [[package]]
 name = "parking"
-version = "2.1.1"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e52c774a4c39359c1d1c52e43f73dd91a75a614652c825408eec30c95a9b2067"
+checksum = "bb813b8af86854136c6922af0598d719255ecb2179515e6e7730d468f05c9cae"
 
 [[package]]
 name = "parking_lot"
@@ -2815,7 +2768,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3742b2c103b9f06bc9fff0a37ff4912935851bee6d36f3c02bcc755bcfec228f"
 dependencies = [
  "lock_api",
- "parking_lot_core 0.9.8",
+ "parking_lot_core 0.9.9",
 ]
 
 [[package]]
@@ -2834,13 +2787,13 @@ dependencies = [
 
 [[package]]
 name = "parking_lot_core"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93f00c865fe7cabf650081affecd3871070f26767e7b2070a3ffae14c654b447"
+checksum = "4c42a9226546d68acdd9c0a280d17ce19bfe27a46bf68784e4066115788d008e"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.1",
  "smallvec",
  "windows-targets 0.48.5",
 ]
@@ -2992,7 +2945,7 @@ dependencies = [
  "cfg-if",
  "concurrent-queue",
  "pin-project-lite",
- "rustix 0.38.18",
+ "rustix 0.38.20",
  "tracing",
  "windows-sys 0.48.0",
 ]
@@ -3191,6 +3144,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_syscall"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4722d768eff46b75989dd134e5c353f0d6296e5aaa3132e776cbdb56be7731aa"
+dependencies = [
+ "bitflags 1.3.2",
+]
+
+[[package]]
 name = "redox_users"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3203,9 +3165,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.10.0"
+version = "1.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d119d7c7ca818f8a53c300863d4f87566aac09943aef5b355bb83969dae75d87"
+checksum = "380b951a9c5e80ddfd6136919eef32310721aa4aacd4889a8d39124b026ab343"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3215,9 +3177,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "465c6fc0621e4abc4187a2bda0937bfd4f722c2730b29562e19689ea796c9a4b"
+checksum = "5f804c7828047e88b2d32e2d7fe5a105da8ee3264f01902f796c8e067dc2483f"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3226,9 +3188,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56d84fdd47036b038fc80dd333d10b6aab10d5d31f4a366e20014def75328d33"
+checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
 
 [[package]]
 name = "renderdoc-sys"
@@ -3269,7 +3231,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b91f7eff05f748767f183df4320a63d6936e9c6107d97c9e6bdd9784f4289c94"
 dependencies = [
  "base64",
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "serde",
  "serde_derive",
 ]
@@ -3319,9 +3281,9 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustix"
-version = "0.37.24"
+version = "0.37.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4279d76516df406a8bd37e7dff53fd37d1a093f997a3c34a5c21658c126db06d"
+checksum = "84f3f8f960ed3b5a59055428714943298bf3fa2d4a1d53135084e0544829d995"
 dependencies = [
  "bitflags 1.3.2",
  "errno",
@@ -3333,11 +3295,11 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.18"
+version = "0.38.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a74ee2d7c2581cd139b42447d7d9389b889bdaad3a73f1ebb16f2a3237bb19c"
+checksum = "67ce50cb2e16c2903e30d1cbccfd8387a74b9d4c938b6a4c5ec6cc7556f7a8a0"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "errno",
  "libc",
  "linux-raw-sys 0.4.10",
@@ -3412,18 +3374,18 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "serde"
-version = "1.0.188"
+version = "1.0.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf9e0fcba69a370eed61bcf2b728575f726b50b55cba78064753d708ddc7549e"
+checksum = "8e422a44e74ad4001bdc8eede9a4570ab52f71190e9c076d14369f38b9200537"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.188"
+version = "1.0.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4eca7ac642d82aa35b60049a6eccb4be6be75e599bd2e9adb5f875a737654af2"
+checksum = "1e48d1f918009ce3145511378cf68d613e3b3d9137d67272562080d68a2b32d5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3546,7 +3508,7 @@ name = "smithay-client-toolkit"
 version = "0.17.0"
 source = "git+https://github.com/smithay/client-toolkit?rev=dc8c4a0#dc8c4a035128208af65141fe12142a1dbc4a32bb"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "bytemuck",
  "calloop",
  "calloop-wayland-source",
@@ -3731,7 +3693,7 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.3.11"
-source = "git+https://github.com/DioxusLabs/taffy?rev=65bedf#65bedf128ec8cef40c1a21b6f141f2c771842cca"
+source = "git+https://github.com/DioxusLabs/taffy#23ff477566b0239f04d3b89a2b3a4da2495e9577"
 dependencies = [
  "arrayvec",
  "grid",
@@ -3748,7 +3710,7 @@ dependencies = [
  "cfg-if",
  "fastrand 2.0.1",
  "redox_syscall 0.3.5",
- "rustix 0.38.18",
+ "rustix 0.38.20",
  "windows-sys 0.48.0",
 ]
 
@@ -3892,11 +3854,10 @@ dependencies = [
 
 [[package]]
 name = "tracing"
-version = "0.1.37"
+version = "0.1.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ce8c33a8d48bd45d624a6e523445fd21ec13d3653cd51f681abf67418f54eb8"
+checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
 dependencies = [
- "cfg-if",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",
@@ -3904,9 +3865,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-attributes"
-version = "0.1.26"
+version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f4f31f56159e98206da9efd823404b79b6ef3143b4a7ab76e67b1751b25a4ab"
+checksum = "34704c8d6ebcbc939824180af020566b01a7c01f80641264eba0999f6c2b6be7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3915,9 +3876,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.31"
+version = "0.1.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0955b8137a1df6f1a2e9a37d8a6656291ff0297c1a97c24e0d8425fe2312f79a"
+checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
 dependencies = [
  "once_cell",
 ]
@@ -4287,7 +4248,7 @@ version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ca7d52347346f5473bf2f56705f360e8440873052e575e55890c4fa57843ed3"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "nix 0.26.4",
  "wayland-backend 0.3.2",
  "wayland-scanner 0.31.0",
@@ -4311,7 +4272,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "625c5029dbd43d25e6aa9615e88b829a5cad13b2819c4ae129fdbb7c31ab4c7e"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "cursor-icon",
  "wayland-backend 0.3.2",
 ]
@@ -4368,7 +4329,7 @@ version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e253d7107ba913923dc253967f35e8561a3c65f914543e46843c88ddd729e21c"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "wayland-backend 0.3.2",
  "wayland-client 0.31.1",
  "wayland-scanner 0.31.0",
@@ -4380,7 +4341,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad1f61b76b6c2d8742e10f9ba5c3737f6530b4c243132c2a2ccc8aa96fe25cd6"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "wayland-backend 0.3.2",
  "wayland-client 0.31.1",
  "wayland-protocols 0.31.0",
@@ -4502,7 +4463,7 @@ checksum = "8f478237b4bf0d5b70a39898a66fa67ca3a007d79f2520485b8b0c3dfc46f8c2"
 dependencies = [
  "arrayvec",
  "bit-vec",
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "codespan-reporting",
  "log",
  "naga",
@@ -4527,7 +4488,7 @@ dependencies = [
  "arrayvec",
  "ash",
  "bit-set",
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "block",
  "core-graphics-types",
  "d3d12",
@@ -4565,7 +4526,7 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0c153280bb108c2979eb5c7391cb18c56642dd3c072e55f52065e13e2a1252a"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.1",
  "js-sys",
  "web-sys",
 ]
@@ -4579,7 +4540,7 @@ dependencies = [
  "either",
  "home",
  "once_cell",
- "rustix 0.38.18",
+ "rustix 0.38.20",
 ]
 
 [[package]]
@@ -4638,10 +4599,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows"
-version = "0.48.0"
+name = "windows-core"
+version = "0.51.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e686886bc078bc1b0b600cac0147aadb815089b6e4da64016cbd754b6342700f"
+checksum = "f1f8cf84f35d2db49a46868f947758c7a1138116f7fac3bc844f43ade1292e64"
 dependencies = [
  "windows-targets 0.48.5",
 ]
@@ -4786,9 +4747,9 @@ checksum = "ed94fce61571a4006852b7389a063ab983c02eb1bb37b47f8272ce92d06d9538"
 
 [[package]]
 name = "winnow"
-version = "0.5.16"
+version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "037711d82167854aff2018dfd193aa0fef5370f456732f0d5a0c59b0f1b4b907"
+checksum = "a3b801d0e0a6726477cc207f60162da452f3a95adb368399bef20a946e06f65c"
 dependencies = [
  "memchr",
 ]
