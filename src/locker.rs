@@ -529,8 +529,9 @@ impl cosmic::Application for App {
             }
             match &self.flags.current_user.gecos {
                 Some(gecos) => {
+                    let full_name = gecos.split(",").next().unwrap_or("");
                     column = column.push(
-                        widget::container(widget::text::title4(gecos))
+                        widget::container(widget::text::title4(full_name))
                             .width(Length::Fill)
                             .align_x(alignment::Horizontal::Center),
                     );
