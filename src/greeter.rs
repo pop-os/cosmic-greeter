@@ -616,7 +616,7 @@ impl cosmic::Application for App {
 
             column = column.push(
                 //TODO: use button
-                widget::pick_list(
+                iced::widget::pick_list(
                     &self.session_names,
                     Some(self.selected_session.clone()),
                     Message::Session,

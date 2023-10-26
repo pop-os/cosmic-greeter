@@ -25,9 +25,13 @@ version = "0.9.0"
 features = ["sync-codec"]
 
 [dependencies.libcosmic]
-git = "https://github.com/pop-os/libcosmic"
+# git = "https://github.com/pop-os/libcosmic"
+path = "../libcosmic"
 features = ["tokio", "wayland"]
 
 [dependencies.tokio]
 version = "1.33.0"
 features = ["full"]
+
+[patch.crates-io]
+# pam-sys = { path = "../../pam-sys" }

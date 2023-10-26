@@ -6,7 +6,7 @@ use cosmic::{
     executor,
     iced::{
         self, alignment,
-        event::wayland::{Event as WaylandEvent, LayerEvent, OutputEvent},
+        event::wayland::{Event as WaylandEvent, LayerEvent, OutputEvent, SessionLockEvent},
         futures::{self, SinkExt},
         subscription,
         wayland::{
@@ -14,6 +14,12 @@ use cosmic::{
             layer_surface::{
                 destroy_layer_surface, get_layer_surface, Anchor, KeyboardInteractivity, Layer,
             },
+            session_lock::{
+                lock,
+                get_lock_surface,
+                // destroy_lock_surface,
+                unlock,
+            }
         },
         Length, Subscription,
     },
@@ -78,7 +84,7 @@ pub fn pam_thread(username: String, conversation: Conversation) -> Result<(), pa
     //TODO: send errors to GUI, restart process
 
     // Create PAM context
-    let mut context = pam_client::Context::new("cosmic-locker", Some(&username), conversation)?;
+    let mut context = pam_client::Context::new("login", Some(&username), conversation)?;
 
     // Authenticate the user (ask for password, 2nd-factor token, fingerprint, etc.)
     log::info!("authenticate");
@@ -198,6 +204,7 @@ pub enum Message {
     None,
     OutputEvent(OutputEvent, WlOutput),
     LayerEvent(LayerEvent, SurfaceId),
+    SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     Prompt(String, bool, Option<String>),
     Submit,
@@ -210,6 +217,7 @@ pub struct App {
     core: Core,
     flags: Flags,
     next_surface_id: SurfaceId,
+    outputs: Vec<WlOutput>,
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
@@ -255,6 +263,7 @@ impl cosmic::Application for App {
                 core,
                 flags,
                 next_surface_id: SurfaceId(1),
+                outputs: Vec::new(),
                 surface_ids: HashMap::new(),
                 active_surface_id_opt: None,
                 surface_images: HashMap::new(),
@@ -263,7 +272,7 @@ impl cosmic::Application for App {
                 error_opt: None,
                 exited: false,
             },
-            Command::none(),
+            lock()
         )
     }
 
@@ -337,6 +346,7 @@ impl cosmic::Application for App {
                         }
 
                         return Command::batch([
+                            /*
                             get_layer_surface(SctkLayerSurfaceSettings {
                                 id: surface_id,
                                 layer: Layer::Overlay,
@@ -355,6 +365,8 @@ impl cosmic::Application for App {
                                 exclusive_zone: -1,
                                 size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
                             }),
+                            */
+                            get_lock_surface(surface_id, output),
                             widget::text_input::focus(text_input_id(surface_id)),
                         ]);
                     }
@@ -363,7 +375,8 @@ impl cosmic::Application for App {
                         match self.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.surface_images.remove(&surface_id);
-                                return destroy_layer_surface(surface_id);
+                                // TODO
+                                // return destroy_layer_surface(surface_id);
                             }
                             None => {
                                 log::warn!("output {}: no surface found", output.id());
@@ -388,6 +401,9 @@ impl cosmic::Application for App {
                     log::info!("done with surface {}", surface_id.0);
                 }
             },
+            Message::SessionLockEvent(session_lock_event) => match session_lock_event {
+                _ => {}
+            }
             Message::Channel(value_tx) => {
                 self.value_tx_opt = Some(value_tx);
             }
@@ -633,6 +649,7 @@ impl cosmic::Application for App {
                     WaylandEvent::Layer(layer_event, _surface, surface_id) => {
                         Some(Message::LayerEvent(layer_event, surface_id))
                     }
+                    WaylandEvent::SessionLock(evt) => Some(Message::SessionLockEvent(evt)),
                     _ => None,
                 },
                 _ => None,
