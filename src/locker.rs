@@ -6,14 +6,14 @@ use cosmic::{
     executor,
     iced::{
         self, alignment,
-        event::wayland::{Event as WaylandEvent, LayerEvent, OutputEvent},
+        event::wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent},
         futures::{self, SinkExt},
         subscription,
-        wayland::{
-            actions::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
-            layer_surface::{
-                destroy_layer_surface, get_layer_surface, Anchor, KeyboardInteractivity, Layer,
-            },
+        wayland::session_lock::{
+            get_lock_surface,
+            lock,
+            destroy_lock_surface,
+            unlock,
         },
         Length, Subscription,
     },
@@ -26,7 +26,6 @@ use std::{
     ffi::{CStr, CString},
     fs,
     path::Path,
-    process,
 };
 use tokio::{sync::mpsc, task, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
@@ -197,7 +196,7 @@ pub struct Flags {
 pub enum Message {
     None,
     OutputEvent(OutputEvent, WlOutput),
-    LayerEvent(LayerEvent, SurfaceId),
+    SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     Prompt(String, bool, Option<String>),
     Submit,
@@ -263,7 +262,7 @@ impl cosmic::Application for App {
                 error_opt: None,
                 exited: false,
             },
-            Command::none(),
+            lock(),
         )
     }
 
@@ -337,24 +336,7 @@ impl cosmic::Application for App {
                         }
 
                         return Command::batch([
-                            get_layer_surface(SctkLayerSurfaceSettings {
-                                id: surface_id,
-                                layer: Layer::Overlay,
-                                keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                                pointer_interactivity: true,
-                                anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-                                output: IcedOutput::Output(output),
-                                namespace: "cosmic-locker".into(),
-                                size: Some((None, None)),
-                                margin: IcedMargin {
-                                    top: 0,
-                                    bottom: 0,
-                                    left: 0,
-                                    right: 0,
-                                },
-                                exclusive_zone: -1,
-                                size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
-                            }),
+                            get_lock_surface(surface_id, output),
                             widget::text_input::focus(text_input_id(surface_id)),
                         ]);
                     }
@@ -363,7 +345,7 @@ impl cosmic::Application for App {
                         match self.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.surface_images.remove(&surface_id);
-                                return destroy_layer_surface(surface_id);
+                                return destroy_lock_surface(surface_id);
                             }
                             None => {
                                 log::warn!("output {}: no surface found", output.id());
@@ -375,18 +357,16 @@ impl cosmic::Application for App {
                     }
                 }
             }
-            Message::LayerEvent(layer_event, surface_id) => match layer_event {
-                LayerEvent::Focused => {
+            Message::SessionLockEvent(session_lock_event) => match session_lock_event {
+                SessionLockEvent::Focused(_, surface_id) => {
                     log::info!("focus surface {}", surface_id.0);
                     self.active_surface_id_opt = Some(surface_id);
                     return widget::text_input::focus(text_input_id(surface_id));
                 }
-                LayerEvent::Unfocused => {
-                    log::info!("unfocus surface {}", surface_id.0);
+                SessionLockEvent::Unlocked => {
+                    self.exited = true;
                 }
-                LayerEvent::Done => {
-                    log::info!("done with surface {}", surface_id.0);
-                }
+                _ => {}
             },
             Message::Channel(value_tx) => {
                 self.value_tx_opt = Some(value_tx);
@@ -422,19 +402,21 @@ impl cosmic::Application for App {
                 self.error_opt = Some(error);
             }
             Message::Exit => {
-                self.exited = true;
-
                 let mut commands = Vec::new();
                 for (_output, surface_id) in self.surface_ids.drain() {
                     self.surface_images.remove(&surface_id);
-                    commands.push(destroy_layer_surface(surface_id));
+                    commands.push(destroy_lock_surface(surface_id));
                 }
-                //TODO: cleaner method to exit?
-                commands.push(Command::perform(async { process::exit(0) }, |x| x));
+                commands.push(unlock());
+                // Wait to exit until `Unlocked` event, when server has processed unlock
                 return Command::batch(commands);
             }
         }
         Command::none()
+    }
+
+    fn should_exit(&self) -> bool {
+        self.exited
     }
 
     // Not used for layer surface window
@@ -630,9 +612,7 @@ impl cosmic::Application for App {
                     WaylandEvent::Output(output_event, output) => {
                         Some(Message::OutputEvent(output_event, output))
                     }
-                    WaylandEvent::Layer(layer_event, _surface, surface_id) => {
-                        Some(Message::LayerEvent(layer_event, surface_id))
-                    }
+                    WaylandEvent::SessionLock(evt) => Some(Message::SessionLockEvent(evt)),
                     _ => None,
                 },
                 _ => None,
