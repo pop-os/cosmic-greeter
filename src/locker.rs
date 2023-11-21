@@ -9,12 +9,7 @@ use cosmic::{
         event::wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent},
         futures::{self, SinkExt},
         subscription,
-        wayland::session_lock::{
-            get_lock_surface,
-            lock,
-            destroy_lock_surface,
-            unlock,
-        },
+        wayland::session_lock::{destroy_lock_surface, get_lock_surface, lock, unlock},
         Length, Subscription,
     },
     iced_runtime::core::window::Id as SurfaceId,
@@ -594,13 +589,13 @@ impl cosmic::Application for App {
         .into()
     }
 
-    //TODO: subscription for date/time
     fn subscription(&self) -> Subscription<Self::Message> {
         if self.exited {
             return Subscription::none();
         }
 
-        struct SomeWorker;
+        struct HeartbeatSubscription;
+        struct PamSubscription;
 
         //TODO: how to avoid cloning this on every time subscription is called?
         let username = self.flags.current_user.name.clone();
@@ -618,7 +613,19 @@ impl cosmic::Application for App {
                 _ => None,
             }),
             subscription::channel(
-                std::any::TypeId::of::<SomeWorker>(),
+                std::any::TypeId::of::<HeartbeatSubscription>(),
+                16,
+                |mut msg_tx| async move {
+                    loop {
+                        // Send heartbeat once a second to update time
+                        //TODO: only send this when needed
+                        msg_tx.send(Message::None).await.unwrap();
+                        time::sleep(time::Duration::new(1, 0)).await;
+                    }
+                },
+            ),
+            subscription::channel(
+                std::any::TypeId::of::<PamSubscription>(),
                 16,
                 |mut msg_tx| async move {
                     loop {
