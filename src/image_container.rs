@@ -122,7 +122,13 @@ where
         viewport: &Rectangle,
     ) {
         match &self.image_opt {
-            Some(image) => draw(renderer, layout, image, self.content_fit, [0.0, 0.0, 0.0, 0.0]),
+            Some(image) => draw(
+                renderer,
+                layout,
+                image,
+                self.content_fit,
+                [0.0, 0.0, 0.0, 0.0],
+            ),
             None => {}
         }
 

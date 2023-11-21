@@ -4,12 +4,12 @@
 use cosmic::app::{message, Command, Core, Settings};
 use cosmic::{
     executor,
-    iced::{self, alignment, Length},
+    iced::{self, alignment, futures::SinkExt, subscription, Length},
     style, widget, Element,
 };
 use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
 use std::{collections::HashMap, env, fs, io, path::Path, process, sync::Arc};
-use tokio::net::UnixStream;
+use tokio::{net::UnixStream, time};
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
@@ -659,5 +659,22 @@ impl cosmic::Application for App {
         .image(self.flags.background.clone())
         .content_fit(iced::ContentFit::Cover)
         .into()
+    }
+
+    fn subscription(&self) -> subscription::Subscription<Self::Message> {
+        struct HeartbeatSubscription;
+
+        subscription::channel(
+            std::any::TypeId::of::<HeartbeatSubscription>(),
+            16,
+            |mut msg_tx| async move {
+                loop {
+                    // Send heartbeat once a second to update time
+                    //TODO: only send this when needed
+                    msg_tx.send(Message::None).await.unwrap();
+                    time::sleep(time::Duration::new(1, 0)).await;
+                }
+            },
+        )
     }
 }
