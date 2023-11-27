@@ -17,6 +17,7 @@ use cosmic::{
 };
 use cosmic_config::CosmicConfigEntry;
 use std::{
+    any::TypeId,
     collections::HashMap,
     ffi::{CStr, CString},
     fs,
@@ -193,6 +194,7 @@ pub enum Message {
     OutputEvent(OutputEvent, WlOutput),
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
+    BackgroundState(cosmic_bg_config::state::State),
     Prompt(String, bool, Option<String>),
     Submit,
     Error(String),
@@ -207,10 +209,58 @@ pub struct App {
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
+    surface_names: HashMap<SurfaceId, String>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
     exited: bool,
+}
+
+impl App {
+    //TODO: cache wallpapers by source?
+    fn update_wallpapers(&mut self) {
+        for (output, surface_id) in self.surface_ids.iter() {
+            if self.surface_images.contains_key(surface_id) {
+                continue;
+            }
+
+            let output_name = match self.surface_names.get(surface_id) {
+                Some(some) => some,
+                None => continue,
+            };
+
+            log::info!("updating wallpaper for {:?}", output_name);
+
+            for (wallpaper_output_name, wallpaper_source) in self.flags.wallpapers.iter() {
+                if wallpaper_output_name == output_name {
+                    match wallpaper_source {
+                        cosmic_bg_config::Source::Path(path) => {
+                            match fs::read(path) {
+                                Ok(bytes) => {
+                                    let image = widget::image::Handle::from_memory(bytes);
+                                    self.surface_images.insert(*surface_id, image);
+                                    //TODO: what to do about duplicates?
+                                    break;
+                                }
+                                Err(err) => {
+                                    log::warn!(
+                                        "output {}: failed to load wallpaper {:?}: {:?}",
+                                        output.id(),
+                                        path,
+                                        err
+                                    );
+                                }
+                            }
+                        }
+                        cosmic_bg_config::Source::Color(color) => {
+                            //TODO: support color sources
+                            log::warn!("output {}: unsupported source {:?}", output.id(), color);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Implement [`cosmic::Application`] to integrate with COSMIC.
@@ -252,6 +302,7 @@ impl cosmic::Application for App {
                 surface_ids: HashMap::new(),
                 active_surface_id_opt: None,
                 surface_images: HashMap::new(),
+                surface_names: HashMap::new(),
                 value_tx_opt: None,
                 prompt_opt: None,
                 error_opt: None,
@@ -286,45 +337,16 @@ impl cosmic::Application for App {
                         }
 
                         match output_info_opt {
-                            Some(output_info) => {
-                                match output_info.name {
-                                    Some(output_name) => {
-                                        for (wallpaper_output_name, wallpaper_source) in
-                                            self.flags.wallpapers.iter()
-                                        {
-                                            if wallpaper_output_name == &output_name {
-                                                match wallpaper_source {
-                                                    cosmic_bg_config::Source::Path(path) => {
-                                                        match fs::read(path) {
-                                                            Ok(bytes) => {
-                                                                let image = widget::image::Handle::from_memory(bytes);
-                                                                self.surface_images
-                                                                    .insert(surface_id, image);
-                                                                //TODO: what to do about duplicates?
-                                                                break;
-                                                            }
-                                                            Err(err) => {
-                                                                log::warn!("output {}: failed to load wallpaper {:?}: {:?}", output.id(), path, err);
-                                                            }
-                                                        }
-                                                    }
-                                                    cosmic_bg_config::Source::Color(color) => {
-                                                        //TODO: support color sources
-                                                        log::warn!(
-                                                            "output {}: unsupported source {:?}",
-                                                            output.id(),
-                                                            color
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    None => {
-                                        log::warn!("output {}: no output name", output.id());
-                                    }
+                            Some(output_info) => match output_info.name {
+                                Some(output_name) => {
+                                    self.surface_names.insert(surface_id, output_name.clone());
+                                    self.surface_images.remove(&surface_id);
+                                    self.update_wallpapers();
                                 }
-                            }
+                                None => {
+                                    log::warn!("output {}: no output name", output.id());
+                                }
+                            },
                             None => {
                                 log::warn!("output {}: no output info", output.id());
                             }
@@ -340,6 +362,7 @@ impl cosmic::Application for App {
                         match self.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.surface_images.remove(&surface_id);
+                                self.surface_names.remove(&surface_id);
                                 return destroy_lock_surface(surface_id);
                             }
                             None => {
@@ -365,6 +388,11 @@ impl cosmic::Application for App {
             },
             Message::Channel(value_tx) => {
                 self.value_tx_opt = Some(value_tx);
+            }
+            Message::BackgroundState(background_state) => {
+                self.flags.wallpapers = background_state.wallpapers;
+                self.surface_images.clear();
+                self.update_wallpapers();
             }
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
@@ -400,6 +428,7 @@ impl cosmic::Application for App {
                 let mut commands = Vec::new();
                 for (_output, surface_id) in self.surface_ids.drain() {
                     self.surface_images.remove(&surface_id);
+                    self.surface_names.remove(&surface_id);
                     commands.push(destroy_lock_surface(surface_id));
                 }
                 commands.push(unlock());
@@ -594,6 +623,7 @@ impl cosmic::Application for App {
             return Subscription::none();
         }
 
+        struct BackgroundSubscription;
         struct HeartbeatSubscription;
         struct PamSubscription;
 
@@ -612,8 +642,20 @@ impl cosmic::Application for App {
                 },
                 _ => None,
             }),
+            cosmic_config::config_state_subscription(
+                TypeId::of::<BackgroundSubscription>(),
+                cosmic_bg_config::NAME.into(),
+                cosmic_bg_config::state::State::version(),
+            )
+            .map(|(_, res)| match res {
+                Ok(background_state) => Message::BackgroundState(background_state),
+                Err((errs, background_state)) => {
+                    log::info!("errors loading background state: {:?}", errs);
+                    Message::BackgroundState(background_state)
+                }
+            }),
             subscription::channel(
-                std::any::TypeId::of::<HeartbeatSubscription>(),
+                TypeId::of::<HeartbeatSubscription>(),
                 16,
                 |mut msg_tx| async move {
                     loop {
@@ -625,7 +667,7 @@ impl cosmic::Application for App {
                 },
             ),
             subscription::channel(
-                std::any::TypeId::of::<PamSubscription>(),
+                TypeId::of::<PamSubscription>(),
                 16,
                 |mut msg_tx| async move {
                     loop {
