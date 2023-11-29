@@ -5,6 +5,9 @@ mod greeter;
 mod image_container;
 mod locker;
 
+#[cfg(feature = "logind")]
+mod logind;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 

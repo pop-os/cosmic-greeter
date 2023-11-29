@@ -198,6 +198,7 @@ pub enum Message {
     BackgroundState(cosmic_bg_config::state::State),
     Prompt(String, bool, Option<String>),
     Submit,
+    Suspend,
     Error(String),
     Exit,
 }
@@ -422,6 +423,21 @@ impl cosmic::Application for App {
                 },
                 None => log::warn!("tried to submit without prompt"),
             },
+            Message::Suspend => {
+                #[cfg(feature = "logind")]
+                return Command::perform(
+                    async move {
+                        match crate::logind::suspend().await {
+                            Ok(()) => message::none(),
+                            Err(err) => {
+                                log::error!("failed to suspend: {:?}", err);
+                                message::app(Message::Error(err.to_string()))
+                            }
+                        }
+                    },
+                    |x| x,
+                );
+            }
             Message::Error(error) => {
                 self.error_opt = Some(error);
             }
@@ -499,7 +515,7 @@ impl cosmic::Application for App {
                     .on_press(Message::None),
                 widget::button(widget::icon::from_name("system-suspend-symbolic"))
                     .padding(12.0)
-                    .on_press(Message::None),
+                    .on_press(Message::Suspend),
             ]
             .padding([16.0, 0.0, 0.0, 0.0])
             .spacing(8.0);
