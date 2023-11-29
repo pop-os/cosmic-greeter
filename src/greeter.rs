@@ -271,10 +271,11 @@ pub enum Message {
     Socket(SocketState),
     Prompt(String, bool, Option<String>),
     Session(String),
-    Error(String),
     Username(Arc<UnixStream>, String),
     Auth(Arc<UnixStream>, Option<String>),
     Login(Arc<UnixStream>),
+    Suspend,
+    Error(String),
     Exit,
 }
 
@@ -371,9 +372,6 @@ impl cosmic::Application for App {
             Message::Session(selected_session) => {
                 self.selected_session = selected_session;
             }
-            Message::Error(error) => {
-                self.error_opt = Some(error);
-            }
             Message::Username(socket, username) => {
                 self.username_opt = Some(username.clone());
                 return request_command(socket, Request::CreateSession { username });
@@ -394,6 +392,24 @@ impl cosmic::Application for App {
                     }
                     None => todo!("session {:?} not found", self.selected_session),
                 }
+            }
+            Message::Suspend => {
+                #[cfg(feature = "logind")]
+                return Command::perform(
+                    async move {
+                        match crate::logind::suspend().await {
+                            Ok(()) => message::none(),
+                            Err(err) => {
+                                log::error!("failed to suspend: {:?}", err);
+                                message::app(Message::Error(err.to_string()))
+                            }
+                        }
+                    },
+                    |x| x,
+                );
+            }
+            Message::Error(error) => {
+                self.error_opt = Some(error);
             }
             Message::Exit => {
                 //TODO: cleaner method to exit?
@@ -456,7 +472,7 @@ impl cosmic::Application for App {
                     .on_press(Message::None),
                 widget::button(widget::icon::from_name("system-suspend-symbolic"))
                     .padding(12.0)
-                    .on_press(Message::None),
+                    .on_press(Message::Suspend),
                 widget::button(widget::icon::from_name("system-reboot-symbolic"))
                     .padding(12.0)
                     .on_press(Message::None),
