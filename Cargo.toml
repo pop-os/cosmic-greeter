@@ -8,10 +8,12 @@ chrono = "0.4.31"
 env_logger = "0.10.0"
 freedesktop_entry_parser = "1.3.0"
 log = "0.4.20"
+logind-zbus = { version = "3.1.2", optional = true }
 pam-client = "0.5.0"
 pwd = "1.4.0"
 shlex = "1.2.0"
 wayland-client = "0.31.1"
+zbus = { version = "3.14.1", optional = true }
 
 [dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"
@@ -31,3 +33,7 @@ features = ["tokio", "wayland"]
 [dependencies.tokio]
 version = "1.33.0"
 features = ["full"]
+
+[features]
+default = ["logind"]
+logind = ["logind-zbus", "zbus"]
