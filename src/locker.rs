@@ -194,6 +194,7 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
+    NetworkIcon(Option<&'static str>),
     Prompt(String, bool, Option<String>),
     Submit,
     Suspend,
@@ -210,6 +211,7 @@ pub struct App {
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
     surface_names: HashMap<SurfaceId, String>,
     text_input_ids: HashMap<SurfaceId, widget::Id>,
+    network_icon_opt: Option<&'static str>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
@@ -302,6 +304,7 @@ impl cosmic::Application for App {
                 surface_images: HashMap::new(),
                 surface_names: HashMap::new(),
                 text_input_ids: HashMap::new(),
+                network_icon_opt: None,
                 value_tx_opt: None,
                 prompt_opt: None,
                 error_opt: None,
@@ -397,6 +400,9 @@ impl cosmic::Application for App {
                 self.surface_images.clear();
                 self.update_wallpapers();
             }
+            Message::NetworkIcon(network_icon_opt) => {
+                self.network_icon_opt = network_icon_opt;
+            }
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
                 self.prompt_opt = Some((prompt, secret, value_opt));
@@ -489,16 +495,17 @@ impl cosmic::Application for App {
                 column
             };
 
+            let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
+
+            if let Some(network_icon) = self.network_icon_opt {
+                status_row = status_row.push(widget::icon::from_name(network_icon));
+            }
+
             //TODO: get actual status
-            let status_row = iced::widget::row![
-                widget::icon::from_name("network-wireless-signal-ok-symbolic",),
-                iced::widget::row![
-                    widget::icon::from_name("battery-level-50-symbolic"),
-                    widget::text("50%"),
-                ]
-            ]
-            .padding(16.0)
-            .spacing(12.0);
+            status_row = status_row.push(iced::widget::row![
+                widget::icon::from_name("battery-level-50-symbolic"),
+                widget::text("50%"),
+            ]);
 
             //TODO: implement these buttons
             let button_row = iced::widget::row![
@@ -643,6 +650,17 @@ impl cosmic::Application for App {
         struct HeartbeatSubscription;
         struct PamSubscription;
 
+        //TODO: just use one vec for all subscriptions
+        let mut network_subscriptions = Vec::with_capacity(1);
+
+        #[cfg(feature = "networkmanager")]
+        {
+            network_subscriptions.push(
+                crate::networkmanager::subscription()
+                    .map(|network_icon_opt| Message::NetworkIcon(network_icon_opt)),
+            );
+        }
+
         //TODO: how to avoid cloning this on every time subscription is called?
         let username = self.flags.current_user.name.clone();
         Subscription::batch([
@@ -707,17 +725,18 @@ impl cosmic::Application for App {
                                 break;
                             }
                             Err(err) => {
-                                log::info!("authentication error: {:?}", err);
+                                log::warn!("authentication error: {}", err);
                                 msg_tx.send(Message::Error(err.to_string())).await.unwrap();
                             }
                         }
                     }
 
                     loop {
-                        time::sleep(time::Duration::new(1, 0)).await;
+                        time::sleep(time::Duration::new(60, 0)).await;
                     }
                 },
             ),
+            Subscription::batch(network_subscriptions),
         ])
     }
 }

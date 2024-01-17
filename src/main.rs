@@ -8,6 +8,9 @@ mod locker;
 #[cfg(feature = "logind")]
 mod logind;
 
+#[cfg(feature = "networkmanager")]
+mod networkmanager;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
