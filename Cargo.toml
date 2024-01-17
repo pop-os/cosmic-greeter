@@ -8,11 +8,15 @@ chrono = "0.4.31"
 env_logger = "0.10.0"
 freedesktop_entry_parser = "1.3.0"
 log = "0.4.20"
-logind-zbus = { version = "3.1.2", optional = true }
 pam-client = "0.5.0"
 pwd = "1.4.0"
 shlex = "1.2.0"
 wayland-client = "0.31.1"
+# For network status using networkmanager feature
+cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
+# For logind integration using logind feature
+logind-zbus = { version = "3.1.2", optional = true }
+# Required for some features
 zbus = { version = "3.14.1", optional = true }
 
 [dependencies.cosmic-bg-config]
@@ -35,5 +39,6 @@ version = "1.33.0"
 features = ["full"]
 
 [features]
-default = ["logind"]
+default = ["logind", "networkmanager"]
 logind = ["logind-zbus", "zbus"]
+networkmanager = ["cosmic-dbus-networkmanager", "zbus"]

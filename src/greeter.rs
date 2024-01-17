@@ -584,20 +584,24 @@ impl cosmic::Application for App {
                     match &self.prompt_opt {
                         Some((prompt, secret, value_opt)) => match value_opt {
                             Some(value) => {
-                                let mut text_input = widget::text_input(&prompt, &value)
-                                    .id(self.text_input_id.clone())
-                                    .leading_icon(
-                                        widget::icon::from_name("system-lock-screen-symbolic")
-                                            .into(),
-                                    )
-                                    .trailing_icon(
-                                        widget::icon::from_name("document-properties-symbolic")
-                                            .into(),
-                                    )
-                                    .on_input(|value| {
-                                        Message::Prompt(prompt.clone(), *secret, Some(value))
-                                    })
-                                    .on_submit(Message::Auth(socket.clone(), Some(value.clone())));
+                                let mut text_input =
+                                    widget::text_input(prompt.clone(), value.clone())
+                                        .id(self.text_input_id.clone())
+                                        .leading_icon(
+                                            widget::icon::from_name("system-lock-screen-symbolic")
+                                                .into(),
+                                        )
+                                        .trailing_icon(
+                                            widget::icon::from_name("document-properties-symbolic")
+                                                .into(),
+                                        )
+                                        .on_input(|value| {
+                                            Message::Prompt(prompt.clone(), *secret, Some(value))
+                                        })
+                                        .on_submit(Message::Auth(
+                                            socket.clone(),
+                                            Some(value.clone()),
+                                        ));
 
                                 if *secret {
                                     text_input = text_input.password()
