@@ -1,5 +1,5 @@
 use cosmic::iced::{
-    futures::{channel::mpsc, SinkExt},
+    futures::{channel::mpsc, SinkExt, StreamExt},
     subscription, Subscription,
 };
 use cosmic_dbus_networkmanager::{device::SpecificDevice, nm::NetworkManager};
@@ -65,7 +65,7 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<&'static str>>) -> Result<
     let zbus = Connection::system().await?;
     let nm = NetworkManager::new(&zbus).await?;
 
-    //TOOD: use receive_active_connections_changed
+    let mut active_conns_changed = nm.receive_active_connections_changed().await;
     loop {
         let mut icon = NetworkIcon::None;
 
@@ -100,7 +100,10 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<&'static str>>) -> Result<
 
         msg_tx.send(Some(icon.name())).await.unwrap();
 
-        //TODO: select best timeout
-        time::sleep(time::Duration::new(5, 0)).await;
+        // Waits until active connections have changed and at least one second has passed
+        tokio::join!(
+            active_conns_changed.next(),
+            time::sleep(time::Duration::from_secs(1))
+        );
     }
 }

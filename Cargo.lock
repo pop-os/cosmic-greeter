@@ -821,6 +821,7 @@ dependencies = [
  "pwd",
  "shlex",
  "tokio",
+ "upower_dbus",
  "wayland-client 0.31.1",
  "zbus",
 ]
@@ -4272,6 +4273,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f962df74c8c05a667b5ee8bcf162993134c104e96440b663c8daa176dc772d8c"
 
 [[package]]
+name = "upower_dbus"
+version = "0.3.2"
+source = "git+https://github.com/pop-os/dbus-settings-bindings#3644bc909984842f35adb1057ef6e0a277c1aa6a"
+dependencies = [
+ "serde",
+ "serde_repr",
+ "zbus",
+]
+
+[[package]]
 name = "url"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4726,7 +4737,7 @@ dependencies = [
  "js-sys",
  "log",
  "naga",
- "parking_lot 0.12.1",
+ "parking_lot 0.11.2",
  "profiling",
  "raw-window-handle",
  "smallvec",
@@ -4751,7 +4762,7 @@ dependencies = [
  "codespan-reporting",
  "log",
  "naga",
- "parking_lot 0.12.1",
+ "parking_lot 0.11.2",
  "profiling",
  "raw-window-handle",
  "rustc-hash",
@@ -4791,7 +4802,7 @@ dependencies = [
  "naga",
  "objc",
  "once_cell",
- "parking_lot 0.12.1",
+ "parking_lot 0.11.2",
  "profiling",
  "range-alloc",
  "raw-window-handle",
