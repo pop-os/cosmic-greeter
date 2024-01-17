@@ -6,7 +6,10 @@ use cosmic::{
     executor,
     iced::{
         self, alignment,
-        event::wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent},
+        event::{
+            self,
+            wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent},
+        },
         futures::{self, SinkExt},
         subscription,
         wayland::session_lock::{destroy_lock_surface, get_lock_surface, lock, unlock},
@@ -85,11 +88,6 @@ pub fn pam_thread(username: String, conversation: Conversation) -> Result<(), pa
     context.acct_mgmt(pam_client::Flag::NONE)?;
 
     Ok(())
-}
-
-fn text_input_id(surface_id: SurfaceId) -> widget::Id {
-    //TODO: store this in a map?
-    widget::Id(iced::id::Internal::Unique(surface_id.0 as u64))
 }
 
 pub struct Conversation {
@@ -207,15 +205,14 @@ pub enum Message {
 pub struct App {
     core: Core,
     flags: Flags,
-    next_surface_id: SurfaceId,
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
     surface_names: HashMap<SurfaceId, String>,
+    text_input_ids: HashMap<SurfaceId, widget::Id>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
-    exited: bool,
 }
 
 impl App {
@@ -300,15 +297,14 @@ impl cosmic::Application for App {
             App {
                 core,
                 flags,
-                next_surface_id: SurfaceId(1),
                 surface_ids: HashMap::new(),
                 active_surface_id_opt: None,
                 surface_images: HashMap::new(),
                 surface_names: HashMap::new(),
+                text_input_ids: HashMap::new(),
                 value_tx_opt: None,
                 prompt_opt: None,
                 error_opt: None,
-                exited: false,
             },
             lock(),
         )
@@ -323,16 +319,14 @@ impl cosmic::Application for App {
                     OutputEvent::Created(output_info_opt) => {
                         log::info!("output {}: created", output.id());
 
-                        let surface_id = self.next_surface_id;
-                        self.next_surface_id.0 += 1;
-
+                        let surface_id = SurfaceId::unique();
                         match self.surface_ids.insert(output.clone(), surface_id) {
                             Some(old_surface_id) => {
                                 //TODO: remove old surface?
                                 log::warn!(
-                                    "output {}: already had surface ID {}",
+                                    "output {}: already had surface ID {:?}",
                                     output.id(),
-                                    old_surface_id.0
+                                    old_surface_id
                                 );
                             }
                             None => {}
@@ -354,9 +348,13 @@ impl cosmic::Application for App {
                             }
                         }
 
+                        let text_input_id = widget::Id::unique();
+                        self.text_input_ids
+                            .insert(surface_id, text_input_id.clone());
+
                         return Command::batch([
                             get_lock_surface(surface_id, output),
-                            widget::text_input::focus(text_input_id(surface_id)),
+                            widget::text_input::focus(text_input_id),
                         ]);
                     }
                     OutputEvent::Removed => {
@@ -365,6 +363,7 @@ impl cosmic::Application for App {
                             Some(surface_id) => {
                                 self.surface_images.remove(&surface_id);
                                 self.surface_names.remove(&surface_id);
+                                self.text_input_ids.remove(&surface_id);
                                 return destroy_lock_surface(surface_id);
                             }
                             None => {
@@ -379,12 +378,14 @@ impl cosmic::Application for App {
             }
             Message::SessionLockEvent(session_lock_event) => match session_lock_event {
                 SessionLockEvent::Focused(_, surface_id) => {
-                    log::info!("focus surface {}", surface_id.0);
+                    log::info!("focus surface {:?}", surface_id);
                     self.active_surface_id_opt = Some(surface_id);
-                    return widget::text_input::focus(text_input_id(surface_id));
+                    if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                        return widget::text_input::focus(text_input_id.clone());
+                    }
                 }
                 SessionLockEvent::Unlocked => {
-                    self.exited = true;
+                    return iced::window::close(SurfaceId::MAIN);
                 }
                 _ => {}
             },
@@ -401,7 +402,9 @@ impl cosmic::Application for App {
                 self.prompt_opt = Some((prompt, secret, value_opt));
                 if prompt_was_none {
                     if let Some(surface_id) = self.active_surface_id_opt {
-                        return widget::text_input::focus(text_input_id(surface_id));
+                        if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                            return widget::text_input::focus(text_input_id.clone());
+                        }
                     }
                 }
             }
@@ -446,6 +449,7 @@ impl cosmic::Application for App {
                 for (_output, surface_id) in self.surface_ids.drain() {
                     self.surface_images.remove(&surface_id);
                     self.surface_names.remove(&surface_id);
+                    self.text_input_ids.remove(&surface_id);
                     commands.push(destroy_lock_surface(surface_id));
                 }
                 commands.push(unlock());
@@ -454,10 +458,6 @@ impl cosmic::Application for App {
             }
         }
         Command::none()
-    }
-
-    fn should_exit(&self) -> bool {
-        self.exited
     }
 
     // Not used for layer surface window
@@ -565,8 +565,7 @@ impl cosmic::Application for App {
             match &self.prompt_opt {
                 Some((prompt, secret, value_opt)) => match value_opt {
                     Some(value) => {
-                        let mut text_input = widget::text_input(&prompt, &value)
-                            .id(text_input_id(surface_id))
+                        let mut text_input = widget::text_input(prompt.clone(), value.clone())
                             .leading_icon(
                                 widget::icon::from_name("system-lock-screen-symbolic").into(),
                             )
@@ -575,6 +574,10 @@ impl cosmic::Application for App {
                             )
                             .on_input(|value| Message::Prompt(prompt.clone(), *secret, Some(value)))
                             .on_submit(Message::Submit);
+
+                        if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                            text_input = text_input.id(text_input_id.clone());
+                        }
 
                         if *secret {
                             text_input = text_input.password()
@@ -636,10 +639,6 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        if self.exited {
-            return Subscription::none();
-        }
-
         struct BackgroundSubscription;
         struct HeartbeatSubscription;
         struct PamSubscription;
@@ -647,7 +646,7 @@ impl cosmic::Application for App {
         //TODO: how to avoid cloning this on every time subscription is called?
         let username = self.flags.current_user.name.clone();
         Subscription::batch([
-            subscription::events_with(|event, _| match event {
+            event::listen_with(|event, _| match event {
                 iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
                     wayland_event,
                 )) => match wayland_event {
@@ -714,7 +713,6 @@ impl cosmic::Application for App {
                         }
                     }
 
-                    //TODO: how to properly kill this task?
                     loop {
                         time::sleep(time::Duration::new(1, 0)).await;
                     }

@@ -1,5 +1,5 @@
 use cosmic::iced::widget::{
-    image::{draw, Handle},
+    image::{draw, FilterMethod, Handle},
     Container,
 };
 use cosmic::iced::ContentFit;
@@ -69,8 +69,13 @@ where
         Widget::height(&self.container)
     }
 
-    fn layout(&self, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
-        self.container.layout(renderer, limits)
+    fn layout(
+        &self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.container.layout(tree, renderer, limits)
     }
 
     fn operate(
@@ -127,6 +132,7 @@ where
                 layout,
                 image,
                 self.content_fit,
+                FilterMethod::Linear,
                 [0.0, 0.0, 0.0, 0.0],
             ),
             None => {}
