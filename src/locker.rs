@@ -25,6 +25,7 @@ use std::{
     ffi::{CStr, CString},
     fs,
     path::Path,
+    process,
 };
 use tokio::{sync::mpsc, task, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
@@ -195,6 +196,7 @@ pub enum Message {
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
     NetworkIcon(Option<&'static str>),
+    PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
     Submit,
     Suspend,
@@ -212,6 +214,7 @@ pub struct App {
     surface_names: HashMap<SurfaceId, String>,
     text_input_ids: HashMap<SurfaceId, widget::Id>,
     network_icon_opt: Option<&'static str>,
+    power_info_opt: Option<(String, f64)>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
@@ -305,6 +308,7 @@ impl cosmic::Application for App {
                 surface_names: HashMap::new(),
                 text_input_ids: HashMap::new(),
                 network_icon_opt: None,
+                power_info_opt: None,
                 value_tx_opt: None,
                 prompt_opt: None,
                 error_opt: None,
@@ -388,7 +392,8 @@ impl cosmic::Application for App {
                     }
                 }
                 SessionLockEvent::Unlocked => {
-                    return iced::window::close(SurfaceId::MAIN);
+                    //TODO: cleaner method to exit?
+                    process::exit(0);
                 }
                 _ => {}
             },
@@ -402,6 +407,9 @@ impl cosmic::Application for App {
             }
             Message::NetworkIcon(network_icon_opt) => {
                 self.network_icon_opt = network_icon_opt;
+            }
+            Message::PowerInfo(power_info_opt) => {
+                self.power_info_opt = power_info_opt;
             }
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
@@ -501,11 +509,12 @@ impl cosmic::Application for App {
                 status_row = status_row.push(widget::icon::from_name(network_icon));
             }
 
-            //TODO: get actual status
-            status_row = status_row.push(iced::widget::row![
-                widget::icon::from_name("battery-level-50-symbolic"),
-                widget::text("50%"),
-            ]);
+            if let Some((power_icon, power_percent)) = &self.power_info_opt {
+                status_row = status_row.push(iced::widget::row![
+                    widget::icon::from_name(power_icon.clone()),
+                    widget::text(format!("{:.0}%", power_percent)),
+                ]);
+            }
 
             //TODO: implement these buttons
             let button_row = iced::widget::row![
@@ -651,14 +660,20 @@ impl cosmic::Application for App {
         struct PamSubscription;
 
         //TODO: just use one vec for all subscriptions
-        let mut network_subscriptions = Vec::with_capacity(1);
+        let mut extra_suscriptions = Vec::with_capacity(1);
 
         #[cfg(feature = "networkmanager")]
         {
-            network_subscriptions.push(
+            extra_suscriptions.push(
                 crate::networkmanager::subscription()
-                    .map(|network_icon_opt| Message::NetworkIcon(network_icon_opt)),
+                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
             );
+        }
+
+        #[cfg(feature = "upower")]
+        {
+            extra_suscriptions
+                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
         }
 
         //TODO: how to avoid cloning this on every time subscription is called?
@@ -736,7 +751,7 @@ impl cosmic::Application for App {
                     }
                 },
             ),
-            Subscription::batch(network_subscriptions),
+            Subscription::batch(extra_suscriptions),
         ])
     }
 }
