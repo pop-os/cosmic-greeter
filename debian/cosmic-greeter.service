@@ -16,5 +16,6 @@ RestartSec=1
 StartLimitBurst=5
 StartLimitInterval=30
 
-[Install]
-Alias=display-manager.service
+# Managed by debconf
+#[Install]
+#Alias=display-manager.service
