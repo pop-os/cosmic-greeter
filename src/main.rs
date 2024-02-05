@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match pwd::Passwd::current_user() {
         Some(current_user) => match current_user.name.as_str() {
-            "greeter" => greeter::main(),
+            "cosmic-greeter" => greeter::main(),
             _ => locker::main(current_user),
         },
         _ => Err("failed to determine current user".into()),

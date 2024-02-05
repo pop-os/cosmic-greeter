@@ -3,4 +3,4 @@ vt = "1"
 
 [default_session]
 command = "cage -s -- cosmic-greeter"
-user = "greeter"
+user = "cosmic-greeter"

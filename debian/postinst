@@ -1,0 +1,2 @@
+#!/bin/bash
+useradd --groups video --no-create-home --system cosmic-greeter
