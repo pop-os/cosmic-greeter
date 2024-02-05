@@ -17,4 +17,5 @@ Homepage: https://github.com/pop-os/cosmic-greeter
 Package: cosmic-greeter
 Architecture: amd64 arm64
 Depends: cage, greetd, ${misc:Depends}, ${shlibs:Depends}
+Provides: x-display-manager
 Description: Cosmic Greeter
