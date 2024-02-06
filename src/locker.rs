@@ -660,7 +660,7 @@ impl cosmic::Application for App {
         struct PamSubscription;
 
         //TODO: just use one vec for all subscriptions
-        let mut extra_suscriptions = Vec::with_capacity(1);
+        let mut extra_suscriptions = Vec::with_capacity(2);
 
         #[cfg(feature = "networkmanager")]
         {
