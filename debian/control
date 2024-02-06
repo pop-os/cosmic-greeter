@@ -19,7 +19,7 @@ Architecture: amd64 arm64
 Depends:
     adduser,
     bash,
-    cage,
+    cosmic-comp,
     greetd,
     ${misc:Depends},
     ${shlibs:Depends}
