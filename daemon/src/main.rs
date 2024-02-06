@@ -1,20 +1,35 @@
 use cosmic_bg_config::Source;
+use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{UserData, WallpaperData};
-use std::{error::Error, fs, future::pending, io, path::Path};
+use std::{env, error::Error, fs, future::pending, io, path::Path};
 use zbus::{dbus_interface, ConnectionBuilder, DBusError};
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
 // callback is executed with the permissions of the specified user id. A good test is to see if
 // the /etc/shadow file can be read with a non-root user, it should fail with EPERM.
 fn run_as_user<F: FnOnce() -> T, T>(user: &pwd::Passwd, f: F) -> Result<T, io::Error> {
+    // Save root HOME
+    let root_home_opt = env::var_os("HOME");
+
+    // Switch to user HOME
+    env::set_var("HOME", &user.dir);
+
+    // Switch to user UID
     if unsafe { libc::seteuid(user.uid) } != 0 {
         return Err(io::Error::last_os_error());
     }
 
     let t = f();
 
+    // Restore root UID
     if unsafe { libc::seteuid(0) } != 0 {
         panic!("failed to restore root user id")
+    }
+
+    // Restore root HOME
+    match root_home_opt {
+        Some(root_home) => env::set_var("HOME", root_home),
+        None => env::remove_var("HOME"),
     }
 
     Ok(t)
@@ -87,77 +102,96 @@ impl GreeterProxy {
                 None
             };
 
+            let mut user_data = UserData {
+                uid: user.uid,
+                name: user.name.clone(),
+                full_name_opt: user
+                    .gecos
+                    .as_ref()
+                    .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
+                icon_opt,
+                theme_opt: None,
+                //TODO: should wallpapers come from a per-user call?
+                wallpapers_opt: None,
+            };
+
             //IMPORTANT: Assume the identity of the user to ensure we don't read wallpaper file data as root
-            let wallpapers_opt = run_as_user(&user, || {
-                //TODO: use libcosmic to find this path
-                let wallpapers_path = Path::new(&user.dir)
-                    .join(".local/state/cosmic/com.system76.CosmicBackground/v1/wallpapers");
-                if wallpapers_path.is_file() {
-                    match fs::read_to_string(&wallpapers_path) {
-                        Ok(wallpapers_ron) => {
-                            match ron::from_str::<Vec<(String, Source)>>(&wallpapers_ron) {
-                                Ok(sources) => {
-                                    let mut wallpaper_datas = Vec::new();
-                                    for (output, source) in sources {
-                                        match source {
-                                            Source::Path(path) => match fs::read(&path) {
-                                                Ok(bytes) => {
-                                                    wallpaper_datas.push((
-                                                        output,
-                                                        WallpaperData::Bytes(bytes),
-                                                    ));
-                                                }
-                                                Err(err) => {
-                                                    log::error!(
-                                                        "failed to read wallpaper {:?}: {:?}",
-                                                        path,
-                                                        err
-                                                    );
-                                                }
-                                            },
-                                            Source::Color(color) => {
-                                                wallpaper_datas
-                                                    .push((output, WallpaperData::Color(color)));
-                                            }
-                                        }
-                                    }
-                                    Some(wallpaper_datas)
+            run_as_user(&user, || {
+                let mut is_dark = true;
+                match cosmic_theme::ThemeMode::config() {
+                    Ok(helper) => match cosmic_theme::ThemeMode::get_entry(&helper) {
+                        Ok(theme_mode) => {
+                            is_dark = theme_mode.is_dark;
+                        }
+                        Err((errs, theme_mode)) => {
+                            log::error!("failed to load cosmic-theme config: {:?}", errs);
+                            is_dark = theme_mode.is_dark;
+                        }
+                    },
+                    Err(err) => {
+                        log::error!("failed to create cosmic-theme mode helper: {:?}", err);
+                    }
+                }
+
+                match if is_dark {
+                    cosmic_theme::Theme::dark_config()
+                } else {
+                    cosmic_theme::Theme::light_config()
+                } {
+                    Ok(helper) => match cosmic_theme::Theme::get_entry(&helper) {
+                        Ok(theme) => {
+                            user_data.theme_opt = Some(theme);
+                        }
+                        Err((errs, theme)) => {
+                            log::error!("failed to load cosmic-theme config: {:?}", errs);
+                            user_data.theme_opt = Some(theme);
+                        }
+                    },
+                    Err(err) => {
+                        log::error!("failed to create cosmic-theme config helper: {:?}", err);
+                    }
+                }
+
+                //TODO: fallback to background config if background state is not set?
+                let mut wallpaper_state_opt = None;
+                match cosmic_bg_config::state::State::state() {
+                    Ok(helper) => match cosmic_bg_config::state::State::get_entry(&helper) {
+                        Ok(state) => {
+                            wallpaper_state_opt = Some(state);
+                        }
+                        Err((errs, state)) => {
+                            log::error!("failed to load cosmic-bg state: {:?}", errs);
+                            wallpaper_state_opt = Some(state);
+                        }
+                    },
+                    Err(err) => {
+                        log::error!("failed to create cosmic-bg state helper: {:?}", err);
+                    }
+                }
+
+                if let Some(wallpaper_state) = wallpaper_state_opt {
+                    let mut wallpaper_datas = Vec::new();
+                    for (output, source) in wallpaper_state.wallpapers {
+                        match source {
+                            Source::Path(path) => match fs::read(&path) {
+                                Ok(bytes) => {
+                                    wallpaper_datas.push((output, WallpaperData::Bytes(bytes)));
                                 }
                                 Err(err) => {
-                                    log::error!(
-                                        "failed to parse wallpapers {:?}: {:?}",
-                                        wallpapers_path,
-                                        err
-                                    );
-                                    None
+                                    log::error!("failed to read wallpaper {:?}: {:?}", path, err);
                                 }
+                            },
+                            Source::Color(color) => {
+                                wallpaper_datas.push((output, WallpaperData::Color(color)));
                             }
                         }
-                        Err(err) => {
-                            log::error!(
-                                "failed to read wallpapers {:?}: {:?}",
-                                wallpapers_path,
-                                err
-                            );
-                            None
-                        }
                     }
-                } else {
-                    None
+                    user_data.wallpapers_opt = Some(wallpaper_datas);
                 }
             })
             .map_err(|err| GreeterError::RunAsUser(err.to_string()))?;
 
-            user_datas.push(UserData {
-                uid: user.uid,
-                name: user.name,
-                full_name_opt: user
-                    .gecos
-                    .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
-                icon_opt,
-                //TODO: should wallpapers come from a per-user call?
-                wallpapers_opt,
-            });
+            user_datas.push(user_data);
         }
 
         //TODO: is ron the best choice for passing around background data?

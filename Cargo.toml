@@ -58,6 +58,10 @@ default-features = false
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
 
+[workspace.dependencies.cosmic-theme]
+git = "https://github.com/pop-os/libcosmic"
+default-features = false
+
 [workspace.dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
