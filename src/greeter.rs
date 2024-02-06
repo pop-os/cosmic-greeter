@@ -50,13 +50,13 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     //TODO: allow custom directories?
     let session_dirs = &[
-        Path::new("/usr/share/wayland-sessions"),
-        Path::new("/usr/share/xsessions"),
+        (Path::new("/usr/share/wayland-sessions"), false),
+        (Path::new("/usr/share/xsessions"), true),
     ];
 
     let sessions = {
         let mut sessions = HashMap::new();
-        for session_dir in session_dirs {
+        for (session_dir, x_wrapper) in session_dirs {
             let read_dir = match fs::read_dir(&session_dir) {
                 Ok(ok) => ok,
                 Err(err) => {
@@ -116,8 +116,18 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                let split = match shlex::split(exec) {
-                    Some(some) => some,
+                let mut command = if *x_wrapper {
+                    vec!["startx".to_string(), "/usr/bin/env".to_string()]
+                } else {
+                    vec![]
+                };
+
+                match shlex::split(exec) {
+                    Some(split) => {
+                        for arg in split {
+                            command.push(arg)
+                        }
+                    }
                     None => {
                         log::warn!(
                             "failed to parse session file {:?} Exec field {:?}",
@@ -128,9 +138,10 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                match sessions.insert(name.to_string(), split) {
+                log::warn!("session {} using command {:?}", name, command);
+                match sessions.insert(name.to_string(), command) {
                     Some(some) => {
-                        log::warn!("session overwritten with command {:?}", some);
+                        log::warn!("session {} overwrote old command {:?}", name, some);
                     }
                     None => {}
                 }
