@@ -4,12 +4,29 @@
 use cosmic::app::{message, Command, Core, Settings};
 use cosmic::{
     executor,
-    iced::{self, alignment, futures::SinkExt, subscription, Length},
+    iced::{
+        self, alignment,
+        event::{
+            self,
+            wayland::{Event as WaylandEvent, LayerEvent, OutputEvent},
+        },
+        futures::SinkExt,
+        subscription,
+        wayland::{
+            actions::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
+            layer_surface::{
+                destroy_layer_surface, get_layer_surface, Anchor, KeyboardInteractivity, Layer,
+            },
+        },
+        Length, Subscription,
+    },
+    iced_runtime::core::window::Id as SurfaceId,
     style, widget, Element,
 };
 use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
 use std::{collections::HashMap, env, fs, io, path::Path, process, sync::Arc};
 use tokio::{net::UnixStream, time};
+use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
@@ -178,14 +195,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         background,
     };
 
-    let settings = Settings::default()
-        .antialiasing(true)
-        .client_decorations(true)
-        .debug(false)
-        .default_icon_theme("Cosmic")
-        .default_text_size(16.0)
-        .scale_factor(1.0)
-        .theme(cosmic::Theme::dark());
+    let settings = Settings::default().no_main_window(true);
 
     cosmic::app::run::<App>(settings, flags)?;
 
@@ -298,7 +308,11 @@ pub enum SocketState {
 #[derive(Clone, Debug)]
 pub enum Message {
     None,
+    OutputEvent(OutputEvent, WlOutput),
+    LayerEvent(LayerEvent, SurfaceId),
     Socket(SocketState),
+    NetworkIcon(Option<&'static str>),
+    PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
     Session(String),
     Username(Arc<UnixStream>, String),
@@ -313,13 +327,18 @@ pub enum Message {
 pub struct App {
     core: Core,
     flags: Flags,
+    surface_ids: HashMap<WlOutput, SurfaceId>,
+    active_surface_id_opt: Option<SurfaceId>,
+    surface_names: HashMap<SurfaceId, String>,
+    text_input_ids: HashMap<SurfaceId, widget::Id>,
+    network_icon_opt: Option<&'static str>,
+    power_info_opt: Option<(String, f64)>,
     socket_state: SocketState,
     username_opt: Option<String>,
     prompt_opt: Option<(String, bool, Option<String>)>,
     session_names: Vec<String>,
     selected_session: String,
     error_opt: Option<String>,
-    text_input_id: widget::Id,
 }
 
 /// Implement [`cosmic::Application`] to integrate with COSMIC.
@@ -363,6 +382,12 @@ impl cosmic::Application for App {
             App {
                 core,
                 flags,
+                surface_ids: HashMap::new(),
+                active_surface_id_opt: None,
+                surface_names: HashMap::new(),
+                text_input_ids: HashMap::new(),
+                network_icon_opt: None,
+                power_info_opt: None,
                 socket_state: SocketState::Pending,
                 //TODO: choose last used user
                 username_opt: None,
@@ -370,7 +395,6 @@ impl cosmic::Application for App {
                 session_names,
                 selected_session,
                 error_opt: None,
-                text_input_id: widget::Id::unique(),
             },
             Command::perform(
                 async {
@@ -391,13 +415,111 @@ impl cosmic::Application for App {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::None => {}
+            Message::OutputEvent(output_event, output) => {
+                match output_event {
+                    OutputEvent::Created(output_info_opt) => {
+                        log::info!("output {}: created", output.id());
+
+                        let surface_id = SurfaceId::unique();
+                        match self.surface_ids.insert(output.clone(), surface_id) {
+                            Some(old_surface_id) => {
+                                //TODO: remove old surface?
+                                log::warn!(
+                                    "output {}: already had surface ID {:?}",
+                                    output.id(),
+                                    old_surface_id
+                                );
+                            }
+                            None => {}
+                        }
+
+                        match output_info_opt {
+                            Some(output_info) => match output_info.name {
+                                Some(output_name) => {
+                                    self.surface_names.insert(surface_id, output_name.clone());
+                                }
+                                None => {
+                                    log::warn!("output {}: no output name", output.id());
+                                }
+                            },
+                            None => {
+                                log::warn!("output {}: no output info", output.id());
+                            }
+                        }
+
+                        let text_input_id = widget::Id::unique();
+                        self.text_input_ids
+                            .insert(surface_id, text_input_id.clone());
+
+                        return Command::batch([
+                            get_layer_surface(SctkLayerSurfaceSettings {
+                                id: surface_id,
+                                layer: Layer::Overlay,
+                                keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                                pointer_interactivity: true,
+                                anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                                output: IcedOutput::Output(output),
+                                namespace: "cosmic-locker".into(),
+                                size: Some((None, None)),
+                                margin: IcedMargin {
+                                    top: 0,
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
+                                },
+                                exclusive_zone: -1,
+                                size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
+                            }),
+                            widget::text_input::focus(text_input_id),
+                        ]);
+                    }
+                    OutputEvent::Removed => {
+                        log::info!("output {}: removed", output.id());
+                        match self.surface_ids.remove(&output) {
+                            Some(surface_id) => {
+                                self.surface_names.remove(&surface_id);
+                                self.text_input_ids.remove(&surface_id);
+                                return destroy_layer_surface(surface_id);
+                            }
+                            None => {
+                                log::warn!("output {}: no surface found", output.id());
+                            }
+                        }
+                    }
+                    OutputEvent::InfoUpdate(output_info) => {
+                        log::info!("output {}: info update {:#?}", output.id(), output_info);
+                    }
+                }
+            }
+            Message::LayerEvent(layer_event, surface_id) => match layer_event {
+                LayerEvent::Focused => {
+                    log::info!("focus surface {:?}", surface_id);
+                    self.active_surface_id_opt = Some(surface_id);
+                    if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                        return widget::text_input::focus(text_input_id.clone());
+                    }
+                }
+                _ => {}
+            },
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
             }
+            Message::NetworkIcon(network_icon_opt) => {
+                self.network_icon_opt = network_icon_opt;
+            }
+            Message::PowerInfo(power_info_opt) => {
+                self.power_info_opt = power_info_opt;
+            }
             Message::Prompt(prompt, secret, value) => {
+                let prompt_was_none = self.prompt_opt.is_none();
                 self.prompt_opt = Some((prompt, secret, value));
-                //TODO: only focus text input on changes to the page
-                return widget::text_input::focus(self.text_input_id.clone());
+                if prompt_was_none {
+                    if let Some(surface_id) = self.active_surface_id_opt {
+                        if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                            return widget::text_input::focus(text_input_id.clone());
+                        }
+                    }
+                }
             }
             Message::Session(selected_session) => {
                 self.selected_session = selected_session;
@@ -442,15 +564,26 @@ impl cosmic::Application for App {
                 self.error_opt = Some(error);
             }
             Message::Exit => {
-                //TODO: cleaner method to exit?
-                process::exit(0);
+                let mut commands = Vec::new();
+                for (_output, surface_id) in self.surface_ids.drain() {
+                    self.surface_names.remove(&surface_id);
+                    self.text_input_ids.remove(&surface_id);
+                    commands.push(destroy_layer_surface(surface_id));
+                }
+                commands.push(Command::perform(async { process::exit(0) }, |x| x));
+                return Command::batch(commands);
             }
         }
         Command::none()
     }
 
-    /// Creates a view after each update.
+    // Not used for layer surface window
     fn view(&self) -> Element<Self::Message> {
+        unimplemented!()
+    }
+
+    /// Creates a view after each update.
+    fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
         let left_element = {
             let date_time_column = {
                 let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
@@ -473,16 +606,18 @@ impl cosmic::Application for App {
                 column
             };
 
-            //TODO: get actual status
-            let status_row = iced::widget::row![
-                widget::icon::from_name("network-wireless-signal-ok-symbolic",),
-                iced::widget::row![
-                    widget::icon::from_name("battery-level-50-symbolic"),
-                    widget::text("50%"),
-                ],
-            ]
-            .padding(16.0)
-            .spacing(12.0);
+            let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
+
+            if let Some(network_icon) = self.network_icon_opt {
+                status_row = status_row.push(widget::icon::from_name(network_icon));
+            }
+
+            if let Some((power_icon, power_percent)) = &self.power_info_opt {
+                status_row = status_row.push(iced::widget::row![
+                    widget::icon::from_name(power_icon.clone()),
+                    widget::text(format!("{:.0}%", power_percent)),
+                ]);
+            }
 
             //TODO: implement these buttons
             let button_row = iced::widget::row![
@@ -616,7 +751,6 @@ impl cosmic::Application for App {
                             Some(value) => {
                                 let mut text_input =
                                     widget::text_input(prompt.clone(), value.clone())
-                                        .id(self.text_input_id.clone())
                                         .leading_icon(
                                             widget::icon::from_name("system-lock-screen-symbolic")
                                                 .into(),
@@ -632,6 +766,10 @@ impl cosmic::Application for App {
                                             socket.clone(),
                                             Some(value.clone()),
                                         ));
+
+                                if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                                    text_input = text_input.id(text_input_id.clone());
+                                }
 
                                 if *secret {
                                     text_input = text_input.password()
@@ -711,20 +849,54 @@ impl cosmic::Application for App {
         .into()
     }
 
-    fn subscription(&self) -> subscription::Subscription<Self::Message> {
+    fn subscription(&self) -> Subscription<Self::Message> {
         struct HeartbeatSubscription;
 
-        subscription::channel(
-            std::any::TypeId::of::<HeartbeatSubscription>(),
-            16,
-            |mut msg_tx| async move {
-                loop {
-                    // Send heartbeat once a second to update time
-                    //TODO: only send this when needed
-                    msg_tx.send(Message::None).await.unwrap();
-                    time::sleep(time::Duration::new(1, 0)).await;
-                }
-            },
-        )
+        //TODO: just use one vec for all subscriptions
+        let mut extra_suscriptions = Vec::with_capacity(2);
+
+        #[cfg(feature = "networkmanager")]
+        {
+            extra_suscriptions.push(
+                crate::networkmanager::subscription()
+                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
+            );
+        }
+
+        #[cfg(feature = "upower")]
+        {
+            extra_suscriptions
+                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
+        }
+
+        Subscription::batch([
+            event::listen_with(|event, _| match event {
+                iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
+                    wayland_event,
+                )) => match wayland_event {
+                    WaylandEvent::Output(output_event, output) => {
+                        Some(Message::OutputEvent(output_event, output))
+                    }
+                    WaylandEvent::Layer(layer_event, _surface, surface_id) => {
+                        Some(Message::LayerEvent(layer_event, surface_id))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }),
+            subscription::channel(
+                std::any::TypeId::of::<HeartbeatSubscription>(),
+                16,
+                |mut msg_tx| async move {
+                    loop {
+                        // Send heartbeat once a second to update time
+                        //TODO: only send this when needed
+                        msg_tx.send(Message::None).await.unwrap();
+                        time::sleep(time::Duration::new(1, 0)).await;
+                    }
+                },
+            ),
+            Subscription::batch(extra_suscriptions),
+        ])
     }
 }
