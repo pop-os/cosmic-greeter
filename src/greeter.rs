@@ -91,6 +91,7 @@ fn user_data_fallback() -> Vec<UserData> {
                         .gecos
                         .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
                     icon_opt,
+                    theme_opt: None,
                     wallpapers_opt: None,
                 }
             })
@@ -388,50 +389,58 @@ pub struct App {
 }
 
 impl App {
-    fn update_wallpapers(&mut self) {
+    fn update_user_config(&mut self) -> Command<Message> {
         let username = match &self.username_opt {
             Some(some) => some,
-            None => return,
+            None => return Command::none(),
         };
 
         let user_data = match self.flags.user_datas.iter().find(|x| &x.name == username) {
             Some(some) => some,
-            None => return,
+            None => return Command::none(),
         };
 
-        let wallpapers = match &user_data.wallpapers_opt {
-            Some(some) => some,
-            None => return,
-        };
+        if let Some(wallpapers) = &user_data.wallpapers_opt {
+            for (output, surface_id) in self.surface_ids.iter() {
+                if self.surface_images.contains_key(surface_id) {
+                    continue;
+                }
 
-        for (output, surface_id) in self.surface_ids.iter() {
-            if self.surface_images.contains_key(surface_id) {
-                continue;
-            }
+                let output_name = match self.surface_names.get(surface_id) {
+                    Some(some) => some,
+                    None => continue,
+                };
 
-            let output_name = match self.surface_names.get(surface_id) {
-                Some(some) => some,
-                None => continue,
-            };
+                log::info!("updating wallpaper for {:?}", output_name);
 
-            log::info!("updating wallpaper for {:?}", output_name);
-
-            for (wallpaper_output_name, wallpaper_data) in wallpapers.iter() {
-                if wallpaper_output_name == output_name {
-                    match wallpaper_data {
-                        WallpaperData::Bytes(bytes) => {
-                            let image = widget::image::Handle::from_memory(bytes.clone());
-                            self.surface_images.insert(*surface_id, image);
-                            //TODO: what to do about duplicates?
-                            break;
-                        }
-                        WallpaperData::Color(color) => {
-                            //TODO: support color sources
-                            log::warn!("output {}: unsupported source {:?}", output.id(), color);
+                for (wallpaper_output_name, wallpaper_data) in wallpapers.iter() {
+                    if wallpaper_output_name == output_name {
+                        match wallpaper_data {
+                            WallpaperData::Bytes(bytes) => {
+                                let image = widget::image::Handle::from_memory(bytes.clone());
+                                self.surface_images.insert(*surface_id, image);
+                                //TODO: what to do about duplicates?
+                                break;
+                            }
+                            WallpaperData::Color(color) => {
+                                //TODO: support color sources
+                                log::warn!(
+                                    "output {}: unsupported source {:?}",
+                                    output.id(),
+                                    color
+                                );
+                            }
                         }
                     }
                 }
             }
+        }
+
+        match &user_data.theme_opt {
+            Some(theme) => {
+                cosmic::app::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
+            }
+            None => Command::none(),
         }
     }
 }
@@ -533,7 +542,6 @@ impl cosmic::Application for App {
                                 Some(output_name) => {
                                     self.surface_names.insert(surface_id, output_name.clone());
                                     self.surface_images.remove(&surface_id);
-                                    self.update_wallpapers();
                                 }
                                 None => {
                                     log::warn!("output {}: no output name", output.id());
@@ -549,6 +557,7 @@ impl cosmic::Application for App {
                             .insert(surface_id, text_input_id.clone());
 
                         return Command::batch([
+                            self.update_user_config(),
                             get_layer_surface(SctkLayerSurfaceSettings {
                                 id: surface_id,
                                 layer: Layer::Overlay,
@@ -642,8 +651,10 @@ impl cosmic::Application for App {
             Message::Username(socket, username) => {
                 self.username_opt = Some(username.clone());
                 self.surface_images.clear();
-                self.update_wallpapers();
-                return request_command(socket, Request::CreateSession { username });
+                return Command::batch([
+                    self.update_user_config(),
+                    request_command(socket, Request::CreateSession { username }),
+                ]);
             }
             Message::Auth(socket, response) => {
                 return request_command(socket, Request::PostAuthMessageResponse { response });

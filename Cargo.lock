@@ -834,9 +834,9 @@ version = "0.1.0"
 dependencies = [
  "cosmic-bg-config",
  "cosmic-config",
+ "cosmic-theme",
  "env_logger",
  "libc",
- "libcosmic",
  "log",
  "pwd",
  "ron",

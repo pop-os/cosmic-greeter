@@ -1,4 +1,5 @@
 pub use cosmic_bg_config::Color;
+pub use cosmic_theme::Theme;
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct UserData {
@@ -6,6 +7,7 @@ pub struct UserData {
     pub name: String,
     pub full_name_opt: Option<String>,
     pub icon_opt: Option<Vec<u8>>,
+    pub theme_opt: Option<Theme>,
     pub wallpapers_opt: Option<Vec<(String, WallpaperData)>>,
 }
 
