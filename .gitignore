@@ -2,7 +2,10 @@
 /debian/*debhelper*
 /debian/cosmic-greeter.substvars
 /debian/cosmic-greeter/
+/debian/cosmic-greeter-daemon.substvars
+/debian/cosmic-greeter-daemon/
 /debian/files
+/debian/tmp/
 /target/
 /vendor.tar
 /vendor/

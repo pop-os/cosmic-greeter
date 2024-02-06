@@ -10,7 +10,7 @@ use cosmic::{
             self,
             wayland::{Event as WaylandEvent, LayerEvent, OutputEvent},
         },
-        futures::SinkExt,
+        futures::{self, SinkExt},
         subscription,
         wayland::{
             actions::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
@@ -23,14 +23,37 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     style, widget, Element,
 };
+use cosmic_greeter_daemon::{UserData, WallpaperData};
 use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
-use std::{collections::HashMap, env, fs, io, path::Path, process, sync::Arc};
+use std::{collections::HashMap, env, error::Error, fs, io, path::Path, process, sync::Arc};
 use tokio::{net::UnixStream, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
+use zbus::{dbus_proxy, Connection};
 
-pub fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[dbus_proxy(
+    interface = "com.system76.CosmicGreeter",
+    default_service = "com.system76.CosmicGreeter",
+    default_path = "/com/system76/CosmicGreeter"
+)]
+trait Greeter {
+    async fn get_user_data(&self) -> Result<String, zbus::Error>;
+}
+
+async fn user_data_dbus() -> Result<Vec<UserData>, Box<dyn Error>> {
+    let connection = Connection::system().await?;
+
+    // `dbus_proxy` macro creates `MyGreaterProxy` based on `Notifications` trait.
+    let proxy = GreeterProxy::new(&connection).await?;
+    let reply = proxy.get_user_data().await?;
+
+    let user_datas: Vec<UserData> = ron::from_str(&reply)?;
+    Ok(user_datas)
+}
+
+fn user_data_fallback() -> Vec<UserData> {
     // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
-    let users: Vec<_> = /* unsafe */ {
+    /* unsafe */
+    {
         pwd::Passwd::iter()
             .filter(|user| {
                 if user.uid < 1000 {
@@ -51,7 +74,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let icon_path = Path::new("/var/lib/AccountsService/icons").join(&user.name);
                 let icon_opt = if icon_path.is_file() {
                     match fs::read(&icon_path) {
-                        Ok(icon_data) => Some(widget::image::Handle::from_memory(icon_data)),
+                        Ok(icon_data) => Some(icon_data),
                         Err(err) => {
                             log::error!("failed to read {:?}: {:?}", icon_path, err);
                             None
@@ -60,10 +83,32 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     None
                 };
-                (user, icon_opt)
+
+                UserData {
+                    uid: user.uid,
+                    name: user.name,
+                    full_name_opt: user
+                        .gecos
+                        .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
+                    icon_opt,
+                    wallpapers_opt: None,
+                }
             })
             .collect()
+    }
+}
+
+pub fn main() -> Result<(), Box<dyn Error>> {
+    let mut user_datas = match futures::executor::block_on(async { user_data_dbus().await }) {
+        Ok(ok) => ok,
+        Err(err) => {
+            log::error!("failed to load user data from daemon: {}", err);
+            user_data_fallback()
+        }
     };
+
+    // Sort user data by uid
+    user_datas.sort_by(|a, b| a.uid.cmp(&b.uid));
 
     enum SessionType {
         X11,
@@ -186,13 +231,13 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions
     };
 
-    //TODO: use background config
-    let background = widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
+    let fallback_background =
+        widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
 
     let flags = Flags {
-        users,
+        user_datas,
         sessions,
-        background,
+        fallback_background,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -287,9 +332,9 @@ fn request_command(socket: Arc<UnixStream>, request: Request) -> Command<Message
 
 #[derive(Clone)]
 pub struct Flags {
-    users: Vec<(pwd::Passwd, Option<widget::image::Handle>)>,
+    user_datas: Vec<UserData>,
     sessions: HashMap<String, Vec<String>>,
-    background: widget::image::Handle,
+    fallback_background: widget::image::Handle,
 }
 
 #[derive(Clone, Debug)]
@@ -329,6 +374,7 @@ pub struct App {
     flags: Flags,
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
+    surface_images: HashMap<SurfaceId, widget::image::Handle>,
     surface_names: HashMap<SurfaceId, String>,
     text_input_ids: HashMap<SurfaceId, widget::Id>,
     network_icon_opt: Option<&'static str>,
@@ -339,6 +385,55 @@ pub struct App {
     session_names: Vec<String>,
     selected_session: String,
     error_opt: Option<String>,
+}
+
+impl App {
+    fn update_wallpapers(&mut self) {
+        let username = match &self.username_opt {
+            Some(some) => some,
+            None => return,
+        };
+
+        let user_data = match self.flags.user_datas.iter().find(|x| &x.name == username) {
+            Some(some) => some,
+            None => return,
+        };
+
+        let wallpapers = match &user_data.wallpapers_opt {
+            Some(some) => some,
+            None => return,
+        };
+
+        for (output, surface_id) in self.surface_ids.iter() {
+            if self.surface_images.contains_key(surface_id) {
+                continue;
+            }
+
+            let output_name = match self.surface_names.get(surface_id) {
+                Some(some) => some,
+                None => continue,
+            };
+
+            log::info!("updating wallpaper for {:?}", output_name);
+
+            for (wallpaper_output_name, wallpaper_data) in wallpapers.iter() {
+                if wallpaper_output_name == output_name {
+                    match wallpaper_data {
+                        WallpaperData::Bytes(bytes) => {
+                            let image = widget::image::Handle::from_memory(bytes.clone());
+                            self.surface_images.insert(*surface_id, image);
+                            //TODO: what to do about duplicates?
+                            break;
+                        }
+                        WallpaperData::Color(color) => {
+                            //TODO: support color sources
+                            log::warn!("output {}: unsupported source {:?}", output.id(), color);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Implement [`cosmic::Application`] to integrate with COSMIC.
@@ -384,12 +479,12 @@ impl cosmic::Application for App {
                 flags,
                 surface_ids: HashMap::new(),
                 active_surface_id_opt: None,
+                surface_images: HashMap::new(),
                 surface_names: HashMap::new(),
                 text_input_ids: HashMap::new(),
                 network_icon_opt: None,
                 power_info_opt: None,
                 socket_state: SocketState::Pending,
-                //TODO: choose last used user
                 username_opt: None,
                 prompt_opt: None,
                 session_names,
@@ -437,6 +532,8 @@ impl cosmic::Application for App {
                             Some(output_info) => match output_info.name {
                                 Some(output_name) => {
                                     self.surface_names.insert(surface_id, output_name.clone());
+                                    self.surface_images.remove(&surface_id);
+                                    self.update_wallpapers();
                                 }
                                 None => {
                                     log::warn!("output {}: no output name", output.id());
@@ -477,6 +574,7 @@ impl cosmic::Application for App {
                         log::info!("output {}: removed", output.id());
                         match self.surface_ids.remove(&output) {
                             Some(surface_id) => {
+                                self.surface_images.remove(&surface_id);
                                 self.surface_names.remove(&surface_id);
                                 self.text_input_ids.remove(&surface_id);
                                 return destroy_layer_surface(surface_id);
@@ -503,6 +601,23 @@ impl cosmic::Application for App {
             },
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
+                match &self.socket_state {
+                    SocketState::Open(socket) => {
+                        // When socket is opened, request default user
+                        //TODO: choose last used user
+                        match self.flags.user_datas.first().map(|x| x.name.clone()) {
+                            Some(username) => {
+                                let socket = socket.clone();
+                                return Command::perform(
+                                    async { message::app(Message::Username(socket, username)) },
+                                    |x| x,
+                                );
+                            }
+                            None => {}
+                        }
+                    }
+                    _ => {}
+                }
             }
             Message::NetworkIcon(network_icon_opt) => {
                 self.network_icon_opt = network_icon_opt;
@@ -526,6 +641,8 @@ impl cosmic::Application for App {
             }
             Message::Username(socket, username) => {
                 self.username_opt = Some(username.clone());
+                self.surface_images.clear();
+                self.update_wallpapers();
                 return request_command(socket, Request::CreateSession { username });
             }
             Message::Auth(socket, response) => {
@@ -566,6 +683,7 @@ impl cosmic::Application for App {
             Message::Exit => {
                 let mut commands = Vec::new();
                 for (_output, surface_id) in self.surface_ids.drain() {
+                    self.surface_images.remove(&surface_id);
                     self.surface_names.remove(&surface_id);
                     self.text_input_ids.remove(&surface_id);
                     commands.push(destroy_layer_surface(surface_id));
@@ -671,15 +789,20 @@ impl cosmic::Application for App {
                 SocketState::Open(socket) => {
                     match &self.username_opt {
                         Some(username) => {
-                            for (user, icon_opt) in &self.flags.users {
-                                if &user.name == username {
-                                    match icon_opt {
+                            for user_data in &self.flags.user_datas {
+                                if &user_data.name == username {
+                                    match &user_data.icon_opt {
                                         Some(icon) => {
                                             column = column.push(
                                                 widget::container(
-                                                    widget::Image::new(icon.clone())
-                                                        .width(Length::Fixed(78.0))
-                                                        .height(Length::Fixed(78.0)),
+                                                    widget::Image::new(
+                                                        //TODO: cache handle
+                                                        widget::image::Handle::from_memory(
+                                                            icon.clone(),
+                                                        ),
+                                                    )
+                                                    .width(Length::Fixed(78.0))
+                                                    .height(Length::Fixed(78.0)),
                                                 )
                                                 .width(Length::Fill)
                                                 .align_x(alignment::Horizontal::Center),
@@ -687,9 +810,8 @@ impl cosmic::Application for App {
                                         }
                                         None => {}
                                     }
-                                    match &user.gecos {
-                                        Some(gecos) => {
-                                            let full_name = gecos.split(",").next().unwrap_or("");
+                                    match &user_data.full_name_opt {
+                                        Some(full_name) => {
                                             column = column.push(
                                                 widget::container(widget::text::title4(full_name))
                                                     .width(Length::Fill)
@@ -702,18 +824,23 @@ impl cosmic::Application for App {
                             }
                         }
                         None => {
-                            let mut row =
-                                widget::row::with_capacity(self.flags.users.len()).spacing(12.0);
-                            for (user, icon_opt) in &self.flags.users {
+                            let mut row = widget::row::with_capacity(self.flags.user_datas.len())
+                                .spacing(12.0);
+                            for user_data in &self.flags.user_datas {
                                 let mut column = widget::column::with_capacity(2).spacing(12.0);
 
-                                match icon_opt {
+                                match &user_data.icon_opt {
                                     Some(icon) => {
                                         column = column.push(
                                             widget::container(
-                                                widget::Image::new(icon.clone())
-                                                    .width(Length::Fixed(78.0))
-                                                    .height(Length::Fixed(78.0)),
+                                                widget::Image::new(
+                                                    //TODO: cache handle
+                                                    widget::image::Handle::from_memory(
+                                                        icon.clone(),
+                                                    ),
+                                                )
+                                                .width(Length::Fixed(78.0))
+                                                .height(Length::Fixed(78.0)),
                                             )
                                             .width(Length::Fill)
                                             .align_x(alignment::Horizontal::Center),
@@ -721,9 +848,8 @@ impl cosmic::Application for App {
                                     }
                                     None => {}
                                 }
-                                match &user.gecos {
-                                    Some(gecos) => {
-                                        let full_name = gecos.split(",").next().unwrap_or("");
+                                match &user_data.full_name_opt {
+                                    Some(full_name) => {
                                         column = column.push(
                                             widget::container(widget::text::title4(full_name))
                                                 .width(Length::Fill)
@@ -740,7 +866,9 @@ impl cosmic::Application for App {
                                             .padding(16)
                                             .style(cosmic::theme::Container::Card),
                                     )
-                                    .on_press(Message::Username(socket.clone(), user.name.clone())),
+                                    .on_press(
+                                        Message::Username(socket.clone(), user_data.name.clone()),
+                                    ),
                                 );
                             }
                             column = column.push(row);
@@ -844,7 +972,10 @@ impl cosmic::Application for App {
             .align_y(alignment::Vertical::Top)
             .style(cosmic::theme::Container::Transparent),
         )
-        .image(self.flags.background.clone())
+        .image(match self.surface_images.get(&surface_id) {
+            Some(some) => some.clone(),
+            None => self.flags.fallback_background.clone(),
+        })
         .content_fit(iced::ContentFit::Cover)
         .into()
     }

@@ -811,6 +811,7 @@ dependencies = [
  "cosmic-bg-config",
  "cosmic-config",
  "cosmic-dbus-networkmanager",
+ "cosmic-greeter-daemon",
  "env_logger",
  "freedesktop_entry_parser",
  "greetd_ipc",
@@ -819,10 +820,28 @@ dependencies = [
  "logind-zbus",
  "pam-client",
  "pwd",
+ "ron",
  "shlex",
  "tokio",
  "upower_dbus",
  "wayland-client 0.31.1",
+ "zbus",
+]
+
+[[package]]
+name = "cosmic-greeter-daemon"
+version = "0.1.0"
+dependencies = [
+ "cosmic-bg-config",
+ "cosmic-config",
+ "env_logger",
+ "libc",
+ "libcosmic",
+ "log",
+ "pwd",
+ "ron",
+ "serde",
+ "tokio",
  "zbus",
 ]
 
