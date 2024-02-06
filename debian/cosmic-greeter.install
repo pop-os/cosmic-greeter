@@ -1,1 +1,2 @@
 cosmic-greeter.toml /etc/greetd/
+/usr/bin/cosmic-greeter

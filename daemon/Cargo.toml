@@ -1,0 +1,20 @@
+[package]
+name = "cosmic-greeter-daemon"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cosmic-bg-config.workspace = true
+cosmic-config.workspace = true
+env_logger.workspace = true
+libc = "0.2"
+libcosmic.workspace = true
+log.workspace = true
+pwd.workspace = true
+ron.workspace = true
+serde.workspace = true
+zbus.workspace = true
+#TODO: reduce features
+tokio = { workspace = true, features = ["full"] }

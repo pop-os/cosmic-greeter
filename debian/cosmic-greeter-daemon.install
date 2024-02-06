@@ -1,0 +1,2 @@
+/usr/bin/cosmic-greeter-daemon
+/usr/share/dbus-1/system.d/com.system76.CosmicGreeter.conf

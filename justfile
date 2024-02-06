@@ -11,6 +11,12 @@ export INSTALL_DIR := base-dir / 'share'
 bin-src := 'target' / 'release' / name
 bin-dst := base-dir / 'bin' / name
 
+daemon-src := 'target' / 'release' / name + '-daemon'
+daemon-dst := base-dir / 'bin' / name + '-daemon'
+
+dbus-src := 'dbus' / APPID + '.conf'
+dbus-dst := base-dir / 'share' / 'dbus-1' / 'system.d' / APPID + '.conf'
+
 # Default recipe which runs `just build-release`
 default: build-release
 
@@ -24,7 +30,7 @@ clean-dist: clean
 
 # Compiles with debug profile
 build-debug *args:
-    cargo build {{args}}
+    cargo build --all {{args}}
 
 # Compiles with release profile
 build-release *args: (build-debug '--release' args)
@@ -46,10 +52,12 @@ run *args:
 # Installs files
 install:
     install -Dm0755 {{bin-src}} {{bin-dst}}
+    install -Dm0755 {{daemon-src}} {{daemon-dst}}
+    install -Dm0755 {{dbus-src}} {{dbus-dst}}
 
 # Uninstalls installed files
 uninstall:
-    rm {{bin-dst}}
+    rm {{bin-dst}} {{daemon-dst}} {{dbus-dst}}
 
 # Vendor dependencies locally
 vendor:
