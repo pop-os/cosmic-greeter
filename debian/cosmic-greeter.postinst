@@ -22,6 +22,9 @@ if ! getent passwd cosmic-greeter >/dev/null; then
         usermod -c "COSMIC Greeter" cosmic-greeter
 fi
 
+# ensure cosmic-greeter user is part of the video group
+adduser cosmic-greeter video
+
 # debconf is not a registry, so we only fiddle with the default file if
 # the configure script requested an update
 if [ -e $DEFAULT_DISPLAY_MANAGER_FILE.debconf-update ]; then
