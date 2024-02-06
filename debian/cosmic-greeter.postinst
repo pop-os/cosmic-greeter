@@ -25,6 +25,13 @@ fi
 # ensure cosmic-greeter user is part of the video group
 adduser cosmic-greeter video
 
+# create home directory if it does not exist and set permissions
+if [ ! -d /var/lib/cosmic-greeter ]
+then
+    mkdir /var/lib/cosmic-greeter
+    chown -R cosmic-greeter:cosmic-greeter /var/lib/cosmic-greeter
+fi
+
 # debconf is not a registry, so we only fiddle with the default file if
 # the configure script requested an update
 if [ -e $DEFAULT_DISPLAY_MANAGER_FILE.debconf-update ]; then
