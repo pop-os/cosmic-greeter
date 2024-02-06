@@ -48,15 +48,23 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect()
     };
 
+    enum SessionType {
+        X11,
+        Wayland,
+    }
+
     //TODO: allow custom directories?
     let session_dirs = &[
-        (Path::new("/usr/share/wayland-sessions"), false),
-        (Path::new("/usr/share/xsessions"), true),
+        (
+            Path::new("/usr/share/wayland-sessions"),
+            SessionType::Wayland,
+        ),
+        (Path::new("/usr/share/xsessions"), SessionType::X11),
     ];
 
     let sessions = {
         let mut sessions = HashMap::new();
-        for (session_dir, x_wrapper) in session_dirs {
+        for (session_dir, session_type) in session_dirs {
             let read_dir = match fs::read_dir(&session_dir) {
                 Ok(ok) => ok,
                 Err(err) => {
@@ -116,15 +124,26 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                let mut command = if *x_wrapper {
-                    vec!["startx".to_string(), "/usr/bin/env".to_string()]
-                } else {
-                    vec![]
+                let mut command = match session_type {
+                    SessionType::X11 => {
+                        //TODO: xinit may be better, but more complicated to set up
+                        vec![
+                            "startx".to_string(),
+                            "/usr/bin/env".to_string(),
+                            "XDG_SESSION_TYPE=x11".to_string(),
+                        ]
+                    }
+                    SessionType::Wayland => {
+                        vec![
+                            "/usr/bin/env".to_string(),
+                            "XDG_SESSION_TYPE=wayland".to_string(),
+                        ]
+                    }
                 };
 
                 match shlex::split(exec) {
-                    Some(split) => {
-                        for arg in split {
+                    Some(args) => {
+                        for arg in args {
                             command.push(arg)
                         }
                     }
