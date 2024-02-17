@@ -11,6 +11,16 @@ export INSTALL_DIR := base-dir / 'share'
 bin-src := 'target' / 'release' / name
 bin-dst := base-dir / 'bin' / name
 
+# Systemd sysusers/tmpfiles components directories
+lib-dir := base-dir / 'lib'
+
+# sysusers.d
+sysusers-src := 'debian' / 'cosmic-greeter-sysusers.conf'
+sysusers-dst := lib-dir / 'sysusers.d' / name + '.conf'
+# tmpfiles.d
+tmpfiles-src := 'debian' / 'cosmic-greeter-tmpfiles.conf'
+tmpfiles-dst := lib-dir / 'tmpfiles.d' / name + '.conf'
+
 daemon-src := 'target' / 'release' / name + '-daemon'
 daemon-dst := base-dir / 'bin' / name + '-daemon'
 
@@ -54,10 +64,12 @@ install:
     install -Dm0755 {{bin-src}} {{bin-dst}}
     install -Dm0755 {{daemon-src}} {{daemon-dst}}
     install -Dm0755 {{dbus-src}} {{dbus-dst}}
+    install -Dm0644 {{sysusers-src}} {{sysusers-dst}}
+    install -Dm0644 {{tmpfiles-src}} {{tmpfiles-dst}}
 
 # Uninstalls installed files
 uninstall:
-    rm {{bin-dst}} {{daemon-dst}} {{dbus-dst}}
+    rm {{bin-dst}} {{daemon-dst}} {{dbus-dst}} {{sysusers-dst}} {{tmpfiles-dst}}
 
 # Vendor dependencies locally
 vendor:
