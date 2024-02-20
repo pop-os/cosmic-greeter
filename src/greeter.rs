@@ -25,7 +25,15 @@ use cosmic::{
 };
 use cosmic_greeter_daemon::{UserData, WallpaperData};
 use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
-use std::{collections::HashMap, env, error::Error, fs, io, path::Path, process, sync::Arc};
+use std::{
+    collections::HashMap,
+    env,
+    error::Error,
+    fs, io,
+    path::{Path, PathBuf},
+    process,
+    sync::Arc,
+};
 use tokio::{net::UnixStream, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 use zbus::{dbus_proxy, Connection};
@@ -116,14 +124,22 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         Wayland,
     }
 
-    //TODO: allow custom directories?
-    let session_dirs = &[
-        (
-            Path::new("/usr/share/wayland-sessions"),
-            SessionType::Wayland,
-        ),
-        (Path::new("/usr/share/xsessions"), SessionType::X11),
-    ];
+    let session_dirs = xdg::BaseDirectories::with_prefix("wayland-sessions")
+        .map_or(
+            vec![PathBuf::from("/usr/share/wayland-sessions")],
+            |xdg_dirs| xdg_dirs.get_data_dirs(),
+        )
+        .into_iter()
+        .map(|dir| (dir, SessionType::Wayland))
+        .chain(
+            xdg::BaseDirectories::with_prefix("xsessions")
+                .map_or(
+                    vec![PathBuf::from("/usr/share/xsessions")],
+                    |xdg_dirs| xdg_dirs.get_data_dirs(),
+                )
+                .into_iter()
+                .map(|dir| (dir, SessionType::X11)),
+        );
 
     let sessions = {
         let mut sessions = HashMap::new();
