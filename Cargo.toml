@@ -16,6 +16,7 @@ pam-client = "0.5.0"
 pwd.workspace = true
 ron.workspace = true
 shlex = "1.2.0"
+xdg = "2.5.2"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
 wayland-client = "0.31.1"
