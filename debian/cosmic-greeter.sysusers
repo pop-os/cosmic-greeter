@@ -1,0 +1,3 @@
+#Type Name           ID GECOS                    Home directory           Shell
+u     cosmic-greeter -  "Cosmic Greeter Account" /var/lib/cosmic-greeter  -
+m     cosmic-greeter video

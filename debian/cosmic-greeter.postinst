@@ -7,31 +7,6 @@ set -e
 THIS_PACKAGE=cosmic-greeter
 DEFAULT_DISPLAY_MANAGER_FILE=/etc/X11/default-display-manager
 
-# creating cosmic-greeter group if it isn't already there
-if ! getent group cosmic-greeter >/dev/null; then
-        addgroup --system --force-badname --quiet cosmic-greeter
-fi
-
-# creating cosmic-greeter user if it isn't already there
-if ! getent passwd cosmic-greeter >/dev/null; then
-        adduser --system --force-badname --quiet \
-            --ingroup cosmic-greeter \
-            --home /var/lib/cosmic-greeter --no-create-home \
-            --shell /bin/false \
-            cosmic-greeter
-        usermod -c "COSMIC Greeter" cosmic-greeter
-fi
-
-# ensure cosmic-greeter user is part of the video group
-adduser cosmic-greeter video
-
-# create home directory if it does not exist and set permissions
-if [ ! -d /var/lib/cosmic-greeter ]
-then
-    mkdir /var/lib/cosmic-greeter
-    chown -R cosmic-greeter:cosmic-greeter /var/lib/cosmic-greeter
-fi
-
 # debconf is not a registry, so we only fiddle with the default file if
 # the configure script requested an update
 if [ -e $DEFAULT_DISPLAY_MANAGER_FILE.debconf-update ]; then
