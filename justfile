@@ -15,10 +15,10 @@ bin-dst := base-dir / 'bin' / name
 lib-dir := base-dir / 'lib'
 
 # sysusers.d
-sysusers-src := 'debian' / 'cosmic-greeter-sysusers.conf'
+sysusers-src := 'debian' / name + '.sysusers'
 sysusers-dst := lib-dir / 'sysusers.d' / name + '.conf'
 # tmpfiles.d
-tmpfiles-src := 'debian' / 'cosmic-greeter-tmpfiles.conf'
+tmpfiles-src := 'debian' / name + '.tmpfiles'
 tmpfiles-dst := lib-dir / 'tmpfiles.d' / name + '.conf'
 
 daemon-src := 'target' / 'release' / name + '-daemon'
@@ -59,11 +59,15 @@ check-json: (check '--message-format=json')
 run *args:
     env RUST_LOG=debug RUST_BACKTRACE=full cargo run --release {{args}}
 
-# Installs files
-install:
+# Install only debian package required files
+# The sysusers and tmpfiles files are automatically added
+install-debian:
     install -Dm0755 {{bin-src}} {{bin-dst}}
     install -Dm0755 {{daemon-src}} {{daemon-dst}}
     install -Dm0755 {{dbus-src}} {{dbus-dst}}
+
+# Installs files
+install: install-debian
     install -Dm0644 {{sysusers-src}} {{sysusers-dst}}
     install -Dm0644 {{tmpfiles-src}} {{tmpfiles-dst}}
 
