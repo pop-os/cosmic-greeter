@@ -289,7 +289,7 @@ async fn request_message(socket: Arc<UnixStream>, request: Request) -> Message {
                         description,
                     } => {
                         //TODO: use error_type?
-                        return Message::Error(description);
+                        return Message::Error(socket, description);
                     }
                     Response::Success => match request {
                         Request::CreateSession { .. } => {
@@ -305,8 +305,8 @@ async fn request_message(socket: Arc<UnixStream>, request: Request) -> Message {
                             return Message::Exit;
                         }
                         Request::CancelSession => {
-                            //TODO: restart whole process
-                            return Message::None;
+                            // Reconnect to socket
+                            return Message::Reconnect;
                         }
                     },
                 }
@@ -364,8 +364,9 @@ pub enum Message {
     Username(Arc<UnixStream>, String),
     Auth(Arc<UnixStream>, Option<String>),
     Login(Arc<UnixStream>),
+    Error(Arc<UnixStream>, String),
+    Reconnect,
     Suspend,
-    Error(String),
     Exit,
 }
 
@@ -482,8 +483,7 @@ impl cosmic::Application for App {
         //TODO: determine default session?
         let selected_session = session_names.first().cloned().unwrap_or(String::new());
 
-        (
-            App {
+        let mut app = App {
                 core,
                 flags,
                 surface_ids: HashMap::new(),
@@ -499,20 +499,9 @@ impl cosmic::Application for App {
                 session_names,
                 selected_session,
                 error_opt: None,
-            },
-            Command::perform(
-                async {
-                    message::app(Message::Socket(match env::var_os("GREETD_SOCK") {
-                        Some(socket_path) => match UnixStream::connect(&socket_path).await {
-                            Ok(socket) => SocketState::Open(Arc::new(socket)),
-                            Err(err) => SocketState::Error(Arc::new(err)),
-                        },
-                        None => SocketState::NotSet,
-                    }))
-                },
-                |x| x,
-            ),
-        )
+            };
+        let command = app.update(Message::Reconnect);
+        (app, command)
     }
 
     /// Handle application events here.
@@ -617,10 +606,7 @@ impl cosmic::Application for App {
                         match self.flags.user_datas.first().map(|x| x.name.clone()) {
                             Some(username) => {
                                 let socket = socket.clone();
-                                return Command::perform(
-                                    async { message::app(Message::Username(socket, username)) },
-                                    |x| x,
-                                );
+                                return self.update(Message::Username(socket, username));
                             }
                             None => {}
                         }
@@ -634,10 +620,14 @@ impl cosmic::Application for App {
             Message::PowerInfo(power_info_opt) => {
                 self.power_info_opt = power_info_opt;
             }
-            Message::Prompt(prompt, secret, value) => {
-                let prompt_was_none = self.prompt_opt.is_none();
-                self.prompt_opt = Some((prompt, secret, value));
-                if prompt_was_none {
+            Message::Prompt(prompt, secret, value_opt) => {
+                let value_was_some = self
+                    .prompt_opt
+                    .as_ref()
+                    .map_or(false, |(_, _, x)| x.is_some());
+                let value_is_some = value_opt.is_some();
+                self.prompt_opt = Some((prompt, secret, value_opt));
+                if value_is_some && !value_was_some {
                     if let Some(surface_id) = self.active_surface_id_opt {
                         if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
                             return widget::text_input::focus(text_input_id.clone());
@@ -650,6 +640,7 @@ impl cosmic::Application for App {
             }
             Message::Username(socket, username) => {
                 self.username_opt = Some(username.clone());
+                self.prompt_opt = None;
                 self.surface_images.clear();
                 return Command::batch([
                     self.update_user_config(),
@@ -657,9 +648,13 @@ impl cosmic::Application for App {
                 ]);
             }
             Message::Auth(socket, response) => {
+                self.prompt_opt = None;
+                self.error_opt = None;
                 return request_command(socket, Request::PostAuthMessageResponse { response });
             }
             Message::Login(socket) => {
+                self.prompt_opt = None;
+                self.error_opt = None;
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some(cmd) => {
                         return request_command(
@@ -673,23 +668,38 @@ impl cosmic::Application for App {
                     None => todo!("session {:?} not found", self.selected_session),
                 }
             }
+            Message::Error(socket, error) => {
+                self.error_opt = Some(error);
+                return request_command(socket, Request::CancelSession);
+            }
+            Message::Reconnect => {
+                return Command::perform(
+                    async {
+                        message::app(Message::Socket(match env::var_os("GREETD_SOCK") {
+                            Some(socket_path) => match UnixStream::connect(&socket_path).await {
+                                Ok(socket) => SocketState::Open(Arc::new(socket)),
+                                Err(err) => SocketState::Error(Arc::new(err)),
+                            },
+                            None => SocketState::NotSet,
+                        }))
+                    },
+                    |x| x,
+                );
+            }
             Message::Suspend => {
                 #[cfg(feature = "logind")]
                 return Command::perform(
                     async move {
                         match crate::logind::suspend().await {
-                            Ok(()) => message::none(),
+                            Ok(()) => (),
                             Err(err) => {
                                 log::error!("failed to suspend: {:?}", err);
-                                message::app(Message::Error(err.to_string()))
                             }
                         }
+                        message::none()
                     },
                     |x| x,
                 );
-            }
-            Message::Error(error) => {
-                self.error_opt = Some(error);
             }
             Message::Exit => {
                 let mut commands = Vec::new();

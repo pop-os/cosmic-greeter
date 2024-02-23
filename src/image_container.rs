@@ -12,7 +12,7 @@ use cosmic::iced_core::widget::{Operation, Tree};
 use cosmic::iced_core::{Clipboard, Element, Layout, Length, Rectangle, Shell, Widget};
 use cosmic::iced_renderer::core::widget::OperationOutputWrapper;
 
-pub use cosmic::iced_style::container::{Appearance, StyleSheet};
+pub use cosmic::iced_style::container::StyleSheet;
 
 pub struct ImageContainer<'a, Message, Renderer>
 where
