@@ -201,7 +201,7 @@ impl GreeterProxy {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let _conn = ConnectionBuilder::system()?
         .name("com.system76.CosmicGreeter")?
