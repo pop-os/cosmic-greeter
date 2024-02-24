@@ -9,27 +9,27 @@ use cosmic::iced_core::mouse;
 use cosmic::iced_core::overlay;
 use cosmic::iced_core::renderer;
 use cosmic::iced_core::widget::{Operation, Tree};
-use cosmic::iced_core::{Clipboard, Element, Layout, Length, Rectangle, Shell, Widget};
+use cosmic::iced_core::{Clipboard, Element, Layout, Length, Rectangle, Shell, Size, Widget};
 use cosmic::iced_renderer::core::widget::OperationOutputWrapper;
 
 pub use cosmic::iced_style::container::StyleSheet;
 
-pub struct ImageContainer<'a, Message, Renderer>
+pub struct ImageContainer<'a, Message, Theme, Renderer>
 where
     Renderer: cosmic::iced_core::Renderer + cosmic::iced_core::image::Renderer<Handle = Handle>,
-    Renderer::Theme: StyleSheet,
+    Theme: StyleSheet,
 {
-    container: Container<'a, Message, Renderer>,
+    container: Container<'a, Message, Theme, Renderer>,
     image_opt: Option<Handle>,
     content_fit: ContentFit,
 }
 
-impl<'a, Message, Renderer> ImageContainer<'a, Message, Renderer>
+impl<'a, Message, Renderer> ImageContainer<'a, Message, cosmic::Theme, Renderer>
 where
     Renderer: cosmic::iced_core::Renderer + cosmic::iced_core::image::Renderer<Handle = Handle>,
-    Renderer::Theme: StyleSheet,
+    cosmic::Theme: StyleSheet,
 {
-    pub fn new(container: Container<'a, Message, Renderer>) -> Self {
+    pub fn new(container: Container<'a, Message, cosmic::Theme, Renderer>) -> Self {
         Self {
             container,
             image_opt: None,
@@ -48,10 +48,10 @@ where
     }
 }
 
-impl<'a, Message, Renderer> Widget<Message, Renderer> for ImageContainer<'a, Message, Renderer>
+impl<'a, Message, Renderer> Widget<Message, cosmic::Theme, Renderer>
+    for ImageContainer<'a, Message, cosmic::Theme, Renderer>
 where
     Renderer: cosmic::iced_core::Renderer + cosmic::iced_core::image::Renderer<Handle = Handle>,
-    Renderer::Theme: StyleSheet,
 {
     fn children(&self) -> Vec<Tree> {
         self.container.children()
@@ -61,12 +61,8 @@ where
         self.container.diff(tree)
     }
 
-    fn width(&self) -> Length {
-        Widget::width(&self.container)
-    }
-
-    fn height(&self) -> Length {
-        Widget::height(&self.container)
+    fn size(&self) -> Size<Length> {
+        self.container.size()
     }
 
     fn layout(
@@ -120,7 +116,7 @@ where
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &Renderer::Theme,
+        theme: &cosmic::Theme,
         renderer_style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
@@ -154,20 +150,21 @@ where
         tree: &'b mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
-    ) -> Option<overlay::Element<'b, Message, Renderer>> {
+    ) -> Option<overlay::Element<'b, Message, cosmic::Theme, Renderer>> {
         self.container.overlay(tree, layout, renderer)
     }
 }
 
-impl<'a, Message, Renderer> From<ImageContainer<'a, Message, Renderer>>
-    for Element<'a, Message, Renderer>
+impl<'a, Message, Renderer> From<ImageContainer<'a, Message, cosmic::Theme, Renderer>>
+    for Element<'a, Message, cosmic::Theme, Renderer>
 where
     Message: 'a,
     Renderer:
         'a + cosmic::iced_core::Renderer + cosmic::iced_core::image::Renderer<Handle = Handle>,
-    Renderer::Theme: StyleSheet,
 {
-    fn from(container: ImageContainer<'a, Message, Renderer>) -> Element<'a, Message, Renderer> {
+    fn from(
+        container: ImageContainer<'a, Message, cosmic::Theme, Renderer>,
+    ) -> Element<'a, Message, cosmic::Theme, Renderer> {
         Element::new(container)
     }
 }

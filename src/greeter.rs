@@ -980,7 +980,7 @@ impl cosmic::Application for App {
                             theme,
                             &cosmic::theme::Container::Background,
                         );
-                        appearance.border_radius = 16.0.into();
+                        appearance.border = iced::Border::with_radius(16.0);
                         appearance
                     },
                 )))
