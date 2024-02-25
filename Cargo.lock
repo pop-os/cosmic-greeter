@@ -825,6 +825,7 @@ dependencies = [
  "tokio",
  "upower_dbus",
  "wayland-client 0.31.1",
+ "xdg",
  "zbus",
 ]
 
