@@ -21,6 +21,7 @@ Depends:
     bash,
     cosmic-comp,
     cosmic-greeter-daemon,
+    dbus,
     greetd,
     ${misc:Depends},
     ${shlibs:Depends}

@@ -133,10 +133,9 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         .map(|dir| (dir, SessionType::Wayland))
         .chain(
             xdg::BaseDirectories::with_prefix("xsessions")
-                .map_or(
-                    vec![PathBuf::from("/usr/share/xsessions")],
-                    |xdg_dirs| xdg_dirs.get_data_dirs(),
-                )
+                .map_or(vec![PathBuf::from("/usr/share/xsessions")], |xdg_dirs| {
+                    xdg_dirs.get_data_dirs()
+                })
                 .into_iter()
                 .map(|dir| (dir, SessionType::X11)),
         );
@@ -207,6 +206,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     SessionType::X11 => {
                         //TODO: xinit may be better, but more complicated to set up
                         vec![
+                            "dbus-run-session".to_string(),
+                            "--".to_string(),
                             "startx".to_string(),
                             "/usr/bin/env".to_string(),
                             "XDG_SESSION_TYPE=x11".to_string(),
@@ -214,11 +215,17 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                     SessionType::Wayland => {
                         vec![
+                            "dbus-run-session".to_string(),
+                            "--".to_string(),
                             "/usr/bin/env".to_string(),
                             "XDG_SESSION_TYPE=wayland".to_string(),
                         ]
                     }
                 };
+
+                if let Some(desktop_names) = entry.section("Desktop Entry").attr("DesktopNames") {
+                    command.push(format!("XDG_CURRENT_DESKTOP={desktop_names}"));
+                }
 
                 match shlex::split(exec) {
                     Some(args) => {
@@ -500,22 +507,22 @@ impl cosmic::Application for App {
         let selected_session = session_names.first().cloned().unwrap_or(String::new());
 
         let mut app = App {
-                core,
-                flags,
-                surface_ids: HashMap::new(),
-                active_surface_id_opt: None,
-                surface_images: HashMap::new(),
-                surface_names: HashMap::new(),
-                text_input_ids: HashMap::new(),
-                network_icon_opt: None,
-                power_info_opt: None,
-                socket_state: SocketState::Pending,
-                username_opt: None,
-                prompt_opt: None,
-                session_names,
-                selected_session,
-                error_opt: None,
-            };
+            core,
+            flags,
+            surface_ids: HashMap::new(),
+            active_surface_id_opt: None,
+            surface_images: HashMap::new(),
+            surface_names: HashMap::new(),
+            text_input_ids: HashMap::new(),
+            network_icon_opt: None,
+            power_info_opt: None,
+            socket_state: SocketState::Pending,
+            username_opt: None,
+            prompt_opt: None,
+            session_names,
+            selected_session,
+            error_opt: None,
+        };
         let command = app.update(Message::Reconnect);
         (app, command)
     }
