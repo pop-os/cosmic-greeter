@@ -206,8 +206,6 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     SessionType::X11 => {
                         //TODO: xinit may be better, but more complicated to set up
                         vec![
-                            "dbus-run-session".to_string(),
-                            "--".to_string(),
                             "startx".to_string(),
                             "/usr/bin/env".to_string(),
                             "XDG_SESSION_TYPE=x11".to_string(),
@@ -215,8 +213,6 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                     SessionType::Wayland => {
                         vec![
-                            "dbus-run-session".to_string(),
-                            "--".to_string(),
                             "/usr/bin/env".to_string(),
                             "XDG_SESSION_TYPE=wayland".to_string(),
                         ]
