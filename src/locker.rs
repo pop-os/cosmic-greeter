@@ -632,7 +632,7 @@ impl cosmic::Application for App {
                             theme,
                             &cosmic::theme::Container::Background,
                         );
-                        appearance.border_radius = 16.0.into();
+                        appearance.border = iced::Border::with_radius(16.0);
                         appearance
                     },
                 )))
@@ -696,12 +696,11 @@ impl cosmic::Application for App {
                 cosmic_bg_config::NAME.into(),
                 cosmic_bg_config::state::State::version(),
             )
-            .map(|(_, res)| match res {
-                Ok(background_state) => Message::BackgroundState(background_state),
-                Err((errs, background_state)) => {
-                    log::info!("errors loading background state: {:?}", errs);
-                    Message::BackgroundState(background_state)
+            .map(|res| {
+                if !res.errors.is_empty() {
+                    log::info!("errors loading background state: {:?}", res.errors);
                 }
+                Message::BackgroundState(res.config)
             }),
             subscription::channel(
                 TypeId::of::<HeartbeatSubscription>(),
