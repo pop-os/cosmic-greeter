@@ -195,6 +195,8 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
+    LogindLock,
+    LogindUnlock,
     NetworkIcon(Option<&'static str>),
     PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
@@ -404,6 +406,12 @@ impl cosmic::Application for App {
                 self.flags.wallpapers = background_state.wallpapers;
                 self.surface_images.clear();
                 self.update_wallpapers();
+            }
+            Message::LogindLock => {
+                log::warn!("TODO: LogindLock");
+            }
+            Message::LogindUnlock => {
+                log::warn!("TODO: LogindUnlock");
             }
             Message::NetworkIcon(network_icon_opt) => {
                 self.network_icon_opt = network_icon_opt;
@@ -660,11 +668,22 @@ impl cosmic::Application for App {
         struct PamSubscription;
 
         //TODO: just use one vec for all subscriptions
-        let mut extra_suscriptions = Vec::with_capacity(2);
+        let mut extra_subscriptions = Vec::with_capacity(3);
+
+        #[cfg(feature = "logind")]
+        {
+            extra_subscriptions.push(crate::logind::subscription().map(|lock| {
+                if lock {
+                    Message::LogindLock
+                } else {
+                    Message::LogindUnlock
+                }
+            }));
+        }
 
         #[cfg(feature = "networkmanager")]
         {
-            extra_suscriptions.push(
+            extra_subscriptions.push(
                 crate::networkmanager::subscription()
                     .map(|icon_opt| Message::NetworkIcon(icon_opt)),
             );
@@ -672,7 +691,7 @@ impl cosmic::Application for App {
 
         #[cfg(feature = "upower")]
         {
-            extra_suscriptions
+            extra_subscriptions
                 .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
         }
 
@@ -750,7 +769,7 @@ impl cosmic::Application for App {
                     }
                 },
             ),
-            Subscription::batch(extra_suscriptions),
+            Subscription::batch(extra_subscriptions),
         ])
     }
 }
