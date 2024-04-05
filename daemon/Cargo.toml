@@ -12,6 +12,7 @@ cosmic-theme.workspace = true
 env_logger.workspace = true
 libc = "0.2"
 log.workspace = true
+nix.workspace = true
 pwd.workspace = true
 ron.workspace = true
 serde.workspace = true
