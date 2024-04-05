@@ -195,20 +195,29 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
-    LogindLock,
     NetworkIcon(Option<&'static str>),
     PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
     Submit,
     Suspend,
     Error(String),
+    Lock,
     Unlock,
+}
+
+#[derive(Clone, Debug)]
+enum State {
+    Locking,
+    Locked,
+    Unlocking,
+    Unlocked,
 }
 
 /// The [`App`] stores application-specific state.
 pub struct App {
     core: Core,
     flags: Flags,
+    state: State,
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
@@ -303,6 +312,7 @@ impl cosmic::Application for App {
             App {
                 core,
                 flags,
+                state: State::Unlocked,
                 surface_ids: HashMap::new(),
                 active_surface_id_opt: None,
                 surface_images: HashMap::new(),
@@ -314,7 +324,13 @@ impl cosmic::Application for App {
                 prompt_opt: None,
                 error_opt: None,
             },
-            lock(),
+            if cfg!(feature = "logind") {
+                // When logind feature is used, wait for lock signal
+                Command::none()
+            } else {
+                // When logind feature not used, lock immediately
+                lock()
+            },
         )
     }
 
@@ -360,10 +376,12 @@ impl cosmic::Application for App {
                         self.text_input_ids
                             .insert(surface_id, text_input_id.clone());
 
-                        return Command::batch([
-                            get_lock_surface(surface_id, output),
-                            widget::text_input::focus(text_input_id),
-                        ]);
+                        if matches!(self.state, State::Locked) {
+                            return Command::batch([
+                                get_lock_surface(surface_id, output),
+                                widget::text_input::focus(text_input_id),
+                            ]);
+                        }
                     }
                     OutputEvent::Removed => {
                         log::info!("output {}: removed", output.id());
@@ -372,15 +390,17 @@ impl cosmic::Application for App {
                                 self.surface_images.remove(&surface_id);
                                 self.surface_names.remove(&surface_id);
                                 self.text_input_ids.remove(&surface_id);
-                                return destroy_lock_surface(surface_id);
+                                if matches!(self.state, State::Locked) {
+                                    return destroy_lock_surface(surface_id);
+                                }
                             }
                             None => {
                                 log::warn!("output {}: no surface found", output.id());
                             }
                         }
                     }
-                    OutputEvent::InfoUpdate(output_info) => {
-                        log::info!("output {}: info update {:#?}", output.id(), output_info);
+                    OutputEvent::InfoUpdate(_output_info) => {
+                        log::info!("output {}: info update", output.id());
                     }
                 }
             }
@@ -392,10 +412,27 @@ impl cosmic::Application for App {
                         return widget::text_input::focus(text_input_id.clone());
                     }
                 }
-                SessionLockEvent::Unlocked => {
-                    //TODO: cleaner method to exit?
-                    process::exit(0);
+                SessionLockEvent::Locked => {
+                    log::info!("session locked");
+                    self.state = State::Locked;
+                    let mut commands = Vec::with_capacity(self.surface_ids.len());
+                    for (output, surface_id) in self.surface_ids.iter() {
+                        commands.push(get_lock_surface(*surface_id, output.clone()));
+                    }
+                    return Command::batch(commands);
                 }
+                SessionLockEvent::Unlocked => {
+                    log::info!("session unlocked");
+                    self.state = State::Unlocked;
+                    if cfg!(feature = "logind") {
+                        // When using logind feature, stick around for more lock signals
+                    } else {
+                        // When not using logind feature, exit immediately after unlocking
+                        //TODO: cleaner method to exit?
+                        process::exit(0);
+                    }
+                }
+                //TODO: handle finished signal
                 _ => {}
             },
             Message::Channel(value_tx) => {
@@ -405,9 +442,6 @@ impl cosmic::Application for App {
                 self.flags.wallpapers = background_state.wallpapers;
                 self.surface_images.clear();
                 self.update_wallpapers();
-            }
-            Message::LogindLock => {
-                log::warn!("TODO: LogindLock");
             }
             Message::NetworkIcon(network_icon_opt) => {
                 self.network_icon_opt = network_icon_opt;
@@ -430,6 +464,8 @@ impl cosmic::Application for App {
                 Some((_prompt, _secret, value_opt)) => match value_opt {
                     Some(value) => match self.value_tx_opt.take() {
                         Some(value_tx) => {
+                            // Clear errors
+                            self.error_opt = None;
                             return Command::perform(
                                 async move {
                                     value_tx.send(value).await.unwrap();
@@ -462,17 +498,47 @@ impl cosmic::Application for App {
             Message::Error(error) => {
                 self.error_opt = Some(error);
             }
-            Message::Unlock => {
-                let mut commands = Vec::new();
-                for (_output, surface_id) in self.surface_ids.drain() {
-                    self.surface_images.remove(&surface_id);
-                    self.surface_names.remove(&surface_id);
-                    self.text_input_ids.remove(&surface_id);
-                    commands.push(destroy_lock_surface(surface_id));
+            Message::Lock => match self.state {
+                State::Unlocked => {
+                    log::info!("session locking");
+                    self.state = State::Locking;
+                    // Clear errors
+                    self.error_opt = None;
+                    // Clear value_tx
+                    self.value_tx_opt = None;
+                    return lock();
                 }
-                commands.push(unlock());
-                // Wait to exit until `Unlocked` event, when server has processed unlock
-                return Command::batch(commands);
+                State::Unlocking => {
+                    log::info!("session still unlocking");
+                }
+                State::Locking | State::Locked => {
+                    log::info!("session already locking or locked");
+                }
+            },
+            Message::Unlock => {
+                match self.state {
+                    State::Locked => {
+                        log::info!("sessing unlocking");
+                        self.state = State::Unlocking;
+                        // Clear errors
+                        self.error_opt = None;
+                        // Clear value_tx
+                        self.value_tx_opt = None;
+                        let mut commands = Vec::with_capacity(self.surface_ids.len() + 1);
+                        for (_output, surface_id) in self.surface_ids.iter() {
+                            commands.push(destroy_lock_surface(*surface_id));
+                        }
+                        commands.push(unlock());
+                        // Wait to exit until `Unlocked` event, when server has processed unlock
+                        return Command::batch(commands);
+                    }
+                    State::Locking => {
+                        log::info!("session still locking");
+                    }
+                    State::Unlocking | State::Unlocked => {
+                        log::info!("session already unlocking or unlocked");
+                    }
+                }
             }
         }
         Command::none()
@@ -659,53 +725,23 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        struct BackgroundSubscription;
-        struct HeartbeatSubscription;
-        struct PamSubscription;
+        let mut subscriptions = Vec::with_capacity(7);
 
-        //TODO: just use one vec for all subscriptions
-        let mut extra_subscriptions = Vec::with_capacity(3);
-
-        #[cfg(feature = "logind")]
-        {
-            extra_subscriptions.push(crate::logind::subscription().map(|lock| {
-                if lock {
-                    Message::LogindLock
-                } else {
-                    Message::Unlock
+        subscriptions.push(event::listen_with(|event, _| match event {
+            iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
+                wayland_event,
+            )) => match wayland_event {
+                WaylandEvent::Output(output_event, output) => {
+                    Some(Message::OutputEvent(output_event, output))
                 }
-            }));
-        }
-
-        #[cfg(feature = "networkmanager")]
-        {
-            extra_subscriptions.push(
-                crate::networkmanager::subscription()
-                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
-            );
-        }
-
-        #[cfg(feature = "upower")]
-        {
-            extra_subscriptions
-                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
-        }
-
-        //TODO: how to avoid cloning this on every time subscription is called?
-        let username = self.flags.current_user.name.clone();
-        Subscription::batch([
-            event::listen_with(|event, _| match event {
-                iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
-                    wayland_event,
-                )) => match wayland_event {
-                    WaylandEvent::Output(output_event, output) => {
-                        Some(Message::OutputEvent(output_event, output))
-                    }
-                    WaylandEvent::SessionLock(evt) => Some(Message::SessionLockEvent(evt)),
-                    _ => None,
-                },
+                WaylandEvent::SessionLock(evt) => Some(Message::SessionLockEvent(evt)),
                 _ => None,
-            }),
+            },
+            _ => None,
+        }));
+
+        struct BackgroundSubscription;
+        subscriptions.push(
             cosmic_config::config_state_subscription(
                 TypeId::of::<BackgroundSubscription>(),
                 cosmic_bg_config::NAME.into(),
@@ -717,7 +753,11 @@ impl cosmic::Application for App {
                 }
                 Message::BackgroundState(res.config)
             }),
-            subscription::channel(
+        );
+
+        if matches!(self.state, State::Locked) {
+            struct HeartbeatSubscription;
+            subscriptions.push(subscription::channel(
                 TypeId::of::<HeartbeatSubscription>(),
                 16,
                 |mut msg_tx| async move {
@@ -728,8 +768,12 @@ impl cosmic::Application for App {
                         time::sleep(time::Duration::new(1, 0)).await;
                     }
                 },
-            ),
-            subscription::channel(
+            ));
+
+            struct PamSubscription;
+            //TODO: how to avoid cloning this on every time subscription is called?
+            let username = self.flags.current_user.name.clone();
+            subscriptions.push(subscription::channel(
                 TypeId::of::<PamSubscription>(),
                 16,
                 |mut msg_tx| async move {
@@ -764,8 +808,34 @@ impl cosmic::Application for App {
                         time::sleep(time::Duration::new(60, 0)).await;
                     }
                 },
-            ),
-            Subscription::batch(extra_subscriptions),
-        ])
+            ));
+        }
+
+        #[cfg(feature = "logind")]
+        {
+            subscriptions.push(crate::logind::subscription().map(|lock| {
+                if lock {
+                    Message::Lock
+                } else {
+                    Message::Unlock
+                }
+            }));
+        }
+
+        #[cfg(feature = "networkmanager")]
+        {
+            subscriptions.push(
+                crate::networkmanager::subscription()
+                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
+            );
+        }
+
+        #[cfg(feature = "upower")]
+        {
+            subscriptions
+                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
+        }
+
+        Subscription::batch(subscriptions)
     }
 }
