@@ -4,7 +4,7 @@ use zbus::{Connection, Result};
 pub async fn power_off() -> Result<()> {
     let connection = Connection::system().await?;
     let manager = ManagerProxy::new(&connection).await?;
-    manager.reboot(false).await
+    manager.power_off(false).await
 }
 
 pub async fn reboot() -> Result<()> {
