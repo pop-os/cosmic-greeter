@@ -196,14 +196,13 @@ pub enum Message {
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
     LogindLock,
-    LogindUnlock,
     NetworkIcon(Option<&'static str>),
     PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
     Submit,
     Suspend,
     Error(String),
-    Exit,
+    Unlock,
 }
 
 /// The [`App`] stores application-specific state.
@@ -410,9 +409,6 @@ impl cosmic::Application for App {
             Message::LogindLock => {
                 log::warn!("TODO: LogindLock");
             }
-            Message::LogindUnlock => {
-                log::warn!("TODO: LogindUnlock");
-            }
             Message::NetworkIcon(network_icon_opt) => {
                 self.network_icon_opt = network_icon_opt;
             }
@@ -466,7 +462,7 @@ impl cosmic::Application for App {
             Message::Error(error) => {
                 self.error_opt = Some(error);
             }
-            Message::Exit => {
+            Message::Unlock => {
                 let mut commands = Vec::new();
                 for (_output, surface_id) in self.surface_ids.drain() {
                     self.surface_images.remove(&surface_id);
@@ -676,7 +672,7 @@ impl cosmic::Application for App {
                 if lock {
                     Message::LogindLock
                 } else {
-                    Message::LogindUnlock
+                    Message::Unlock
                 }
             }));
         }
@@ -754,7 +750,7 @@ impl cosmic::Application for App {
                         match pam_res {
                             Ok(()) => {
                                 log::info!("successfully authenticated");
-                                msg_tx.send(Message::Exit).await.unwrap();
+                                msg_tx.send(Message::Unlock).await.unwrap();
                                 break;
                             }
                             Err(err) => {
