@@ -619,7 +619,7 @@ impl cosmic::Application for App {
 
         crate::image_container::ImageContainer::new(
             widget::container(
-                widget::cosmic_container::container(
+                widget::layer_container(
                     iced::widget::row![left_element, right_element]
                         .align_items(alignment::Alignment::Center),
                 )

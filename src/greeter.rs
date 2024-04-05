@@ -901,7 +901,7 @@ impl cosmic::Application for App {
 
                                 row = row.push(
                                     widget::MouseArea::new(
-                                        widget::cosmic_container::container(column)
+                                        widget::layer_container(column)
                                             .layer(cosmic::cosmic_theme::Layer::Primary)
                                             .padding(16)
                                             .style(cosmic::theme::Container::Card),
@@ -986,7 +986,7 @@ impl cosmic::Application for App {
 
         crate::image_container::ImageContainer::new(
             widget::container(
-                widget::cosmic_container::container(
+                widget::layer_container(
                     iced::widget::row![left_element, right_element]
                         .align_items(alignment::Alignment::Center),
                 )
