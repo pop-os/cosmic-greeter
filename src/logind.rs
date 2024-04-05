@@ -63,8 +63,10 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<bool>) -> Result<(), Box<dyn Erro
     loop {
         // Waits until lock or unlock signals have been received
         tokio::select!(_ = lock.next() =>  {
+            log::info!("logind lock");
             msg_tx.send(true).await?;
         }, _ = unlock.next() => {
+            log::info!("logind unlock");
             msg_tx.send(false).await?;
         });
     }
