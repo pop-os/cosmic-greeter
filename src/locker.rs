@@ -24,8 +24,10 @@ use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     fs,
+    os::fd::OwnedFd,
     path::Path,
     process,
+    sync::Arc,
 };
 use tokio::{sync::mpsc, task, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
@@ -195,6 +197,7 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
+    Inhibit(Arc<OwnedFd>),
     NetworkIcon(Option<&'static str>),
     PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
@@ -223,6 +226,7 @@ pub struct App {
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
     surface_names: HashMap<SurfaceId, String>,
     text_input_ids: HashMap<SurfaceId, widget::Id>,
+    inhibit_opt: Option<Arc<OwnedFd>>,
     network_icon_opt: Option<&'static str>,
     power_info_opt: Option<(String, f64)>,
     value_tx_opt: Option<mpsc::Sender<String>>,
@@ -318,6 +322,7 @@ impl cosmic::Application for App {
                 surface_images: HashMap::new(),
                 surface_names: HashMap::new(),
                 text_input_ids: HashMap::new(),
+                inhibit_opt: None,
                 network_icon_opt: None,
                 power_info_opt: None,
                 value_tx_opt: None,
@@ -415,6 +420,8 @@ impl cosmic::Application for App {
                 SessionLockEvent::Locked => {
                     log::info!("session locked");
                     self.state = State::Locked;
+                    // Allow suspend
+                    self.inhibit_opt = None;
                     let mut commands = Vec::with_capacity(self.surface_ids.len());
                     for (output, surface_id) in self.surface_ids.iter() {
                         commands.push(get_lock_surface(*surface_id, output.clone()));
@@ -442,6 +449,9 @@ impl cosmic::Application for App {
                 self.flags.wallpapers = background_state.wallpapers;
                 self.surface_images.clear();
                 self.update_wallpapers();
+            }
+            Message::Inhibit(inhibit) => {
+                self.inhibit_opt = Some(inhibit);
             }
             Message::NetworkIcon(network_icon_opt) => {
                 self.network_icon_opt = network_icon_opt;
@@ -813,13 +823,7 @@ impl cosmic::Application for App {
 
         #[cfg(feature = "logind")]
         {
-            subscriptions.push(crate::logind::subscription().map(|lock| {
-                if lock {
-                    Message::Lock
-                } else {
-                    Message::Unlock
-                }
-            }));
+            subscriptions.push(crate::logind::subscription());
         }
 
         #[cfg(feature = "networkmanager")]
