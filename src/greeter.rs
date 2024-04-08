@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use cosmic::app::{message, Command, Core, Settings};
+use cosmic::Theme;
 use cosmic::{
     executor,
     iced::{
@@ -37,6 +38,8 @@ use std::{
 use tokio::{net::UnixStream, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 use zbus::{dbus_proxy, Connection};
+
+use crate::theme::get_theme;
 
 #[dbus_proxy(
     interface = "com.system76.CosmicGreeter",
@@ -260,7 +263,9 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         fallback_background,
     };
 
-    let settings = Settings::default().no_main_window(true);
+    let settings = Settings::default()
+        .theme(Theme::custom(Arc::new(get_theme())))
+        .no_main_window(true);
 
     cosmic::app::run::<App>(settings, flags)?;
 

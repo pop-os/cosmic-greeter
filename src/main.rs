@@ -11,6 +11,7 @@ mod logind;
 #[cfg(feature = "networkmanager")]
 mod networkmanager;
 
+mod theme;
 #[cfg(feature = "upower")]
 mod upower;
 
