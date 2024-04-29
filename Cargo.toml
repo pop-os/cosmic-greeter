@@ -32,7 +32,7 @@ upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", rev = 
 zbus = { workspace = true, optional = true }
 
 [dependencies.greetd_ipc]
-version = "0.9.0"
+version = "0.10.0"
 features = ["sync-codec"]
 
 [features]
