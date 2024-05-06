@@ -2,6 +2,8 @@
 Description=COSMIC Greeter Daemon
 
 [Service]
+Type=dbus
+BusName=com.system76.CosmicGreeter
 ExecStart=/usr/bin/cosmic-greeter-daemon
 Restart=on-failure
 
