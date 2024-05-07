@@ -3,7 +3,7 @@ Description=COSMIC Greeter
 After=systemd-user-sessions.service plymouth-quit-wait.service cosmic-greeter-daemon.service
 After=getty@tty1.service
 Conflicts=getty@tty1.service
-Requires=cosmic-greeter-daemon.service
+Wants=cosmic-greeter-daemon.service
 
 [Service]
 Type=simple
