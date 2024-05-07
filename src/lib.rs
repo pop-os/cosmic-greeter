@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod greeter;
-mod image_container;
 pub mod locker;
+
+mod image_container;
+mod localize;
 
 #[cfg(feature = "logind")]
 mod logind;

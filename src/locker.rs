@@ -33,6 +33,8 @@ use tokio::{sync::mpsc, task, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 
 pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
+    crate::localize::localize();
+
     //TODO: use accountsservice
     let icon_path = Path::new("/var/lib/AccountsService/icons").join(&current_user.name);
     let icon_opt = if icon_path.is_file() {

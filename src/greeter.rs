@@ -108,6 +108,8 @@ fn user_data_fallback() -> Vec<UserData> {
 }
 
 pub fn main() -> Result<(), Box<dyn Error>> {
+    crate::localize::localize();
+
     let mut user_datas = match futures::executor::block_on(async { user_data_dbus().await }) {
         Ok(ok) => ok,
         Err(err) => {
