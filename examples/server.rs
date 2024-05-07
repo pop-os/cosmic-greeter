@@ -1,11 +1,21 @@
 use greetd_ipc::{codec::SyncCodec, AuthMessageType, ErrorType, Request, Response};
-use std::io;
+use std::{env, fs, io, thread};
 use tokio::net::UnixListener;
 
 #[tokio::main]
 async fn main() {
-    let listener = UnixListener::bind("socket").unwrap();
-    println!("listening");
+    let greetd_sock = env::current_dir().unwrap().join("socket");
+    if greetd_sock.exists() {
+        fs::remove_file(&greetd_sock).unwrap();
+    }
+
+    let listener = UnixListener::bind(&greetd_sock).unwrap();
+    println!("listening at {:?}", greetd_sock);
+
+    env::set_var("GREETD_SOCK", &greetd_sock);
+    thread::spawn(|| {
+        cosmic_greeter::greeter::main();
+    });
 
     loop {
         let (socket, _addr) = listener.accept().await.unwrap();
@@ -38,7 +48,7 @@ async fn main() {
             let response = match request {
                 Request::CreateSession { .. } => Response::AuthMessage {
                     auth_message_type: AuthMessageType::Secret,
-                    auth_message: "Password:".to_string(),
+                    auth_message: "MOCKING:".to_string(),
                 },
                 Request::PostAuthMessageResponse { response } => {
                     match response.as_ref().map(|x| x.as_str()) {
@@ -50,10 +60,7 @@ async fn main() {
                     }
                 }
                 Request::StartSession { .. } => Response::Success,
-                _ => {
-                    println!("unhandled request");
-                    break;
-                }
+                Request::CancelSession => Response::Success,
             };
 
             let mut bytes = Vec::with_capacity(4096);

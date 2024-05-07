@@ -55,6 +55,10 @@ check *args:
 # Runs a clippy check with JSON message format
 check-json: (check '--message-format=json')
 
+mock:
+    cargo build --release --example server
+    cosmic-comp target/release/examples/server
+
 # Run with debug logs
 run *args:
     env RUST_LOG=debug RUST_BACKTRACE=full cargo run --release {{args}}
