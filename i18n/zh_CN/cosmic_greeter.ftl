@@ -1,4 +1,4 @@
-cancel = 取消登录
+cancel = 取消
 restart = 重启
 restart-now = 现在重启吗?
 restart-timeout = 糸统将在 {$seconds} 秒后重启
