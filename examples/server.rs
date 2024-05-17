@@ -14,7 +14,7 @@ async fn main() {
 
     env::set_var("GREETD_SOCK", &greetd_sock);
     thread::spawn(|| {
-        cosmic_greeter::greeter::main();
+        cosmic_greeter::greeter::main().unwrap();
     });
 
     loop {
