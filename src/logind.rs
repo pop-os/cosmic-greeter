@@ -6,13 +6,7 @@ use logind_zbus::{
     manager::{InhibitType, ManagerProxy},
     session::SessionProxy,
 };
-use std::{
-    any::TypeId,
-    error::Error,
-    os::fd::{FromRawFd, IntoRawFd, OwnedFd},
-    process,
-    sync::Arc,
-};
+use std::{any::TypeId, error::Error, os::fd::OwnedFd, process, sync::Arc};
 use tokio::time;
 use zbus::Connection;
 
@@ -47,7 +41,7 @@ async fn inhibit(manager: &ManagerProxy<'_>) -> zbus::Result<OwnedFd> {
         .call("Inhibit", &(what, who, why, mode))
         .await?;
     // Have to convert to std type to avoid leaking zbus dependency
-    Ok(unsafe { OwnedFd::from_raw_fd(fd.into_raw_fd()) })
+    Ok(fd.into())
 }
 
 pub fn subscription() -> Subscription<Message> {

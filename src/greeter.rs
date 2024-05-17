@@ -738,41 +738,39 @@ impl cosmic::Application for App {
             Message::DialogCancel => {
                 self.dialog_page_opt = None;
             }
-            Message::DialogConfirm => {
-                match self.dialog_page_opt.take() {
-                    Some(DialogPage::Restart(_)) => {
-                        #[cfg(feature = "logind")]
-                        return Command::perform(
-                            async move {
-                                match crate::logind::reboot().await {
-                                    Ok(()) => (),
-                                    Err(err) => {
-                                        log::error!("failed to reboot: {:?}", err);
-                                    }
+            Message::DialogConfirm => match self.dialog_page_opt.take() {
+                Some(DialogPage::Restart(_)) => {
+                    #[cfg(feature = "logind")]
+                    return Command::perform(
+                        async move {
+                            match crate::logind::reboot().await {
+                                Ok(()) => (),
+                                Err(err) => {
+                                    log::error!("failed to reboot: {:?}", err);
                                 }
-                                message::none()
-                            },
-                            |x| x,
-                        );
-                    },
-                    Some(DialogPage::Shutdown(_)) => {
-                        #[cfg(feature = "logind")]
-                        return Command::perform(
-                            async move {
-                                match crate::logind::power_off().await {
-                                    Ok(()) => (),
-                                    Err(err) => {
-                                        log::error!("failed to power off: {:?}", err);
-                                    }
-                                }
-                                message::none()
-                            },
-                            |x| x,
-                        );
-                    },
-                    None => {}
+                            }
+                            message::none()
+                        },
+                        |x| x,
+                    );
                 }
-            }
+                Some(DialogPage::Shutdown(_)) => {
+                    #[cfg(feature = "logind")]
+                    return Command::perform(
+                        async move {
+                            match crate::logind::power_off().await {
+                                Ok(()) => (),
+                                Err(err) => {
+                                    log::error!("failed to power off: {:?}", err);
+                                }
+                            }
+                            message::none()
+                        },
+                        |x| x,
+                    );
+                }
+                None => {}
+            },
             Message::Suspend => {
                 #[cfg(feature = "logind")]
                 return Command::perform(
@@ -794,16 +792,14 @@ impl cosmic::Application for App {
             Message::Shutdown => {
                 self.dialog_page_opt = Some(DialogPage::Shutdown(Instant::now()));
             }
-            Message::Heartbeat => {
-                match self.dialog_page_opt {
-                    Some(DialogPage::Restart(instant)) | Some(DialogPage::Shutdown(instant)) => {
-                        if DialogPage::remaining(instant).is_none() {
-                            return self.update(Message::DialogConfirm);
-                        }
-                    },
-                    None => {}
+            Message::Heartbeat => match self.dialog_page_opt {
+                Some(DialogPage::Restart(instant)) | Some(DialogPage::Shutdown(instant)) => {
+                    if DialogPage::remaining(instant).is_none() {
+                        return self.update(Message::DialogConfirm);
+                    }
                 }
-            }
+                None => {}
+            },
             Message::Exit => {
                 let mut commands = Vec::new();
                 for (_output, surface_id) in self.surface_ids.drain() {
@@ -1107,31 +1103,39 @@ impl cosmic::Application for App {
             Some(DialogPage::Restart(instant)) => {
                 let remaining = DialogPage::remaining(instant).unwrap_or_default();
                 popover
-                .popup(
-                    widget::dialog(fl!("restart-now"))
-                        .icon(widget::icon::from_name("system-restart-symbolic").size(64))
-                        .body(fl!("restart-timeout", seconds = remaining.as_secs()))
-                        .primary_action(widget::button::suggested(fl!("restart")).on_press(Message::DialogConfirm))
-                        .secondary_action(
-                            widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
-                        ),
-                )
-                .into()
-            },
+                    .popup(
+                        widget::dialog(fl!("restart-now"))
+                            .icon(widget::icon::from_name("system-restart-symbolic").size(64))
+                            .body(fl!("restart-timeout", seconds = remaining.as_secs()))
+                            .primary_action(
+                                widget::button::suggested(fl!("restart"))
+                                    .on_press(Message::DialogConfirm),
+                            )
+                            .secondary_action(
+                                widget::button::standard(fl!("cancel"))
+                                    .on_press(Message::DialogCancel),
+                            ),
+                    )
+                    .into()
+            }
             Some(DialogPage::Shutdown(instant)) => {
                 let remaining = DialogPage::remaining(instant).unwrap_or_default();
                 popover
-                .popup(
-                    widget::dialog(fl!("shutdown-now"))
-                        .icon(widget::icon::from_name("system-shutdown-symbolic").size(64))
-                        .body(fl!("shutdown-timeout", seconds = remaining.as_secs()))
-                        .primary_action(widget::button::suggested(fl!("shutdown")).on_press(Message::DialogConfirm))
-                        .secondary_action(
-                            widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
-                        ),
-                )
-                .into()
-                },
+                    .popup(
+                        widget::dialog(fl!("shutdown-now"))
+                            .icon(widget::icon::from_name("system-shutdown-symbolic").size(64))
+                            .body(fl!("shutdown-timeout", seconds = remaining.as_secs()))
+                            .primary_action(
+                                widget::button::suggested(fl!("shutdown"))
+                                    .on_press(Message::DialogConfirm),
+                            )
+                            .secondary_action(
+                                widget::button::standard(fl!("cancel"))
+                                    .on_press(Message::DialogCancel),
+                            ),
+                    )
+                    .into()
+            }
             None => popover.into(),
         }
     }
