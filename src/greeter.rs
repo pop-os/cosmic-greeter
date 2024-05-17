@@ -37,11 +37,11 @@ use std::{
 };
 use tokio::{net::UnixStream, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
-use zbus::{dbus_proxy, Connection};
+use zbus::{proxy, Connection};
 
 use crate::fl;
 
-#[dbus_proxy(
+#[proxy(
     interface = "com.system76.CosmicGreeter",
     default_service = "com.system76.CosmicGreeter",
     default_path = "/com/system76/CosmicGreeter"
