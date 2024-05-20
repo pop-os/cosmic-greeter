@@ -36,9 +36,9 @@ fn run_as_user<F: FnOnce() -> T, T>(user: &pwd::Passwd, f: F) -> Result<T, io::E
 }
 
 #[derive(DBusError, Debug)]
-#[dbus_error(prefix = "com.system76.CosmicGreeter")]
+#[zbus(prefix = "com.system76.CosmicGreeter")]
 enum GreeterError {
-    #[dbus_error(zbus_error)]
+    #[zbus(error)]
     ZBus(zbus::Error),
     Ron(String),
     RunAsUser(String),
