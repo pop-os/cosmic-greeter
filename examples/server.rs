@@ -1,4 +1,4 @@
-use greetd_ipc::{codec::SyncCodec, AuthMessageType, ErrorType, Request, Response};
+use greetd_ipc::{codec::TokioCodec, AuthMessageType, ErrorType, Request, Response};
 use std::{env, fs, io, thread};
 use tokio::net::UnixListener;
 
@@ -41,7 +41,7 @@ async fn main() {
                 }
 
                 let mut cursor = io::Cursor::new(bytes);
-                Request::read_from(&mut cursor).unwrap()
+                Request::read_from(&mut cursor).await.unwrap()
             };
             println!("{:?}", request);
 
@@ -64,7 +64,7 @@ async fn main() {
             };
 
             let mut bytes = Vec::with_capacity(4096);
-            response.write_to(&mut bytes).unwrap();
+            response.write_to(&mut bytes).await.unwrap();
             socket.try_write(&bytes).unwrap();
         }
     }
