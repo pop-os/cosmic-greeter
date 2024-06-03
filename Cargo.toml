@@ -37,7 +37,7 @@ rust-embed = "8"
 
 [dependencies.greetd_ipc]
 version = "0.10.0"
-features = ["sync-codec"]
+features = ["tokio-codec"]
 
 [features]
 default = ["logind", "networkmanager", "upower"]

@@ -24,7 +24,7 @@ use cosmic::{
     style, widget, Element,
 };
 use cosmic_greeter_daemon::{UserData, WallpaperData};
-use greetd_ipc::{codec::SyncCodec, AuthMessageType, Request, Response};
+use greetd_ipc::{codec::TokioCodec, AuthMessageType, Request, Response};
 use std::{
     collections::HashMap,
     env,
@@ -35,6 +35,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::sync::Mutex;
 use tokio::{net::UnixStream, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 use zbus::{proxy, Connection};
@@ -272,83 +273,68 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn request_message(socket: Arc<UnixStream>, request: Request) -> Message {
+async fn request_message(socket: Arc<Mutex<UnixStream>>, request: Request) -> Message {
     //TODO: handle errors
-    socket.writable().await.unwrap();
-    {
-        let mut bytes = Vec::<u8>::new();
-        request.write_to(&mut bytes).unwrap();
-        socket.try_write(&bytes).unwrap();
-    }
+    let response = {
+        let mut socket = socket.lock().await;
+        request.write_to(&mut *socket).await.unwrap();
+        Response::read_from(&mut *socket).await
+    };
 
     //TODO: handle responses at any time?
-    loop {
-        socket.readable().await.unwrap();
-
-        let mut bytes = Vec::<u8>::with_capacity(4096);
-        match socket.try_read_buf(&mut bytes) {
-            Ok(0) => break,
-            Ok(_count) => {
-                let mut cursor = io::Cursor::new(bytes);
-                let response = Response::read_from(&mut cursor).unwrap();
-                log::info!("{:?}", response);
-                match response {
-                    Response::AuthMessage {
-                        auth_message_type,
-                        auth_message,
-                    } => match auth_message_type {
-                        AuthMessageType::Secret => {
-                            return Message::Prompt(auth_message, true, Some(String::new()));
-                        }
-                        AuthMessageType::Visible => {
-                            return Message::Prompt(auth_message, false, Some(String::new()));
-                        }
-                        //TODO: treat error type differently?
-                        AuthMessageType::Info | AuthMessageType::Error => {
-                            return Message::Prompt(auth_message, false, None);
-                        }
-                    },
-                    Response::Error {
-                        error_type: _,
-                        description,
-                    } => {
-                        //TODO: use error_type?
-                        return Message::Error(socket, description);
+    match response {
+        Ok(response) => {
+            log::info!("{:?}", response);
+            match response {
+                Response::AuthMessage {
+                    auth_message_type,
+                    auth_message,
+                } => match auth_message_type {
+                    AuthMessageType::Secret => {
+                        return Message::Prompt(auth_message, true, Some(String::new()));
                     }
-                    Response::Success => match request {
-                        Request::CreateSession { .. } => {
-                            // User has no auth required, proceed to login
-                            return Message::Login(socket);
-                        }
-                        Request::PostAuthMessageResponse { .. } => {
-                            // All auth is completed, proceed to login
-                            return Message::Login(socket);
-                        }
-                        Request::StartSession { .. } => {
-                            // Session has been started, exit greeter
-                            return Message::Exit;
-                        }
-                        Request::CancelSession => {
-                            // Reconnect to socket
-                            return Message::Reconnect;
-                        }
-                    },
+                    AuthMessageType::Visible => {
+                        return Message::Prompt(auth_message, false, Some(String::new()));
+                    }
+                    //TODO: treat error type differently?
+                    AuthMessageType::Info | AuthMessageType::Error => {
+                        return Message::Prompt(auth_message, false, None);
+                    }
+                },
+                Response::Error {
+                    error_type: _,
+                    description,
+                } => {
+                    //TODO: use error_type?
+                    return Message::Error(socket, description);
                 }
+                Response::Success => match request {
+                    Request::CreateSession { .. } => {
+                        // User has no auth required, proceed to login
+                        return Message::Login(socket);
+                    }
+                    Request::PostAuthMessageResponse { .. } => {
+                        // All auth is completed, proceed to login
+                        return Message::Login(socket);
+                    }
+                    Request::StartSession { .. } => {
+                        // Session has been started, exit greeter
+                        return Message::Exit;
+                    }
+                    Request::CancelSession => {
+                        // Reconnect to socket
+                        return Message::Reconnect;
+                    }
+                },
             }
-            Err(err) => match err.kind() {
-                io::ErrorKind::WouldBlock => continue,
-                _ => {
-                    log::error!("failed to read socket: {:?}", err);
-                    break;
-                }
-            },
         }
+        Err(err) => log::error!("failed to read socket: {:?}", err),
     }
 
     Message::None
 }
 
-fn request_command(socket: Arc<UnixStream>, request: Request) -> Command<Message> {
+fn request_command(socket: Arc<Mutex<UnixStream>>, request: Request) -> Command<Message> {
     Command::perform(
         async move { message::app(request_message(socket, request).await) },
         |x| x,
@@ -367,7 +353,7 @@ pub enum SocketState {
     /// Opening GREETD_SOCK
     Pending,
     /// GREETD_SOCK is open
-    Open(Arc<UnixStream>),
+    Open(Arc<Mutex<UnixStream>>),
     /// No GREETD_SOCK variable set
     NotSet,
     /// Failed to open GREETD_SOCK
@@ -403,10 +389,10 @@ pub enum Message {
     PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
     Session(String),
-    Username(Arc<UnixStream>, String),
-    Auth(Arc<UnixStream>, Option<String>),
-    Login(Arc<UnixStream>),
-    Error(Arc<UnixStream>, String),
+    Username(Arc<Mutex<UnixStream>>, String),
+    Auth(Arc<Mutex<UnixStream>>, Option<String>),
+    Login(Arc<Mutex<UnixStream>>),
+    Error(Arc<Mutex<UnixStream>>, String),
     DialogCancel,
     DialogConfirm,
     Reconnect,
@@ -726,7 +712,7 @@ impl cosmic::Application for App {
                     async {
                         message::app(Message::Socket(match env::var_os("GREETD_SOCK") {
                             Some(socket_path) => match UnixStream::connect(&socket_path).await {
-                                Ok(socket) => SocketState::Open(Arc::new(socket)),
+                                Ok(socket) => SocketState::Open(Arc::new(socket.into())),
                                 Err(err) => SocketState::Error(Arc::new(err)),
                             },
                             None => SocketState::NotSet,
