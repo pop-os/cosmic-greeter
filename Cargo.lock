@@ -2150,9 +2150,11 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1600ad23798daf53f5c336ebca8a7c603696ef4455103e9c713fab574131eb35"
 dependencies = [
+ "async-trait",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
