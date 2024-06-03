@@ -16,6 +16,7 @@ pam-client = "0.5.0"
 pwd.workspace = true
 ron.workspace = true
 shlex = "1.2.0"
+xkb-data = "0.1"
 xdg = "2.5.2"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
@@ -62,6 +63,10 @@ zbus = "4"
 
 [workspace.dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"
+default-features = false
+
+[workspace.dependencies.cosmic-comp-config]
+git = "https://github.com/pop-os/cosmic-comp"
 default-features = false
 
 [workspace.dependencies.cosmic-config]

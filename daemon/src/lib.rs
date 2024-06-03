@@ -1,4 +1,5 @@
 pub use cosmic_bg_config::Color;
+pub use cosmic_comp_config::XkbConfig;
 pub use cosmic_theme::Theme;
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -9,6 +10,7 @@ pub struct UserData {
     pub icon_opt: Option<Vec<u8>>,
     pub theme_opt: Option<Theme>,
     pub wallpapers_opt: Option<Vec<(String, WallpaperData)>>,
+    pub xkb_config_opt: Option<XkbConfig>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
