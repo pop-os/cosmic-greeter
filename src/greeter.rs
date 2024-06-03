@@ -309,11 +309,17 @@ async fn request_message(socket: Arc<UnixStream>, request: Request) -> Message {
                         }
                     },
                     Response::Error {
-                        error_type: _,
+                        error_type: error,
                         description,
                     } => {
-                        //TODO: use error_type?
-                        return Message::Error(socket, description);
+                        log::error!("{error:?} => {description}");
+                        return match error {
+                            greetd_ipc::ErrorType::AuthError => Message::Error(
+                                socket,
+                                format!("{} {}", fl!("auth-failed"), fl!("try-again")),
+                            ),
+                            greetd_ipc::ErrorType::Error => Message::Error(socket, description),
+                        };
                     }
                     Response::Success => match request {
                         Request::CreateSession { .. } => {
