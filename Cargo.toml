@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 chrono = "0.4.31"
 cosmic-bg-config.workspace = true
+cosmic-comp-config.workspace = true
 cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-daemon = { path = "daemon" }
 env_logger.workspace = true
@@ -16,6 +17,7 @@ pam-client = "0.5.0"
 pwd.workspace = true
 ron.workspace = true
 shlex = "1.2.0"
+xkb-data = "0.1"
 xdg = "2.5.2"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
@@ -62,6 +64,10 @@ zbus = "4"
 
 [workspace.dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"
+default-features = false
+
+[workspace.dependencies.cosmic-comp-config]
+git = "https://github.com/pop-os/cosmic-comp"
 default-features = false
 
 [workspace.dependencies.cosmic-config]

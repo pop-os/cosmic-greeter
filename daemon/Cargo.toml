@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 cosmic-bg-config.workspace = true
+cosmic-comp-config.workspace = true
 cosmic-config.workspace = true
 cosmic-theme.workspace = true
 env_logger.workspace = true

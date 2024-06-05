@@ -1,4 +1,5 @@
 use cosmic_bg_config::Source;
+use cosmic_comp_config::CosmicCompConfig;
 use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{UserData, WallpaperData};
 use std::{env, error::Error, fs, future::pending, io, path::Path};
@@ -113,6 +114,7 @@ impl GreeterProxy {
                 theme_opt: None,
                 //TODO: should wallpapers come from a per-user call?
                 wallpapers_opt: None,
+                xkb_config_opt: None,
             };
 
             //IMPORTANT: Assume the identity of the user to ensure we don't read wallpaper file data as root
@@ -188,6 +190,24 @@ impl GreeterProxy {
                     }
                     user_data.wallpapers_opt = Some(wallpaper_datas);
                 }
+
+                match cosmic_config::Config::new(
+                    "com.system76.CosmicComp",
+                    CosmicCompConfig::VERSION,
+                ) {
+                    Ok(config_handler) => match CosmicCompConfig::get_entry(&config_handler) {
+                        Ok(config) => {
+                            user_data.xkb_config_opt = Some(config.xkb_config);
+                        }
+                        Err((errs, config)) => {
+                            log::error!("errors loading cosmic-comp config: {:?}", errs);
+                            user_data.xkb_config_opt = Some(config.xkb_config);
+                        }
+                    },
+                    Err(err) => {
+                        log::error!("failed to create cosmic-comp config handler: {}", err);
+                    }
+                };
             })
             .map_err(|err| GreeterError::RunAsUser(err.to_string()))?;
 
