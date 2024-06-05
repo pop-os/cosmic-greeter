@@ -33,6 +33,8 @@ use tokio::{sync::mpsc, task, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 
 pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+
     crate::localize::localize();
 
     //TODO: use accountsservice

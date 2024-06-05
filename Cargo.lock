@@ -916,6 +916,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmic-comp-config"
+version = "0.1.0"
+source = "git+https://github.com/pop-os/cosmic-comp#cbca13803cb499786b080ea9e4ee74cd4f704556"
+dependencies = [
+ "cosmic-config",
+ "input",
+ "serde",
+]
+
+[[package]]
 name = "cosmic-config"
 version = "0.1.0"
 source = "git+https://github.com/pop-os/libcosmic#173ddca60fdb26cf5b1784edfc1a78594acf7002"
@@ -964,6 +974,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cosmic-bg-config",
+ "cosmic-comp-config",
  "cosmic-config",
  "cosmic-dbus-networkmanager",
  "cosmic-greeter-daemon",
@@ -985,6 +996,7 @@ dependencies = [
  "upower_dbus",
  "wayland-client",
  "xdg",
+ "xkb-data",
  "zbus 4.2.2",
 ]
 
@@ -993,6 +1005,7 @@ name = "cosmic-greeter-daemon"
 version = "0.1.0"
 dependencies = [
  "cosmic-bg-config",
+ "cosmic-comp-config",
  "cosmic-config",
  "cosmic-theme",
  "env_logger",
@@ -2584,6 +2597,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "input"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7911ce3db9c10c5ab4a35c49af778a5f9a827bd0f7371d9be56175d8dd2740d0"
+dependencies = [
+ "bitflags 2.5.0",
+ "input-sys",
+ "io-lifetimes 1.0.11",
+ "libc",
+ "log",
+ "udev",
+]
+
+[[package]]
+name = "input-sys"
+version = "1.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd4f5b4d1c00331c5245163aacfe5f20be75b564c7112d45893d4ae038119eb0"
+
+[[package]]
 name = "instant"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2832,6 +2865,16 @@ checksum = "c0ff37bd590ca25063e35af745c343cb7a0271906fb7b37e4813e8f79f00268d"
 dependencies = [
  "bitflags 2.5.0",
  "libc",
+]
+
+[[package]]
+name = "libudev-sys"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
+dependencies = [
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -4101,6 +4144,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-xml-rs"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb3aa78ecda1ebc9ec9847d5d3aba7d618823446a049ba2491940506da6e2782"
+dependencies = [
+ "log",
+ "serde",
+ "thiserror",
+ "xml-rs",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.203"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4737,6 +4792,18 @@ name = "typenum"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42ff0bf0c66b8238c6f3b578df37d0b7848e55df8577b3f74f92a69acceeb825"
+
+[[package]]
+name = "udev"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50051c6e22be28ee6f217d50014f3bc29e81c20dc66ff7ca0d5c5226e1dcc5a1"
+dependencies = [
+ "io-lifetimes 1.0.11",
+ "libc",
+ "libudev-sys",
+ "pkg-config",
+]
 
 [[package]]
 name = "uds_windows"
@@ -5549,6 +5616,16 @@ checksum = "21e5a325c3cb8398ad6cf859c1135b25dd29e186679cf2da7581d9679f63b38e"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "xkb-data"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "294a599fc9e6a43c9f44f5d6c560b89fd751be413717442b31c17fa367d3c764"
+dependencies = [
+ "serde",
+ "serde-xml-rs",
 ]
 
 [[package]]
