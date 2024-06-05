@@ -213,25 +213,29 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                let mut command = match session_type {
+                let mut command = Vec::new();
+                let mut env = Vec::new();
+                match session_type {
                     SessionType::X11 => {
                         //TODO: xinit may be better, but more complicated to set up
-                        vec![
-                            "startx".to_string(),
-                            "/usr/bin/env".to_string(),
-                            "XDG_SESSION_TYPE=x11".to_string(),
-                        ]
+                        command.push("startx".to_string());
+                        env.push("XDG_SESSION_TYPE=x11".to_string());
                     }
                     SessionType::Wayland => {
-                        vec![
-                            "/usr/bin/env".to_string(),
-                            "XDG_SESSION_TYPE=wayland".to_string(),
-                        ]
+                        env.push("XDG_SESSION_TYPE=wayland".to_string());
                     }
                 };
 
                 if let Some(desktop_names) = entry.section("Desktop Entry").attr("DesktopNames") {
-                    command.push(format!("XDG_CURRENT_DESKTOP={desktop_names}"));
+                    env.push(format!("XDG_CURRENT_DESKTOP={desktop_names}"));
+                }
+
+                // Session exec may contain environmental variables
+                command.push("/usr/bin/env".to_string());
+
+                // To ensure the env is set correctly, we also set it in the session command
+                for arg in env.iter() {
+                    command.push(arg.clone());
                 }
 
                 match shlex::split(exec) {
@@ -250,8 +254,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                log::warn!("session {} using command {:?}", name, command);
-                match sessions.insert(name.to_string(), command) {
+                log::info!("session {} using command {:?} env {:?}", name, command, env);
+                match sessions.insert(name.to_string(), (command, env)) {
                     Some(some) => {
                         log::warn!("session {} overwrote old command {:?}", name, some);
                     }
@@ -368,7 +372,7 @@ fn request_command(socket: Arc<Mutex<UnixStream>>, request: Request) -> Command<
 #[derive(Clone)]
 pub struct Flags {
     user_datas: Vec<UserData>,
-    sessions: HashMap<String, Vec<String>>,
+    sessions: HashMap<String, (Vec<String>, Vec<String>)>,
     layouts_opt: Option<Arc<xkb_data::KeyboardLayouts>>,
     comp_config_handler: Option<cosmic_config::Config>,
     fallback_background: widget::image::Handle,
@@ -845,12 +849,12 @@ impl cosmic::Application for App {
                 self.prompt_opt = None;
                 self.error_opt = None;
                 match self.flags.sessions.get(&self.selected_session).cloned() {
-                    Some(cmd) => {
+                    Some((cmd, env)) => {
                         return request_command(
                             socket,
                             Request::StartSession {
                                 cmd,
-                                env: Vec::new(),
+                                env,
                             },
                         );
                     }
