@@ -974,6 +974,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "cosmic-bg-config",
+ "cosmic-comp-config",
  "cosmic-config",
  "cosmic-dbus-networkmanager",
  "cosmic-greeter-daemon",

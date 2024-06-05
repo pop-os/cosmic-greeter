@@ -3,6 +3,7 @@
 
 use cosmic::app::{message, Command, Core, Settings};
 use cosmic::{
+    cosmic_config::{self, ConfigSet, CosmicConfigEntry},
     executor,
     iced::{
         self, alignment,
@@ -23,6 +24,7 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     style, theme, widget, Element,
 };
+use cosmic_comp_config::CosmicCompConfig;
 use cosmic_greeter_daemon::{UserData, WallpaperData};
 use greetd_ipc::{codec::TokioCodec, AuthMessageType, Request, Response};
 use std::{
@@ -268,6 +270,15 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
+    let comp_config_handler =
+        match cosmic_config::Config::new("com.system76.CosmicComp", CosmicCompConfig::VERSION) {
+            Ok(config_handler) => Some(config_handler),
+            Err(err) => {
+                log::error!("failed to create cosmic-comp config handler: {}", err);
+                None
+            }
+        };
+
     let fallback_background =
         widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
 
@@ -275,6 +286,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         user_datas,
         sessions,
         layouts_opt,
+        comp_config_handler,
         fallback_background,
     };
 
@@ -358,6 +370,7 @@ pub struct Flags {
     user_datas: Vec<UserData>,
     sessions: HashMap<String, Vec<String>>,
     layouts_opt: Option<Arc<xkb_data::KeyboardLayouts>>,
+    comp_config_handler: Option<cosmic_config::Config>,
     fallback_background: widget::image::Handle,
 }
 
@@ -424,6 +437,7 @@ pub enum Message {
     DialogCancel,
     DialogConfirm,
     DropdownToggle(Dropdown),
+    KeyboardLayout(usize),
     Reconnect,
     Suspend,
     Restart,
@@ -456,10 +470,44 @@ pub struct App {
 }
 
 impl App {
-    fn update_user_config(&mut self) -> Command<Message> {
-        let username = &self.selected_username;
+    fn set_xkb_config(&self) {
+        let user_data = match self
+            .flags
+            .user_datas
+            .iter()
+            .find(|x| &x.name == &self.selected_username)
+        {
+            Some(some) => some,
+            None => return,
+        };
 
-        let user_data = match self.flags.user_datas.iter().find(|x| &x.name == username) {
+        if let Some(mut xkb_config) = user_data.xkb_config_opt.clone() {
+            xkb_config.layout = String::new();
+            xkb_config.variant = String::new();
+            for (i, layout) in self.active_layouts.iter().enumerate() {
+                if i > 0 {
+                    xkb_config.layout.push(',');
+                    xkb_config.variant.push(',');
+                }
+                xkb_config.layout.push_str(&layout.layout);
+                xkb_config.variant.push_str(&layout.variant);
+            }
+            if let Some(comp_config_handler) = &self.flags.comp_config_handler {
+                match comp_config_handler.set("xkb_config", xkb_config) {
+                    Ok(()) => log::info!("updated cosmic-comp xkb_config"),
+                    Err(err) => log::error!("failed to update cosmic-comp xkb_config: {}", err),
+                }
+            }
+        }
+    }
+
+    fn update_user_config(&mut self) -> Command<Message> {
+        let user_data = match self
+            .flags
+            .user_datas
+            .iter()
+            .find(|x| &x.name == &self.selected_username)
+        {
             Some(some) => some,
             None => return Command::none(),
         };
@@ -510,7 +558,6 @@ impl App {
                     .split_terminator(',')
                     .chain(std::iter::repeat(""));
                 for (config_layout, config_variant) in config_layouts.zip(config_variants) {
-                    println!("{} : {}", config_layout, config_variant);
                     for xkb_layout in keyboard_layouts.layouts() {
                         if config_layout != xkb_layout.name() {
                             continue;
@@ -541,7 +588,7 @@ impl App {
                         }
                     }
                 }
-                log::warn!("{:?}", self.active_layouts);
+                log::info!("{:?}", self.active_layouts);
             }
         }
 
@@ -781,7 +828,7 @@ impl cosmic::Application for App {
                         SocketState::Open(socket) => {
                             self.prompt_opt = None;
                             return request_command(socket.clone(), Request::CancelSession);
-                        },
+                        }
                         _ => {}
                     }
                 }
@@ -871,6 +918,15 @@ impl cosmic::Application for App {
                     self.dropdown_opt = None;
                 } else {
                     self.dropdown_opt = Some(dropdown);
+                }
+            }
+            Message::KeyboardLayout(layout_i) => {
+                if layout_i < self.active_layouts.len() {
+                    self.active_layouts.swap(0, layout_i);
+                    self.set_xkb_config();
+                }
+                if self.dropdown_opt == Some(Dropdown::Keyboard) {
+                    self.dropdown_opt = None
                 }
             }
             Message::Suspend => {
@@ -1010,9 +1066,12 @@ impl cosmic::Application for App {
             .position(widget::popover::Position::Bottom);
             if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
                 let mut items = Vec::with_capacity(self.active_layouts.len());
-                for layout in self.active_layouts.iter() {
-                    //TODO: implement switching layouts
-                    items.push(menu_checklist(&layout.description, false, Message::None));
+                for (i, layout) in self.active_layouts.iter().enumerate() {
+                    items.push(menu_checklist(
+                        &layout.description,
+                        i == 0,
+                        Message::KeyboardLayout(i),
+                    ));
                 }
                 input_button = input_button.popup(dropdown_menu(items));
             }
