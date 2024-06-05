@@ -589,6 +589,9 @@ impl App {
                     }
                 }
                 log::info!("{:?}", self.active_layouts);
+
+                // Ensure that user's xkb config is used
+                self.set_xkb_config();
             }
         }
 
