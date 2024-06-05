@@ -417,7 +417,7 @@ pub enum Message {
     PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
     Session(String),
-    Username(Arc<Mutex<UnixStream>>, String),
+    Username(String),
     Auth(Arc<Mutex<UnixStream>>, Option<String>),
     Login(Arc<Mutex<UnixStream>>),
     Error(Arc<Mutex<UnixStream>>, String),
@@ -445,7 +445,7 @@ pub struct App {
     power_info_opt: Option<(String, f64)>,
     socket_state: SocketState,
     usernames: Vec<(String, String)>,
-    username_opt: Option<String>,
+    selected_username: String,
     prompt_opt: Option<(String, bool, Option<String>)>,
     session_names: Vec<String>,
     selected_session: String,
@@ -457,10 +457,7 @@ pub struct App {
 
 impl App {
     fn update_user_config(&mut self) -> Command<Message> {
-        let username = match &self.username_opt {
-            Some(some) => some,
-            None => return Command::none(),
-        };
+        let username = &self.selected_username;
 
         let user_data = match self.flags.user_datas.iter().find(|x| &x.name == username) {
             Some(some) => some,
@@ -591,7 +588,7 @@ impl cosmic::Application for App {
         let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
         session_names.sort();
 
-        //TODO: determine default session?
+        //TODO: use last selected session
         let selected_session = session_names.first().cloned().unwrap_or(String::new());
 
         //TODO: use full_name_opt
@@ -606,6 +603,13 @@ impl cosmic::Application for App {
             .collect();
         usernames.sort_by(|a, b| a.1.cmp(&b.1));
 
+        //TODO: use last selected user
+        let selected_username = flags
+            .user_datas
+            .first()
+            .map(|x| x.name.clone())
+            .unwrap_or(String::new());
+
         let mut app = App {
             core,
             flags,
@@ -618,7 +622,7 @@ impl cosmic::Application for App {
             power_info_opt: None,
             socket_state: SocketState::Pending,
             usernames,
-            username_opt: None,
+            selected_username,
             prompt_opt: None,
             session_names,
             selected_session,
@@ -728,15 +732,13 @@ impl cosmic::Application for App {
                 self.socket_state = socket_state;
                 match &self.socket_state {
                     SocketState::Open(socket) => {
-                        // When socket is opened, request default user
-                        //TODO: choose last used user
-                        match self.flags.user_datas.first().map(|x| x.name.clone()) {
-                            Some(username) => {
-                                let socket = socket.clone();
-                                return self.update(Message::Username(socket, username));
-                            }
-                            None => {}
-                        }
+                        // When socket is opened, send create session
+                        return Command::batch([request_command(
+                            socket.clone(),
+                            Request::CreateSession {
+                                username: self.selected_username.clone(),
+                            },
+                        )]);
                     }
                     _ => {}
                 }
@@ -768,17 +770,21 @@ impl cosmic::Application for App {
                     self.dropdown_opt = None;
                 }
             }
-            Message::Username(socket, username) => {
-                self.username_opt = Some(username.clone());
-                self.prompt_opt = None;
-                self.surface_images.clear();
+            Message::Username(username) => {
                 if self.dropdown_opt == Some(Dropdown::User) {
                     self.dropdown_opt = None;
                 }
-                return Command::batch([
-                    self.update_user_config(),
-                    request_command(socket, Request::CreateSession { username }),
-                ]);
+                if username != self.selected_username {
+                    self.selected_username = username.clone();
+                    self.surface_images.clear();
+                    match &self.socket_state {
+                        SocketState::Open(socket) => {
+                            self.prompt_opt = None;
+                            return request_command(socket.clone(), Request::CancelSession);
+                        },
+                        _ => {}
+                    }
+                }
             }
             Message::Auth(socket, response) => {
                 self.prompt_opt = None;
@@ -806,18 +812,23 @@ impl cosmic::Application for App {
                 return request_command(socket, Request::CancelSession);
             }
             Message::Reconnect => {
-                return Command::perform(
-                    async {
-                        message::app(Message::Socket(match env::var_os("GREETD_SOCK") {
-                            Some(socket_path) => match UnixStream::connect(&socket_path).await {
-                                Ok(socket) => SocketState::Open(Arc::new(socket.into())),
-                                Err(err) => SocketState::Error(Arc::new(err)),
-                            },
-                            None => SocketState::NotSet,
-                        }))
-                    },
-                    |x| x,
-                );
+                return Command::batch([
+                    self.update_user_config(),
+                    Command::perform(
+                        async {
+                            message::app(Message::Socket(match env::var_os("GREETD_SOCK") {
+                                Some(socket_path) => {
+                                    match UnixStream::connect(&socket_path).await {
+                                        Ok(socket) => SocketState::Open(Arc::new(socket.into())),
+                                        Err(err) => SocketState::Error(Arc::new(err)),
+                                    }
+                                }
+                                None => SocketState::NotSet,
+                            }))
+                        },
+                        |x| x,
+                    ),
+                ]);
             }
             Message::DialogCancel => {
                 self.dialog_page_opt = None;
@@ -1015,16 +1026,10 @@ impl cosmic::Application for App {
             if matches!(self.dropdown_opt, Some(Dropdown::User)) {
                 let mut items = Vec::with_capacity(self.usernames.len());
                 for (name, full_name) in self.usernames.iter() {
-                    //TODO: implement switching users
                     items.push(menu_checklist(
                         full_name,
-                        Some(name) == self.username_opt.as_ref(),
-                        match &self.socket_state {
-                            SocketState::Open(socket) => {
-                                Message::Username(socket.clone(), name.clone())
-                            }
-                            _ => Message::None,
-                        },
+                        name == &self.selected_username,
+                        Message::Username(name.clone()),
                     ));
                 }
                 user_button = user_button.popup(dropdown_menu(items));
@@ -1113,91 +1118,35 @@ impl cosmic::Application for App {
                     column = column.push(widget::text("Opening GREETD_SOCK"));
                 }
                 SocketState::Open(socket) => {
-                    match &self.username_opt {
-                        Some(username) => {
-                            for user_data in &self.flags.user_datas {
-                                if &user_data.name == username {
-                                    match &user_data.icon_opt {
-                                        Some(icon) => {
-                                            column = column.push(
-                                                widget::container(
-                                                    widget::Image::new(
-                                                        //TODO: cache handle
-                                                        widget::image::Handle::from_memory(
-                                                            icon.clone(),
-                                                        ),
-                                                    )
-                                                    .width(Length::Fixed(78.0))
-                                                    .height(Length::Fixed(78.0)),
-                                                )
-                                                .width(Length::Fill)
-                                                .align_x(alignment::Horizontal::Center),
+                    for user_data in &self.flags.user_datas {
+                        if &user_data.name == &self.selected_username {
+                            match &user_data.icon_opt {
+                                Some(icon) => {
+                                    column = column.push(
+                                        widget::container(
+                                            widget::Image::new(
+                                                //TODO: cache handle
+                                                widget::image::Handle::from_memory(icon.clone()),
                                             )
-                                        }
-                                        None => {}
-                                    }
-                                    match &user_data.full_name_opt {
-                                        Some(full_name) => {
-                                            column = column.push(
-                                                widget::container(widget::text::title4(full_name))
-                                                    .width(Length::Fill)
-                                                    .align_x(alignment::Horizontal::Center),
-                                            );
-                                        }
-                                        None => {}
-                                    }
+                                            .width(Length::Fixed(78.0))
+                                            .height(Length::Fixed(78.0)),
+                                        )
+                                        .width(Length::Fill)
+                                        .align_x(alignment::Horizontal::Center),
+                                    )
                                 }
+                                None => {}
                             }
-                        }
-                        None => {
-                            let mut row = widget::row::with_capacity(self.flags.user_datas.len())
-                                .spacing(12.0);
-                            for user_data in &self.flags.user_datas {
-                                let mut column = widget::column::with_capacity(2).spacing(12.0);
-
-                                match &user_data.icon_opt {
-                                    Some(icon) => {
-                                        column = column.push(
-                                            widget::container(
-                                                widget::Image::new(
-                                                    //TODO: cache handle
-                                                    widget::image::Handle::from_memory(
-                                                        icon.clone(),
-                                                    ),
-                                                )
-                                                .width(Length::Fixed(78.0))
-                                                .height(Length::Fixed(78.0)),
-                                            )
+                            match &user_data.full_name_opt {
+                                Some(full_name) => {
+                                    column = column.push(
+                                        widget::container(widget::text::title4(full_name))
                                             .width(Length::Fill)
                                             .align_x(alignment::Horizontal::Center),
-                                        )
-                                    }
-                                    None => {}
+                                    );
                                 }
-                                match &user_data.full_name_opt {
-                                    Some(full_name) => {
-                                        column = column.push(
-                                            widget::container(widget::text::title4(full_name))
-                                                .width(Length::Fill)
-                                                .align_x(alignment::Horizontal::Center),
-                                        );
-                                    }
-                                    None => {}
-                                }
-
-                                row = row.push(
-                                    widget::MouseArea::new(
-                                        widget::layer_container(column)
-                                            .layer(cosmic::cosmic_theme::Layer::Primary)
-                                            .padding(16)
-                                            .style(cosmic::theme::Container::Card),
-                                    )
-                                    .on_press(
-                                        Message::Username(socket.clone(), user_data.name.clone()),
-                                    ),
-                                );
+                                None => {}
                             }
-                            column = column.push(row);
                         }
                     }
                     match &self.prompt_opt {
