@@ -228,6 +228,9 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
                 if let Some(desktop_names) = entry.section("Desktop Entry").attr("DesktopNames") {
                     env.push(format!("XDG_CURRENT_DESKTOP={desktop_names}"));
+                    if let Some(name) = desktop_names.split(':').next() {
+                        env.push(format!("XDG_SESSION_DESKTOP={name}"));
+                    }
                 }
 
                 // Session exec may contain environmental variables
