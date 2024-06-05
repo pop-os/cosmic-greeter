@@ -772,6 +772,9 @@ impl cosmic::Application for App {
                 self.username_opt = Some(username.clone());
                 self.prompt_opt = None;
                 self.surface_images.clear();
+                if self.dropdown_opt == Some(Dropdown::User) {
+                    self.dropdown_opt = None;
+                }
                 return Command::batch([
                     self.update_user_config(),
                     request_command(socket, Request::CreateSession { username }),
@@ -1016,7 +1019,12 @@ impl cosmic::Application for App {
                     items.push(menu_checklist(
                         full_name,
                         Some(name) == self.username_opt.as_ref(),
-                        Message::None,
+                        match &self.socket_state {
+                            SocketState::Open(socket) => {
+                                Message::Username(socket.clone(), name.clone())
+                            }
+                            _ => Message::None,
+                        },
                     ));
                 }
                 user_button = user_button.popup(dropdown_menu(items));
@@ -1041,23 +1049,45 @@ impl cosmic::Application for App {
             }
 
             let button_row = iced::widget::row![
+                /*TODO: greeter accessibility options
                 widget::button(widget::icon::from_name(
                     "applications-accessibility-symbolic"
                 ))
                 .padding(12.0)
                 .on_press(Message::None),
-                input_button,
-                user_button,
-                session_button,
-                widget::button(widget::icon::from_name("system-suspend-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::Suspend),
-                widget::button(widget::icon::from_name("system-reboot-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::Restart),
-                widget::button(widget::icon::from_name("system-shutdown-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::Shutdown),
+                */
+                widget::tooltip(
+                    input_button,
+                    fl!("keyboard-layout"),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(user_button, fl!("user"), widget::tooltip::Position::Top),
+                widget::tooltip(
+                    session_button,
+                    fl!("session"),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    widget::button(widget::icon::from_name("system-suspend-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Suspend),
+                    fl!("suspend"),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    widget::button(widget::icon::from_name("system-reboot-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Restart),
+                    fl!("restart"),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    widget::button(widget::icon::from_name("system-shutdown-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Shutdown),
+                    fl!("shutdown"),
+                    widget::tooltip::Position::Top
+                )
             ]
             .padding([16.0, 0.0, 0.0, 0.0])
             .spacing(8.0);
@@ -1225,15 +1255,6 @@ impl cosmic::Application for App {
             if let Some(error) = &self.error_opt {
                 column = column.push(widget::text(error));
             }
-
-            column = column.push(
-                //TODO: use button
-                iced::widget::pick_list(
-                    &self.session_names,
-                    Some(self.selected_session.clone()),
-                    Message::Session,
-                ),
-            );
 
             widget::container(column)
                 .align_x(alignment::Horizontal::Center)
