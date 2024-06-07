@@ -1,4 +1,5 @@
 cancel = Anuluj
+keyboard-layout = Układ klawiatury
 restart = Uruchom ponownie
 restart-now = Uruchomić ponownie?
 restart-timeout = System uruchomi się ponownie za {$seconds ->
@@ -6,6 +7,7 @@ restart-timeout = System uruchomi się ponownie za {$seconds ->
     [few] { $seconds } sekundy
     *[other] { $seconds } sekund
 }
+session = Sesja
 shutdown = Wyłącz
 shutdown-now = Wyłączyć teraz?
 shutdown-timeout = System wyłączy automatycznie się za {$seconds ->
@@ -13,3 +15,5 @@ shutdown-timeout = System wyłączy automatycznie się za {$seconds ->
     [few] { $seconds } sekundy
     *[other] { $seconds } sekund
 }
+suspend = Wstrzymaj
+user = Użytkownik
