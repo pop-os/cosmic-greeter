@@ -337,7 +337,17 @@ async fn request_message(socket: Arc<Mutex<UnixStream>>, request: Request) -> Me
                     description,
                 } => {
                     //TODO: use error_type?
+                    match request {
+                        Request::CancelSession => {
+                            // Do not send errors for cancel session to gui
+                            log::warn!("error while cancelling session: {}", description);
+                            // Reconnect to socket
+                            return Message::Reconnect;
+                        }
+                        _ => {
                     return Message::Error(socket, description);
+                        }
+                    }
                 }
                 Response::Success => match request {
                     Request::CreateSession { .. } => {
