@@ -780,8 +780,8 @@ impl cosmic::Application for App {
                             }
                         }
                     }
-                    OutputEvent::InfoUpdate(output_info) => {
-                        log::info!("output {}: info update {:#?}", output.id(), output_info);
+                    OutputEvent::InfoUpdate(_output_info) => {
+                        log::info!("output {}: info update", output.id());
                     }
                 }
             }
@@ -863,13 +863,7 @@ impl cosmic::Application for App {
                 self.error_opt = None;
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
-                        return request_command(
-                            socket,
-                            Request::StartSession {
-                                cmd,
-                                env,
-                            },
-                        );
+                        return request_command(socket, Request::StartSession { cmd, env });
                     }
                     None => todo!("session {:?} not found", self.selected_session),
                 }
@@ -885,6 +879,7 @@ impl cosmic::Application for App {
                         async {
                             message::app(Message::Socket(match env::var_os("GREETD_SOCK") {
                                 Some(socket_path) => {
+                                    log::info!("opening {:?}", socket_path);
                                     match UnixStream::connect(&socket_path).await {
                                         Ok(socket) => SocketState::Open(Arc::new(socket.into())),
                                         Err(err) => SocketState::Error(Arc::new(err)),
