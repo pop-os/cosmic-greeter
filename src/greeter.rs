@@ -345,7 +345,7 @@ async fn request_message(socket: Arc<Mutex<UnixStream>>, request: Request) -> Me
                             return Message::Reconnect;
                         }
                         _ => {
-                    return Message::Error(socket, description);
+                            return Message::Error(socket, description);
                         }
                     }
                 }
@@ -439,6 +439,7 @@ pub enum Dropdown {
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
+    FocusActiveTextInput,
     None,
     OutputEvent(OutputEvent, WlOutput),
     LayerEvent(LayerEvent, SurfaceId),
@@ -705,6 +706,14 @@ impl cosmic::Application for App {
     /// Handle application events here.
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
+            Message::FocusActiveTextInput => {
+                if let Some(surface_id) = self.active_surface_id_opt {
+                    if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                        return widget::text_input::focus(text_input_id.clone());
+                    }
+                }
+            }
+
             Message::None => {}
             Message::OutputEvent(output_event, output) => {
                 match output_event {
@@ -1381,7 +1390,7 @@ impl cosmic::Application for App {
         }
 
         Subscription::batch([
-            event::listen_with(|event, _| match event {
+            event::listen_with(|event, status| match event {
                 iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
                     wayland_event,
                 )) => match wayland_event {
@@ -1393,6 +1402,19 @@ impl cosmic::Application for App {
                     }
                     _ => None,
                 },
+                iced::Event::Keyboard(keyboard_event)
+                    if !matches!(status, iced::event::Status::Captured) =>
+                {
+                    match keyboard_event {
+                        iced::keyboard::Event::KeyReleased { key, .. } => match key {
+                            iced::keyboard::Key::Character(key_char) if key_char == "/" => {
+                                return Some(Message::FocusActiveTextInput)
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                }
                 _ => None,
             }),
             subscription::channel(
