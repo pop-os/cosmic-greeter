@@ -36,6 +36,7 @@ zbus = { workspace = true, optional = true }
 i18n-embed = { version = "0.14", features = ["fluent-system", "desktop-requester"] }
 i18n-embed-fl = "0.7"
 rust-embed = "8"
+unicode-segmentation = "1.11.0"
 
 [dependencies.greetd_ipc]
 version = "0.10.0"

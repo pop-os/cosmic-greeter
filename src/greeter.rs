@@ -439,7 +439,7 @@ pub enum Dropdown {
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
-    FocusActiveTextInput,
+    KeyboardPrompt(iced::keyboard::Key<cosmic::iced_core::SmolStr>),
     None,
     OutputEvent(OutputEvent, WlOutput),
     LayerEvent(LayerEvent, SurfaceId),
@@ -706,10 +706,28 @@ impl cosmic::Application for App {
     /// Handle application events here.
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
-            Message::FocusActiveTextInput => {
-                if let Some(surface_id) = self.active_surface_id_opt {
-                    if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
-                        return widget::text_input::focus(text_input_id.clone());
+            Message::KeyboardPrompt(key) => {
+                use unicode_segmentation::UnicodeSegmentation;
+                if let Some((.., Some(value))) = &mut self.prompt_opt {
+                    match key {
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+                            value.clear()
+                        }
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+                            // pop the last grapheme
+                            let idx = value
+                                .grapheme_indices(true)
+                                .next_back()
+                                .map_or(value.len(), |(i, _)| i);
+                            value.replace_range(idx.., "");
+                        }
+                        iced::keyboard::Key::Character(char) => value.push_str(char.as_str()),
+                        _ => {}
+                    };
+                    if let Some(surface_id) = self.active_surface_id_opt {
+                        if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                            return widget::text_input::focus(text_input_id.clone());
+                        }
                     }
                 }
             }
@@ -1406,11 +1424,9 @@ impl cosmic::Application for App {
                     if !matches!(status, iced::event::Status::Captured) =>
                 {
                     match keyboard_event {
-                        iced::keyboard::Event::KeyReleased { key, .. } => match key {
-                            iced::keyboard::Key::Character(key_char) if key_char == "/" => {
-                                return Some(Message::FocusActiveTextInput)
-                            }
-                            _ => None,
+                        iced::keyboard::Event::KeyReleased { ref key, .. } => match key {
+                            iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab) => None,
+                            _ => Some(Message::KeyboardPrompt(key.clone())),
                         },
                         _ => None,
                     }
