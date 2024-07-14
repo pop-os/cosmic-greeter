@@ -8,7 +8,8 @@ base-dir := absolute_path(clean(rootdir / prefix))
 
 export INSTALL_DIR := base-dir / 'share'
 
-bin-src := 'target' / 'release' / name
+cargo-target-dir := env('CARGO_TARGET_DIR', 'target')
+bin-src := cargo-target-dir / 'release' / name
 bin-dst := base-dir / 'bin' / name
 
 # Systemd sysusers/tmpfiles components directories
@@ -21,7 +22,7 @@ sysusers-dst := lib-dir / 'sysusers.d' / name + '.conf'
 tmpfiles-src := 'debian' / name + '.tmpfiles'
 tmpfiles-dst := lib-dir / 'tmpfiles.d' / name + '.conf'
 
-daemon-src := 'target' / 'release' / name + '-daemon'
+daemon-src := cargo-target-dir / 'release' / name + '-daemon'
 daemon-dst := base-dir / 'bin' / name + '-daemon'
 
 dbus-src := 'dbus' / APPID + '.conf'
@@ -57,7 +58,7 @@ check-json: (check '--message-format=json')
 
 mock:
     cargo build --release --example server
-    cosmic-comp target/release/examples/server
+    cosmic-comp {{cargo-target-dir}}/release/examples/server
 
 # Run with debug logs
 run *args:
