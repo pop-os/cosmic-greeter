@@ -1,7 +1,11 @@
 cancel = 取消
+keyboard-layout = 键盘布局
 restart = 重启
-restart-now = 现在重启吗?
-restart-timeout = 糸统将在 {$seconds} 秒后重启
+restart-now = 立即重启？
+restart-timeout = 系统将在 {$seconds} 秒后重启
+session = 会话
 shutdown = 关机
-shutdown-now = 现在关机吗？
-shutdown-timeout = 糸统将在 {$seconds} 秒后关机
+shutdown-now = 立即关机？
+shutdown-timeout = 系统将在 {$seconds} 秒后关机
+suspend = 睡眠
+user = 用户
