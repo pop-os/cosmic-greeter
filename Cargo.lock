@@ -993,6 +993,7 @@ dependencies = [
  "rust-embed",
  "shlex",
  "tokio",
+ "unicode-segmentation",
  "upower_dbus",
  "wayland-client",
  "xdg",
