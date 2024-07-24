@@ -596,7 +596,7 @@ impl cosmic::Application for App {
             if let Some((power_icon, power_percent)) = &self.power_info_opt {
                 status_row =
                     status_row.push(iced::widget::row![widget::text(if power_percent == &0.0 {
-                        format!("System is running from the wall or the battery")
+                        format!("")
                     } else {
                         widget::icon::from_name(power_icon.clone());
                         format!("{:.0}%", power_percent)
