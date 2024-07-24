@@ -345,7 +345,7 @@ async fn request_message(socket: Arc<Mutex<UnixStream>>, request: Request) -> Me
                             return Message::Reconnect;
                         }
                         _ => {
-                    return Message::Error(socket, description);
+                            return Message::Error(socket, description);
                         }
                     }
                 }
@@ -1026,7 +1026,12 @@ impl cosmic::Application for App {
             if let Some((power_icon, power_percent)) = &self.power_info_opt {
                 status_row = status_row.push(iced::widget::row![
                     widget::icon::from_name(power_icon.clone()),
-                    widget::text(format!("{:.0}%", power_percent)),
+                    widget::text(if power_percent == &0.0 {
+                        format!("System is running from the wall or the battery")
+                    } else {
+                        widget::icon::from_name(power_icon.clone());
+                        format!("{:.0}%", power_percent)
+                    }),
                 ]);
             }
 
