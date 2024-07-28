@@ -3,7 +3,7 @@ use cosmic_comp_config::CosmicCompConfig;
 use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{UserData, WallpaperData};
 use std::{env, error::Error, fs, future::pending, io, path::Path};
-use zbus::{dbus_interface, ConnectionBuilder, DBusError};
+use zbus::{ConnectionBuilder, DBusError};
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
 // callback is executed with the permissions of the specified user id. A good test is to see if
@@ -47,7 +47,7 @@ enum GreeterError {
 
 struct GreeterProxy;
 
-#[dbus_interface(name = "com.system76.CosmicGreeter")]
+#[zbus::interface(name = "com.system76.CosmicGreeter")]
 impl GreeterProxy {
     fn get_user_data(&mut self) -> Result<String, GreeterError> {
         // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
