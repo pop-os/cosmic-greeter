@@ -1270,24 +1270,7 @@ impl cosmic::Application for App {
     fn subscription(&self) -> Subscription<Self::Message> {
         struct HeartbeatSubscription;
 
-        //TODO: just use one vec for all subscriptions
-        let mut extra_suscriptions = Vec::with_capacity(2);
-
-        #[cfg(feature = "networkmanager")]
-        {
-            extra_suscriptions.push(
-                crate::networkmanager::subscription()
-                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
-            );
-        }
-
-        #[cfg(feature = "upower")]
-        {
-            extra_suscriptions
-                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
-        }
-
-        Subscription::batch([
+        let mut subscriptions = vec![
             event::listen_with(|event, _| match event {
                 iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
                     wayland_event,
@@ -1315,7 +1298,22 @@ impl cosmic::Application for App {
                 },
             ),
             ipc::subscription(),
-            Subscription::batch(extra_suscriptions),
-        ])
+        ];
+
+        #[cfg(feature = "networkmanager")]
+        {
+            subscriptions.push(
+                crate::networkmanager::subscription()
+                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
+            );
+        }
+
+        #[cfg(feature = "upower")]
+        {
+            subscriptions
+                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
+        }
+
+        Subscription::batch(subscriptions)
     }
 }
