@@ -59,10 +59,7 @@ pub fn subscription() -> Subscription<Message> {
                 }
             }
 
-            //TODO: should we retry on error?
-            loop {
-                time::sleep(time::Duration::new(60, 0)).await;
-            }
+            std::process::exit(1);
         },
     )
 }
