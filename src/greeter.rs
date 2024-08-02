@@ -287,7 +287,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         };
 
     let fallback_background =
-        widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
+        widget::image::Handle::from_memory(include_bytes!("../res/background.jpg"));
 
     let flags = Flags {
         user_datas,
