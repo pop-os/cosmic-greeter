@@ -659,15 +659,18 @@ impl cosmic::Application for App {
             match &self.prompt_opt {
                 Some((prompt, secret, value_opt)) => match value_opt {
                     Some(value) => {
-                        let mut text_input = widget::text_input(prompt.clone(), value.clone())
-                            .leading_icon(
-                                widget::icon::from_name("system-lock-screen-symbolic").into(),
-                            )
-                            .trailing_icon(
-                                widget::icon::from_name("document-properties-symbolic").into(),
-                            )
-                            .on_input(|value| Message::Prompt(prompt.clone(), *secret, Some(value)))
-                            .on_submit(Message::Submit);
+                        let mut text_input = widget::secure_input(
+                            prompt.clone(),
+                            value.clone(),
+                            Some(Message::Prompt(
+                                prompt.clone(),
+                                !*secret,
+                                Some(value.clone()),
+                            )),
+                            *secret,
+                        )
+                        .on_input(|value| Message::Prompt(prompt.clone(), *secret, Some(value)))
+                        .on_submit(Message::Submit);
 
                         if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
                             text_input = text_input.id(text_input_id.clone());
