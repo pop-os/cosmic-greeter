@@ -304,6 +304,84 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn request_message(socket: Arc<Mutex<UnixStream>>, request: Request) -> Message {
+    //TODO: handle errors
+    let response = {
+        let mut socket = socket.lock().await;
+        request.write_to(&mut *socket).await.unwrap();
+        Response::read_from(&mut *socket).await
+    };
+
+    //TODO: handle responses at any time?
+    match response {
+        Ok(response) => {
+            log::info!("{:?}", response);
+            match response {
+                Response::AuthMessage {
+                    auth_message_type,
+                    auth_message,
+                } => match auth_message_type {
+                    AuthMessageType::Secret => {
+                        return Message::Prompt(auth_message, true, Some(String::new()));
+                    }
+                    AuthMessageType::Visible => {
+                        return Message::Prompt(auth_message, false, Some(String::new()));
+                    }
+                    //TODO: treat error type differently?
+                    AuthMessageType::Info | AuthMessageType::Error => {
+                        return Message::Prompt(auth_message, false, None);
+                    }
+                },
+                Response::Error {
+                    error_type: _,
+                    description,
+                } => {
+                    //TODO: use error_type?
+                    match request {
+                        Request::CancelSession => {
+                            // Do not send errors for cancel session to gui
+                            log::warn!("error while cancelling session: {}", description);
+                            // Reconnect to socket
+                            return Message::Reconnect;
+                        }
+                        _ => {
+                            return Message::Error(socket, description);
+                        }
+                    }
+                }
+                Response::Success => match request {
+                    Request::CreateSession { .. } => {
+                        // User has no auth required, proceed to login
+                        return Message::Login(socket);
+                    }
+                    Request::PostAuthMessageResponse { .. } => {
+                        // All auth is completed, proceed to login
+                        return Message::Login(socket);
+                    }
+                    Request::StartSession { .. } => {
+                        // Session has been started, exit greeter
+                        return Message::Exit;
+                    }
+                    Request::CancelSession => {
+                        // Reconnect to socket
+                        return Message::Reconnect;
+                    }
+                },
+            }
+        }
+        Err(err) => log::error!("failed to read socket: {:?}", err),
+    }
+
+    Message::None
+}
+
+fn request_command(socket: Arc<Mutex<UnixStream>>, request: Request) -> Command<Message> {
+    Command::perform(
+        async move { message::app(request_message(socket, request).await) },
+        |x| x,
+    )
+}
+
 #[derive(Clone)]
 pub struct Flags {
     user_datas: Vec<UserData>,
@@ -937,8 +1015,12 @@ impl cosmic::Application for App {
 
             if let Some((power_icon, power_percent)) = &self.power_info_opt {
                 status_row = status_row.push(iced::widget::row![
-                    widget::icon::from_name(power_icon.clone()),
-                    widget::text(format!("{:.0}%", power_percent)),
+                    widget::text(if power_percent == &0.0 {
+                        format!("")
+                    } else {
+                        widget::icon::from_name(power_icon.clone());
+                        format!("{:.0}%", power_percent)
+                    }),
                 ]);
             }
 
