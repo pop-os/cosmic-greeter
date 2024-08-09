@@ -480,13 +480,10 @@ impl cosmic::Application for App {
                         Some(value_tx) => {
                             // Clear errors
                             self.error_opt = None;
-                            return Command::perform(
-                                async move {
-                                    value_tx.send(value).await.unwrap();
-                                    message::app(Message::Channel(value_tx))
-                                },
-                                |x| x,
-                            );
+                            return cosmic::command::future(async move {
+                                value_tx.send(value).await.unwrap();
+                                Message::Channel(value_tx)
+                            });
                         }
                         None => log::warn!("tried to submit when value_tx_opt not set"),
                     },
@@ -496,18 +493,15 @@ impl cosmic::Application for App {
             },
             Message::Suspend => {
                 #[cfg(feature = "logind")]
-                return Command::perform(
-                    async move {
-                        match crate::logind::suspend().await {
-                            Ok(()) => message::none(),
-                            Err(err) => {
-                                log::error!("failed to suspend: {:?}", err);
-                                message::app(Message::Error(err.to_string()))
-                            }
+                return cosmic::command::future(async move {
+                    match crate::logind::suspend().await {
+                        Ok(()) => message::none(),
+                        Err(err) => {
+                            log::error!("failed to suspend: {:?}", err);
+                            message::app(Message::Error(err.to_string()))
                         }
-                    },
-                    |x| x,
-                );
+                    }
+                });
             }
             Message::Error(error) => {
                 self.error_opt = Some(error);

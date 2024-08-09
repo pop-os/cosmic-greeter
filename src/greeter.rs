@@ -1,6 +1,8 @@
 // Copyright 2023 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
+mod ipc;
+
 use cosmic::app::{message, Command, Core, Settings};
 use cosmic::{
     cosmic_config::{self, ConfigSet, CosmicConfigEntry},
@@ -26,10 +28,9 @@ use cosmic::{
 };
 use cosmic_comp_config::CosmicCompConfig;
 use cosmic_greeter_daemon::{UserData, WallpaperData};
-use greetd_ipc::{codec::TokioCodec, AuthMessageType, Request, Response};
+use greetd_ipc::Request;
 use std::{
     collections::HashMap,
-    env,
     error::Error,
     fs, io,
     path::{Path, PathBuf},
@@ -37,8 +38,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
-use tokio::{net::UnixStream, time};
+use tokio::time;
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 use zbus::{proxy, Connection};
 
@@ -287,7 +287,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         };
 
     let fallback_background =
-        widget::image::Handle::from_memory(include_bytes!("../res/background.png"));
+        widget::image::Handle::from_memory(include_bytes!("../res/background.jpg"));
 
     let flags = Flags {
         user_datas,
@@ -396,7 +396,7 @@ pub enum SocketState {
     /// Opening GREETD_SOCK
     Pending,
     /// GREETD_SOCK is open
-    Open(Arc<Mutex<UnixStream>>),
+    Open,
     /// No GREETD_SOCK variable set
     NotSet,
     /// Failed to open GREETD_SOCK
@@ -439,34 +439,37 @@ pub enum Dropdown {
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
-    None,
-    OutputEvent(OutputEvent, WlOutput),
-    LayerEvent(LayerEvent, SurfaceId),
-    Socket(SocketState),
-    NetworkIcon(Option<&'static str>),
-    PowerInfo(Option<(String, f64)>),
-    Prompt(String, bool, Option<String>),
-    Session(String),
-    Username(String),
-    Auth(Arc<Mutex<UnixStream>>, Option<String>),
-    Login(Arc<Mutex<UnixStream>>),
-    Error(Arc<Mutex<UnixStream>>, String),
+    Auth(Option<String>),
     DialogCancel,
     DialogConfirm,
     DropdownToggle(Dropdown),
-    KeyboardLayout(usize),
-    Reconnect,
-    Suspend,
-    Restart,
-    Shutdown,
-    Heartbeat,
+    Error(String),
     Exit,
+    // Sets channel used to communicate with the greetd IPC subscription.
+    GreetdChannel(tokio::sync::mpsc::Sender<Request>),
+    Heartbeat,
+    KeyboardLayout(usize),
+    LayerEvent(LayerEvent, SurfaceId),
+    Login,
+    NetworkIcon(Option<&'static str>),
+    None,
+    OutputEvent(OutputEvent, WlOutput),
+    PowerInfo(Option<(String, f64)>),
+    Prompt(String, bool, Option<String>),
+    Reconnect,
+    Restart,
+    Session(String),
+    Shutdown,
+    Socket(SocketState),
+    Suspend,
+    Username(String),
 }
 
 /// The [`App`] stores application-specific state.
 pub struct App {
     core: Core,
     flags: Flags,
+    greetd_sender: Option<tokio::sync::mpsc::Sender<greetd_ipc::Request>>,
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
@@ -487,6 +490,19 @@ pub struct App {
 }
 
 impl App {
+    /// Send a [`Request`] to the greetd IPC subscription.
+    fn send_request(&self, request: Request) -> Command<Message> {
+        if let Some(ref sender) = self.greetd_sender {
+            let sender = sender.clone();
+            return cosmic::command::future(async move {
+                _ = sender.send(request).await;
+                message::none()
+            });
+        }
+
+        Command::none()
+    }
+
     fn set_xkb_config(&self) {
         let user_data = match self
             .flags
@@ -677,9 +693,10 @@ impl cosmic::Application for App {
             .map(|x| x.name.clone())
             .unwrap_or(String::new());
 
-        let mut app = App {
+        let app = App {
             core,
             flags,
+            greetd_sender: None,
             surface_ids: HashMap::new(),
             active_surface_id_opt: None,
             surface_images: HashMap::new(),
@@ -698,8 +715,7 @@ impl cosmic::Application for App {
             dialog_page_opt: None,
             dropdown_opt: None,
         };
-        let command = app.update(Message::Reconnect);
-        (app, command)
+        (app, Command::none())
     }
 
     /// Handle application events here.
@@ -798,14 +814,11 @@ impl cosmic::Application for App {
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
                 match &self.socket_state {
-                    SocketState::Open(socket) => {
+                    SocketState::Open => {
                         // When socket is opened, send create session
-                        return Command::batch([request_command(
-                            socket.clone(),
-                            Request::CreateSession {
-                                username: self.selected_username.clone(),
-                            },
-                        )]);
+                        return self.send_request(Request::CreateSession {
+                            username: self.selected_username.clone(),
+                        });
                     }
                     _ => {}
                 }
@@ -845,52 +858,35 @@ impl cosmic::Application for App {
                     self.selected_username = username.clone();
                     self.surface_images.clear();
                     match &self.socket_state {
-                        SocketState::Open(socket) => {
+                        SocketState::Open => {
                             self.prompt_opt = None;
-                            return request_command(socket.clone(), Request::CancelSession);
+                            return self.send_request(Request::CancelSession);
                         }
                         _ => {}
                     }
                 }
             }
-            Message::Auth(socket, response) => {
+            Message::Auth(response) => {
                 self.prompt_opt = None;
                 self.error_opt = None;
-                return request_command(socket, Request::PostAuthMessageResponse { response });
+                return self.send_request(Request::PostAuthMessageResponse { response });
             }
-            Message::Login(socket) => {
+            Message::Login => {
                 self.prompt_opt = None;
                 self.error_opt = None;
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
-                        return request_command(socket, Request::StartSession { cmd, env });
+                        return self.send_request(Request::StartSession { cmd, env });
                     }
                     None => todo!("session {:?} not found", self.selected_session),
                 }
             }
-            Message::Error(socket, error) => {
+            Message::Error(error) => {
                 self.error_opt = Some(error);
-                return request_command(socket, Request::CancelSession);
+                return self.send_request(Request::CancelSession);
             }
             Message::Reconnect => {
-                return Command::batch([
-                    self.update_user_config(),
-                    Command::perform(
-                        async {
-                            message::app(Message::Socket(match env::var_os("GREETD_SOCK") {
-                                Some(socket_path) => {
-                                    log::info!("opening {:?}", socket_path);
-                                    match UnixStream::connect(&socket_path).await {
-                                        Ok(socket) => SocketState::Open(Arc::new(socket.into())),
-                                        Err(err) => SocketState::Error(Arc::new(err)),
-                                    }
-                                }
-                                None => SocketState::NotSet,
-                            }))
-                        },
-                        |x| x,
-                    ),
-                ]);
+                return self.update_user_config();
             }
             Message::DialogCancel => {
                 self.dialog_page_opt = None;
@@ -898,33 +894,27 @@ impl cosmic::Application for App {
             Message::DialogConfirm => match self.dialog_page_opt.take() {
                 Some(DialogPage::Restart(_)) => {
                     #[cfg(feature = "logind")]
-                    return Command::perform(
-                        async move {
-                            match crate::logind::reboot().await {
-                                Ok(()) => (),
-                                Err(err) => {
-                                    log::error!("failed to reboot: {:?}", err);
-                                }
+                    return cosmic::command::future(async move {
+                        match crate::logind::reboot().await {
+                            Ok(()) => (),
+                            Err(err) => {
+                                log::error!("failed to reboot: {:?}", err);
                             }
-                            message::none()
-                        },
-                        |x| x,
-                    );
+                        }
+                        message::none()
+                    });
                 }
                 Some(DialogPage::Shutdown(_)) => {
                     #[cfg(feature = "logind")]
-                    return Command::perform(
-                        async move {
-                            match crate::logind::power_off().await {
-                                Ok(()) => (),
-                                Err(err) => {
-                                    log::error!("failed to power off: {:?}", err);
-                                }
+                    return cosmic::command::future(async move {
+                        match crate::logind::power_off().await {
+                            Ok(()) => (),
+                            Err(err) => {
+                                log::error!("failed to power off: {:?}", err);
                             }
-                            message::none()
-                        },
-                        |x| x,
-                    );
+                        }
+                        message::none()
+                    });
                 }
                 None => {}
             },
@@ -946,18 +936,15 @@ impl cosmic::Application for App {
             }
             Message::Suspend => {
                 #[cfg(feature = "logind")]
-                return Command::perform(
-                    async move {
-                        match crate::logind::suspend().await {
-                            Ok(()) => (),
-                            Err(err) => {
-                                log::error!("failed to suspend: {:?}", err);
-                            }
+                return cosmic::command::future(async move {
+                    match crate::logind::suspend().await {
+                        Ok(()) => (),
+                        Err(err) => {
+                            log::error!("failed to suspend: {:?}", err);
                         }
-                        message::none()
-                    },
-                    |x| x,
-                );
+                    }
+                    message::none()
+                });
             }
             Message::Restart => {
                 self.dialog_page_opt = Some(DialogPage::Restart(Instant::now()));
@@ -983,6 +970,9 @@ impl cosmic::Application for App {
                 }
                 commands.push(Command::perform(async { process::exit(0) }, |x| x));
                 return Command::batch(commands);
+            }
+            Message::GreetdChannel(sender) => {
+                self.greetd_sender = Some(sender);
             }
         }
         Command::none()
@@ -1195,7 +1185,7 @@ impl cosmic::Application for App {
                 SocketState::Pending => {
                     column = column.push(widget::text("Opening GREETD_SOCK"));
                 }
-                SocketState::Open(socket) => {
+                SocketState::Open => {
                     for user_data in &self.flags.user_datas {
                         if &user_data.name == &self.selected_username {
                             match &user_data.icon_opt {
@@ -1243,10 +1233,7 @@ impl cosmic::Application for App {
                                         .on_input(|value| {
                                             Message::Prompt(prompt.clone(), *secret, Some(value))
                                         })
-                                        .on_submit(Message::Auth(
-                                            socket.clone(),
-                                            Some(value.clone()),
-                                        ));
+                                        .on_submit(Message::Auth(Some(value.clone())));
 
                                 if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
                                     text_input = text_input.id(text_input_id.clone());
@@ -1259,10 +1246,8 @@ impl cosmic::Application for App {
                                 column = column.push(text_input);
                             }
                             None => {
-                                column = column.push(
-                                    widget::button("Confirm")
-                                        .on_press(Message::Auth(socket.clone(), None)),
-                                );
+                                column = column
+                                    .push(widget::button("Confirm").on_press(Message::Auth(None)));
                             }
                         },
                         None => {}
@@ -1367,24 +1352,7 @@ impl cosmic::Application for App {
     fn subscription(&self) -> Subscription<Self::Message> {
         struct HeartbeatSubscription;
 
-        //TODO: just use one vec for all subscriptions
-        let mut extra_suscriptions = Vec::with_capacity(2);
-
-        #[cfg(feature = "networkmanager")]
-        {
-            extra_suscriptions.push(
-                crate::networkmanager::subscription()
-                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
-            );
-        }
-
-        #[cfg(feature = "upower")]
-        {
-            extra_suscriptions
-                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
-        }
-
-        Subscription::batch([
+        let mut subscriptions = vec![
             event::listen_with(|event, _| match event {
                 iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
                     wayland_event,
@@ -1411,7 +1379,23 @@ impl cosmic::Application for App {
                     }
                 },
             ),
-            Subscription::batch(extra_suscriptions),
-        ])
+            ipc::subscription(),
+        ];
+
+        #[cfg(feature = "networkmanager")]
+        {
+            subscriptions.push(
+                crate::networkmanager::subscription()
+                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
+            );
+        }
+
+        #[cfg(feature = "upower")]
+        {
+            subscriptions
+                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
+        }
+
+        Subscription::batch(subscriptions)
     }
 }
