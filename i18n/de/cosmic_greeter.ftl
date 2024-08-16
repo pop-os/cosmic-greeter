@@ -1,7 +1,11 @@
 cancel = Abbrechen
+keyboard-layout = Tastaturbelegung
 restart = Neustart
 restart-now = Jetzt neu starten?
-restart-timeout = Das System wird automatisch in {$seconds} Sekunden neu gestartet.
+restart-timeout = Das System wird in {$seconds} Sekunden automatisch neu gestartet.
+session = Sitzung
 shutdown = Herunterfahren
 shutdown-now = Jetzt herunterfahren?
-shutdown-timeout = Das System wird automatisch in {$seconds} Sekunden heruntergefahren.
+shutdown-timeout = Das System wird in {$seconds} Sekunden automatisch heruntergefahren.
+suspend = Bereitschaft
+user = Benutzer
