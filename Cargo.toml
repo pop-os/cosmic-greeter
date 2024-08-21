@@ -52,6 +52,15 @@ networkmanager = ["cosmic-dbus-networkmanager", "zbus"]
 upower = ["upower_dbus", "zbus"]
 zbus = ["dep:zbus", "nix"]
 
+[profile.dev.package.tiny-skia]
+opt-level = 2
+
+[profile.dev.package.rustybuzz]
+opt-level = 2
+
+[profile.dev.package.ttf-parser]
+opt-level = 2
+
 [workspace]
 members = ["daemon"]
 resolver = "2"
