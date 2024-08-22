@@ -27,12 +27,14 @@ use cosmic::{
     style, theme, widget, Element,
 };
 use cosmic_comp_config::CosmicCompConfig;
+use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::{UserData, WallpaperData};
 use greetd_ipc::Request;
 use std::{
-    collections::HashMap,
+    collections::{hash_map, HashMap},
     error::Error,
     fs, io,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     process,
     sync::Arc,
@@ -129,6 +131,14 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
     // Sort user data by uid
     user_datas.sort_by(|a, b| a.uid.cmp(&b.uid));
+
+    let (mut greeter_config, greeter_config_handler) = CosmicGreeterConfig::load();
+    // Filter out users that were removed from the system since the last time we loaded config
+    greeter_config.users.retain(|uid, _| {
+        user_datas
+            .binary_search_by(|probe| probe.uid.cmp(&uid.get()))
+            .is_ok()
+    });
 
     enum SessionType {
         X11,
@@ -294,6 +304,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions,
         layouts_opt,
         comp_config_handler,
+        greeter_config,
+        greeter_config_handler,
         fallback_background,
     };
 
@@ -310,6 +322,8 @@ pub struct Flags {
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
     layouts_opt: Option<Arc<xkb_data::KeyboardLayouts>>,
     comp_config_handler: Option<cosmic_config::Config>,
+    greeter_config: CosmicGreeterConfig,
+    greeter_config_handler: Option<cosmic_config::Config>,
     fallback_background: widget::image::Handle,
 }
 
@@ -362,6 +376,7 @@ pub enum Dropdown {
 #[derive(Clone, Debug)]
 pub enum Message {
     Auth(Option<String>),
+    ConfigUpdateUser,
     DialogCancel,
     DialogConfirm,
     DropdownToggle(Dropdown),
@@ -590,12 +605,6 @@ impl cosmic::Application for App {
         core.window.show_minimize = false;
         core.window.use_template = false;
 
-        let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
-        session_names.sort();
-
-        //TODO: use last selected session
-        let selected_session = session_names.first().cloned().unwrap_or(String::new());
-
         //TODO: use full_name_opt
         let mut usernames: Vec<_> = flags
             .user_datas
@@ -609,11 +618,25 @@ impl cosmic::Application for App {
         usernames.sort_by(|a, b| a.1.cmp(&b.1));
 
         //TODO: use last selected user
-        let selected_username = flags
+        let (selected_username, uid) = flags
             .user_datas
             .first()
-            .map(|x| x.name.clone())
-            .unwrap_or(String::new());
+            .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+            .unwrap_or((String::new(), None));
+
+        let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
+        session_names.sort();
+
+        let selected_session = uid
+            .and_then(|uid| {
+                flags
+                    .greeter_config
+                    .users
+                    .get(&uid)
+                    .and_then(|user| user.last_session.clone())
+            })
+            .or_else(|| session_names.first().cloned())
+            .unwrap_or_default();
 
         let app = App {
             core,
@@ -779,6 +802,23 @@ impl cosmic::Application for App {
                 if username != self.selected_username {
                     self.selected_username = username.clone();
                     self.surface_images.clear();
+                    if let Some(session) = self
+                        .flags
+                        .user_datas
+                        .iter()
+                        .find(|user| user.name == username)
+                        .and_then(|UserData { uid, .. }| {
+                            NonZeroU32::new(*uid).and_then(|uid| {
+                                self.flags
+                                    .greeter_config
+                                    .users
+                                    .get(&uid)
+                                    .and_then(|conf| conf.last_session.as_deref())
+                            })
+                        })
+                    {
+                        session.clone_into(&mut self.selected_session);
+                    };
                     match &self.socket_state {
                         SocketState::Open => {
                             self.prompt_opt = None;
@@ -786,6 +826,70 @@ impl cosmic::Application for App {
                         }
                         _ => {}
                     }
+                }
+            }
+            Message::ConfigUpdateUser => {
+                let Some(user_entry) = self
+                    .flags
+                    .user_datas
+                    .iter()
+                    .find(|user| user.name == self.selected_username)
+                    .and_then(|UserData { uid, .. }| {
+                        NonZeroU32::new(*uid).map(|uid| self.flags.greeter_config.users.entry(uid))
+                    })
+                else {
+                    log::error!("Couldn't find user: {:?}", self.selected_username);
+                    return Command::none();
+                };
+
+                let Some(handler) = self.flags.greeter_config_handler.as_mut() else {
+                    log::error!(
+                        "Failed to update config for {} (UID: {}): no config handler",
+                        self.selected_username,
+                        user_entry.key()
+                    );
+                    return Command::none();
+                };
+
+                let uid = *user_entry.key();
+                match user_entry {
+                    hash_map::Entry::Vacant(entry) => {
+                        let last_session = Some(self.selected_session.clone());
+                        entry.insert(cosmic_greeter_config::user::UserState { uid, last_session });
+                    }
+                    hash_map::Entry::Occupied(mut entry) => {
+                        let last_session = entry.get_mut().last_session.as_mut();
+                        if last_session
+                            .as_ref()
+                            .is_some_and(|session| session.as_str() == self.selected_session)
+                        {
+                            return Command::none();
+                        }
+                        if let Some(session) = last_session {
+                            self.selected_session.clone_into(session);
+                        } else {
+                            let last_session = Some(self.selected_session.clone());
+                            entry.insert(cosmic_greeter_config::user::UserState {
+                                uid,
+                                last_session,
+                            });
+                        }
+                    }
+                }
+
+                // xxx Not sure why this doesn't work unless the handler is used directly
+                // if let Err(err) = self
+                //     .flags
+                //     .greeter_config
+                //     .set_users(&handler, self.flags.greeter_config.users.clone())
+                if let Err(err) = handler.set("users", &self.flags.greeter_config.users) {
+                    log::error!(
+                        "Failed to set {} as last selected session for {} (UID: {}): {:?}",
+                        self.selected_session,
+                        self.selected_username,
+                        uid,
+                        err
+                    );
                 }
             }
             Message::Auth(response) => {
@@ -798,7 +902,10 @@ impl cosmic::Application for App {
                 self.error_opt = None;
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
-                        return self.send_request(Request::StartSession { cmd, env });
+                        return Command::batch([
+                            self.update(Message::ConfigUpdateUser),
+                            self.send_request(Request::StartSession { cmd, env }),
+                        ]);
                     }
                     None => todo!("session {:?} not found", self.selected_session),
                 }
