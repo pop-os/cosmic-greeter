@@ -46,7 +46,7 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<(String, f64)>>) -> Result
 
         if let Ok(percent) = dev.percentage().await {
             if let Ok(icon_name) = dev.icon_name().await {
-                if !icon_name.is_empty() {
+                if !icon_name.is_empty() && !icon_name.eq("battery-missing-symbolic") {
                     info_opt = Some((icon_name, percent));
                 }
             }
