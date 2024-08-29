@@ -912,14 +912,13 @@ impl cosmic::Application for App {
                 let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
 
                 let dt = chrono::Local::now();
+                let locale = *crate::localize::LANGUAGE_CHRONO;
 
-                //TODO: localized format
-                let date = dt.format("%A, %B %-d");
+                let date = dt.format_localized("%A, %B %-d", locale);
                 column = column
                     .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
 
-                //TODO: localized format
-                let time = dt.format("%R");
+                let time = dt.format_localized("%R", locale);
                 column = column.push(
                     widget::text(format!("{}", time))
                         .size(112.0)
