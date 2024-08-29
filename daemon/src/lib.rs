@@ -11,6 +11,8 @@ pub struct UserData {
     pub theme_opt: Option<Theme>,
     pub wallpapers_opt: Option<Vec<(String, WallpaperData)>>,
     pub xkb_config_opt: Option<XkbConfig>,
+    pub clock_military_time: bool,
+    // pub clock_show_seconds: bool,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
