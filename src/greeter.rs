@@ -110,6 +110,8 @@ fn user_data_fallback() -> Vec<UserData> {
                     theme_opt: None,
                     wallpapers_opt: None,
                     xkb_config_opt: None,
+                    clock_military_time: false,
+                    // clock_show_seconds: false,
                 }
             })
             .collect()
@@ -1025,7 +1027,20 @@ impl cosmic::Application for App {
                 column = column
                     .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
 
-                let time = dt.format_localized("%R", locale);
+                // xxx It may be prudent to store the index of the selected user to avoid
+                // searches. This would also simplify logic elsewhere.
+                let time = if self
+                    .flags
+                    .user_datas
+                    .binary_search_by(|probe| probe.name.cmp(&self.selected_username))
+                    .ok()
+                    .map(|i| self.flags.user_datas[i].clock_military_time)
+                    .unwrap_or_default()
+                {
+                    dt.format_localized("%R", locale)
+                } else {
+                    dt.format_localized("%I:%M %P", locale)
+                };
                 column = column.push(
                     widget::text(format!("{}", time))
                         .size(112.0)

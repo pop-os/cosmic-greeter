@@ -1,6 +1,6 @@
 use cosmic_bg_config::Source;
 use cosmic_comp_config::CosmicCompConfig;
-use cosmic_config::CosmicConfigEntry;
+use cosmic_config::{ConfigGet, CosmicConfigEntry};
 use cosmic_greeter_daemon::{UserData, WallpaperData};
 use std::{env, error::Error, fs, future::pending, io, path::Path};
 use zbus::{ConnectionBuilder, DBusError};
@@ -115,6 +115,8 @@ impl GreeterProxy {
                 //TODO: should wallpapers come from a per-user call?
                 wallpapers_opt: None,
                 xkb_config_opt: None,
+                clock_military_time: false,
+                // clock_show_seconds: false,
             };
 
             //IMPORTANT: Assume the identity of the user to ensure we don't read wallpaper file data as root
@@ -206,6 +208,21 @@ impl GreeterProxy {
                     },
                     Err(err) => {
                         log::error!("failed to create cosmic-comp config handler: {}", err);
+                    }
+                };
+
+                match cosmic_config::Config::new("com.system76.CosmicAppletTime", 1) {
+                    Ok(config_handler) => {
+                        user_data.clock_military_time =
+                            config_handler.get("military_time").unwrap_or_default();
+                        // user_data.clock_show_seconds =
+                        //     config_handler.get("show_seconds").unwrap_or_default();
+                    }
+                    Err(err) => {
+                        log::error!(
+                            "failed to create CosmicAppletTime config handler: {:?}",
+                            err
+                        );
                     }
                 };
             })
