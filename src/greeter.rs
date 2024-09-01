@@ -1042,9 +1042,7 @@ impl cosmic::Application for App {
                 column = column
                     .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
 
-                // xxx It may be prudent to store the index of the selected user to avoid
-                // searches. This would also simplify logic elsewhere.
-                let time = if self
+                let (time, time_size) = if self
                     .selected_username
                     .data_idx
                     .and_then(|i| {
@@ -1055,13 +1053,16 @@ impl cosmic::Application for App {
                     })
                     .unwrap_or_default()
                 {
-                    dt.format_localized("%R", locale)
+                    (dt.format_localized("%R", locale), 112.0)
                 } else {
-                    dt.format_localized("%I:%M %P", locale)
+                    // xxx format_localized doesn't seem to show am/pm for some languages, such as
+                    // French or Hungarian. This is apparently correct
+                    // Also, time size needs to be reduced a bit here so that it fits on one line
+                    (dt.format_localized("%I:%M %p", locale), 75.0)
                 };
                 column = column.push(
                     widget::text(format!("{}", time))
-                        .size(112.0)
+                        .size(time_size)
                         .style(style::Text::Accent),
                 );
 
