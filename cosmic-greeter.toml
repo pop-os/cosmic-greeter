@@ -2,7 +2,7 @@
 vt = "1"
 
 [general]
-service = "login"
+service = "cosmic-greeter"
 
 [default_session]
 command = "cosmic-comp systemd-cat -t cosmic-greeter cosmic-greeter"

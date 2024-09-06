@@ -83,8 +83,7 @@ pub fn pam_thread(username: String, conversation: Conversation) -> Result<(), pa
     //TODO: send errors to GUI, restart process
 
     // Create PAM context
-    //TODO: search for and use custom context?
-    let mut context = pam_client::Context::new("login", Some(&username), conversation)?;
+    let mut context = pam_client::Context::new("cosmic-greeter", Some(&username), conversation)?;
 
     // Authenticate the user (ask for password, 2nd-factor token, fingerprint, etc.)
     log::info!("authenticate");
