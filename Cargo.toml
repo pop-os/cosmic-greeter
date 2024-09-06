@@ -8,6 +8,7 @@ chrono = { version = "0.4", features = ["unstable-locales"] }
 cosmic-bg-config.workspace = true
 cosmic-comp-config.workspace = true
 cosmic-config = { workspace = true, features = ["calloop", "macro"] }
+cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
 env_logger.workspace = true
 freedesktop_entry_parser = "1.3.0"
@@ -62,7 +63,7 @@ opt-level = 2
 opt-level = 2
 
 [workspace]
-members = ["daemon"]
+members = ["cosmic-greeter-config", "daemon"]
 resolver = "2"
 
 [workspace.package]
@@ -86,6 +87,9 @@ default-features = false
 [workspace.dependencies.cosmic-comp-config]
 git = "https://github.com/pop-os/cosmic-comp"
 default-features = false
+
+[workspace.dependencies.cosmic-greeter-config]
+path = "cosmic-greeter-config"
 
 [workspace.dependencies.cosmic-config]
 git = "https://github.com/pop-os/libcosmic"
