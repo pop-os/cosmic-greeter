@@ -5,7 +5,7 @@ fn main() {
     let passwd = pwd::Passwd::current_user().expect("Failed to get current user");
 
     let mut context = Context::new(
-        "login",             // Service name, decides which policy is used (see `/etc/pam.d`)
+        "cosmic-greeter",    // Service name, decides which policy is used (see `/etc/pam.d`)
         Some(&passwd.name),  // Optional preset user name
         Conversation::new(), // Handler for user interaction
     )

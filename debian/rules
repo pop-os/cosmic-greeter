@@ -22,6 +22,7 @@ override_dh_auto_install:
 	just rootdir=$(DESTDIR) install-debian
 
 execute_after_dh_install:
+	dh_installpam
 	dh_installsysusers
 
 override_dh_installsystemd:
