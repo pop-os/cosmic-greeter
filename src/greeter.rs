@@ -818,22 +818,20 @@ impl cosmic::Application for App {
                     let data_idx = Self::user_data_index(&self.flags.user_datas, &username);
                     self.selected_username = NameIndexPair { username, data_idx };
                     self.surface_images.clear();
-                    // TODO: Remove search
-                    if let Some(session) = self
-                        .flags
-                        .user_datas
-                        .iter()
-                        .find(|user| user.name == self.selected_username.username)
-                        .and_then(|UserData { uid, .. }| {
-                            NonZeroU32::new(*uid).and_then(|uid| {
-                                self.flags
-                                    .greeter_config
-                                    .users
-                                    .get(&uid)
-                                    .and_then(|conf| conf.last_session.as_deref())
+                    if let Some(session) = data_idx.and_then(|i| {
+                        self.flags
+                            .user_datas
+                            .get(i)
+                            .and_then(|UserData { uid, .. }| {
+                                NonZeroU32::new(*uid).and_then(|uid| {
+                                    self.flags
+                                        .greeter_config
+                                        .users
+                                        .get(&uid)
+                                        .and_then(|conf| conf.last_session.as_deref())
+                                })
                             })
-                        })
-                    {
+                    }) {
                         session.clone_into(&mut self.selected_session);
                     };
                     match &self.socket_state {
@@ -846,15 +844,15 @@ impl cosmic::Application for App {
                 }
             }
             Message::ConfigUpdateUser => {
-                let Some(user_entry) = self
-                    .flags
-                    .user_datas
-                    .iter()
-                    .find(|user| user.name == self.selected_username.username)
-                    .and_then(|UserData { uid, .. }| {
-                        NonZeroU32::new(*uid).map(|uid| self.flags.greeter_config.users.entry(uid))
-                    })
-                else {
+                let Some(user_entry) = self.selected_username.data_idx.and_then(|i| {
+                    self.flags
+                        .user_datas
+                        .get(i)
+                        .and_then(|UserData { uid, .. }| {
+                            NonZeroU32::new(*uid)
+                                .map(|uid| self.flags.greeter_config.users.entry(uid))
+                        })
+                }) else {
                     log::error!("Couldn't find user: {:?}", self.selected_username.username);
                     return Command::none();
                 };
