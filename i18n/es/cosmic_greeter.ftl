@@ -2,8 +2,7 @@ cancel = Cancelar
 keyboard-layout = Distribución de teclado
 restart = Reiniciar
 restart-now = ¿Reiniciar ahora?
-restart-timeout = El ordenador se reiniciará automáticamente en
-{ $seconds ->
+restart-timeout = El ordenador se reiniciará automáticamente en { $seconds ->
   [one] 1 segundo.
   *[other] {$seconds} segundos.}
 session = Sesión
