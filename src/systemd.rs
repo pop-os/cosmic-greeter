@@ -4,6 +4,7 @@ use cosmic::iced::{
     futures::{channel::mpsc, SinkExt, StreamExt},
     subscription, Subscription,
 };
+use serde::Deserialize;
 use tokio::time;
 use zbus::{Connection, Result};
 use zbus_systemd::network1::ManagerProxy;
@@ -43,13 +44,35 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<&'static str>>) -> Result<
 
     let mut online_state_changed = mp.receive_online_state_changed().await;
     loop {
-        let icon = match mp.online_state().await.unwrap_or_default().as_str() {
-            // TODO: traverse systemd-networkd's links/networks to determine wireless-versus-wired
-            // "partial" mean some links are online, let's assume this is good enough
-            // see: https://www.freedesktop.org/software/systemd/man/latest/networkctl.html
-            "online" | "partial" => NetworkIcon::Wired,
-            _ => NetworkIcon::None,
+        match mp.online_state().await.unwrap_or_default().as_str() {
+            "online" | "partial" => {
+                // "partial" mean some links are online, let's assume this is good enough
+                // see: https://www.freedesktop.org/software/systemd/man/latest/networkctl.html
+            }
+            _ => {
+                continue;
+            }
         };
+
+        let mut icon = NetworkIcon::None;
+
+        for (link_id, _, _) in mp.list_links().await.unwrap_or_default() {
+            let link_json = mp.describe_link(link_id).await.unwrap_or_default();
+            if let Ok(link) = serde_json::from_str::<Link>(&link_json) {
+                if link.online_state != OnlineState::Online {
+                    continue;
+                }
+                // Wired only overrides None
+                if icon == NetworkIcon::None && link.r#type == LinkType::Ether {
+                    icon = NetworkIcon::Wired;
+                }
+                // Wireless always overrides with the highest strength
+                if link.r#type == LinkType::Wlan {
+                    icon = NetworkIcon::Wireless(100);
+                    // TODO: determine wireless signal strength
+                }
+            }
+        }
 
         msg_tx.send(Some(icon.name())).await.unwrap();
 
@@ -59,4 +82,33 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<&'static str>>) -> Result<
             time::sleep(time::Duration::from_secs(3))
         );
     }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+struct Link {
+    online_state: OnlineState,
+    r#type: LinkType,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+enum LinkType {
+    Ether,
+    Loopback,
+    Wlan,
+    Other(String),
+}
+
+// see: https://www.freedesktop.org/software/systemd/man/latest/networkctl.html
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+enum OnlineState {
+    Partial,
+    Offline,
+    Online,
+    Unknown,
+    Other(String),
 }

@@ -1010,6 +1010,8 @@ dependencies = [
  "pwd",
  "ron",
  "rust-embed",
+ "serde",
+ "serde_json",
  "shlex",
  "tokio",
  "upower_dbus",
