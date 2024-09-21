@@ -1408,16 +1408,17 @@ impl cosmic::Application for App {
 
         #[cfg(feature = "networkmanager")]
         {
-            subscriptions.push(
-                crate::networkmanager::subscription()
-                    .map(|icon_opt| Message::NetworkIcon(icon_opt)),
-            );
+            subscriptions.push(crate::networkmanager::subscription().map(Message::NetworkIcon));
+        }
+
+        #[cfg(feature = "systemd")]
+        {
+            subscriptions.push(crate::systemd::subscription().map(Message::NetworkIcon));
         }
 
         #[cfg(feature = "upower")]
         {
-            subscriptions
-                .push(crate::upower::subscription().map(|info_opt| Message::PowerInfo(info_opt)));
+            subscriptions.push(crate::upower::subscription().map(Message::PowerInfo));
         }
 
         Subscription::batch(subscriptions)

@@ -41,15 +41,17 @@ i18n-embed = { version = "0.14", features = [
 i18n-embed-fl = "0.7"
 rust-embed = "8"
 futures-util = "0.3.30"
+zbus_systemd = { version = "0.25600", features = ["network1"], optional = true }
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
 features = ["tokio-codec"]
 
 [features]
-default = ["logind", "networkmanager", "upower"]
+default = ["logind", "networkmanager", "systemd", "upower"]
 logind = ["logind-zbus", "zbus"]
 networkmanager = ["cosmic-dbus-networkmanager", "zbus"]
+systemd = ["zbus_systemd", "zbus"]
 upower = ["upower_dbus", "zbus"]
 zbus = ["dep:zbus", "nix"]
 

@@ -1017,6 +1017,7 @@ dependencies = [
  "xdg",
  "xkb-data",
  "zbus 4.4.0",
+ "zbus_systemd",
 ]
 
 [[package]]
@@ -5919,6 +5920,17 @@ dependencies = [
  "serde",
  "static_assertions",
  "zvariant 4.2.0",
+]
+
+[[package]]
+name = "zbus_systemd"
+version = "0.25600.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14a94191447de6983b8c81f6d57d759501e03e59be7970ab0dc069ac9e36f786"
+dependencies = [
+ "futures",
+ "serde",
+ "zbus 4.4.0",
 ]
 
 [[package]]
