@@ -110,6 +110,8 @@ fn user_data_fallback() -> Vec<UserData> {
                     theme_opt: None,
                     wallpapers_opt: None,
                     xkb_config_opt: None,
+                    clock_military_time: false,
+                    // clock_show_seconds: false,
                 }
             })
             .collect()
@@ -372,6 +374,13 @@ pub enum Dropdown {
     Session,
 }
 
+struct NameIndexPair {
+    /// Selected username
+    username: String,
+    /// Index of the [`UserData`] for the selected username
+    data_idx: Option<usize>,
+}
+
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -416,7 +425,7 @@ pub struct App {
     power_info_opt: Option<(String, f64)>,
     socket_state: SocketState,
     usernames: Vec<(String, String)>,
-    selected_username: String,
+    selected_username: NameIndexPair,
     prompt_opt: Option<(String, bool, Option<String>)>,
     session_names: Vec<String>,
     selected_session: String,
@@ -442,10 +451,9 @@ impl App {
 
     fn set_xkb_config(&self) {
         let user_data = match self
-            .flags
-            .user_datas
-            .iter()
-            .find(|x| &x.name == &self.selected_username)
+            .selected_username
+            .data_idx
+            .and_then(|i| self.flags.user_datas.get(i))
         {
             Some(some) => some,
             None => return,
@@ -473,10 +481,9 @@ impl App {
 
     fn update_user_config(&mut self) -> Command<Message> {
         let user_data = match self
-            .flags
-            .user_datas
-            .iter()
-            .find(|x| &x.name == &self.selected_username)
+            .selected_username
+            .data_idx
+            .and_then(|i| self.flags.user_datas.get(i))
         {
             Some(some) => some,
             None => return Command::none(),
@@ -572,6 +579,12 @@ impl App {
             None => Command::none(),
         }
     }
+
+    fn user_data_index(user_datas: &[UserData], username: &str) -> Option<usize> {
+        user_datas
+            .binary_search_by(|probe| probe.name.as_str().cmp(username))
+            .ok()
+    }
 }
 
 /// Implement [`cosmic::Application`] to integrate with COSMIC.
@@ -618,11 +631,11 @@ impl cosmic::Application for App {
         usernames.sort_by(|a, b| a.1.cmp(&b.1));
 
         //TODO: use last selected user
-        let (selected_username, uid) = flags
+        let (username, uid) = flags
             .user_datas
             .first()
             .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
-            .unwrap_or((String::new(), None));
+            .unwrap_or_default();
 
         let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
         session_names.sort();
@@ -637,6 +650,8 @@ impl cosmic::Application for App {
             })
             .or_else(|| session_names.first().cloned())
             .unwrap_or_default();
+        let data_idx = Some(0);
+        let selected_username = NameIndexPair { username, data_idx };
 
         let app = App {
             core,
@@ -762,7 +777,7 @@ impl cosmic::Application for App {
                     SocketState::Open => {
                         // When socket is opened, send create session
                         return self.send_request(Request::CreateSession {
-                            username: self.selected_username.clone(),
+                            username: self.selected_username.username.clone(),
                         });
                     }
                     _ => {}
@@ -799,24 +814,24 @@ impl cosmic::Application for App {
                 if self.dropdown_opt == Some(Dropdown::User) {
                     self.dropdown_opt = None;
                 }
-                if username != self.selected_username {
-                    self.selected_username = username.clone();
+                if username != self.selected_username.username {
+                    let data_idx = Self::user_data_index(&self.flags.user_datas, &username);
+                    self.selected_username = NameIndexPair { username, data_idx };
                     self.surface_images.clear();
-                    if let Some(session) = self
-                        .flags
-                        .user_datas
-                        .iter()
-                        .find(|user| user.name == username)
-                        .and_then(|UserData { uid, .. }| {
-                            NonZeroU32::new(*uid).and_then(|uid| {
-                                self.flags
-                                    .greeter_config
-                                    .users
-                                    .get(&uid)
-                                    .and_then(|conf| conf.last_session.as_deref())
+                    if let Some(session) = data_idx.and_then(|i| {
+                        self.flags
+                            .user_datas
+                            .get(i)
+                            .and_then(|UserData { uid, .. }| {
+                                NonZeroU32::new(*uid).and_then(|uid| {
+                                    self.flags
+                                        .greeter_config
+                                        .users
+                                        .get(&uid)
+                                        .and_then(|conf| conf.last_session.as_deref())
+                                })
                             })
-                        })
-                    {
+                    }) {
                         session.clone_into(&mut self.selected_session);
                     };
                     match &self.socket_state {
@@ -829,23 +844,23 @@ impl cosmic::Application for App {
                 }
             }
             Message::ConfigUpdateUser => {
-                let Some(user_entry) = self
-                    .flags
-                    .user_datas
-                    .iter()
-                    .find(|user| user.name == self.selected_username)
-                    .and_then(|UserData { uid, .. }| {
-                        NonZeroU32::new(*uid).map(|uid| self.flags.greeter_config.users.entry(uid))
-                    })
-                else {
-                    log::error!("Couldn't find user: {:?}", self.selected_username);
+                let Some(user_entry) = self.selected_username.data_idx.and_then(|i| {
+                    self.flags
+                        .user_datas
+                        .get(i)
+                        .and_then(|UserData { uid, .. }| {
+                            NonZeroU32::new(*uid)
+                                .map(|uid| self.flags.greeter_config.users.entry(uid))
+                        })
+                }) else {
+                    log::error!("Couldn't find user: {:?}", self.selected_username.username);
                     return Command::none();
                 };
 
                 let Some(handler) = self.flags.greeter_config_handler.as_mut() else {
                     log::error!(
                         "Failed to update config for {} (UID: {}): no config handler",
-                        self.selected_username,
+                        self.selected_username.username,
                         user_entry.key()
                     );
                     return Command::none();
@@ -886,7 +901,7 @@ impl cosmic::Application for App {
                     log::error!(
                         "Failed to set {} as last selected session for {} (UID: {}): {:?}",
                         self.selected_session,
-                        self.selected_username,
+                        self.selected_username.username,
                         uid,
                         err
                     );
@@ -1025,10 +1040,27 @@ impl cosmic::Application for App {
                 column = column
                     .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
 
-                let time = dt.format_localized("%R", locale);
+                let (time, time_size) = if self
+                    .selected_username
+                    .data_idx
+                    .and_then(|i| {
+                        self.flags
+                            .user_datas
+                            .get(i)
+                            .map(|user| user.clock_military_time)
+                    })
+                    .unwrap_or_default()
+                {
+                    (dt.format_localized("%R", locale), 112.0)
+                } else {
+                    // xxx format_localized doesn't seem to show am/pm for some languages, such as
+                    // French or Hungarian. This is apparently correct
+                    // Also, time size needs to be reduced a bit here so that it fits on one line
+                    (dt.format_localized("%I:%M %p", locale), 75.0)
+                };
                 column = column.push(
                     widget::text(format!("{}", time))
-                        .size(112.0)
+                        .size(time_size)
                         .style(style::Text::Accent),
                 );
 
@@ -1120,7 +1152,7 @@ impl cosmic::Application for App {
                 for (name, full_name) in self.usernames.iter() {
                     items.push(menu_checklist(
                         full_name,
-                        name == &self.selected_username,
+                        name == &self.selected_username.username,
                         Message::Username(name.clone()),
                     ));
                 }
@@ -1211,7 +1243,7 @@ impl cosmic::Application for App {
                 }
                 SocketState::Open => {
                     for user_data in &self.flags.user_datas {
-                        if &user_data.name == &self.selected_username {
+                        if &user_data.name == &self.selected_username.username {
                             match &user_data.icon_opt {
                                 Some(icon) => {
                                     column = column.push(
