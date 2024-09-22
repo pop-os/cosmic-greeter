@@ -7,7 +7,7 @@ use std::{any::TypeId, cmp};
 use tokio::time;
 use zbus::{Connection, Result};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NetworkIcon {
     None,
     Wired,

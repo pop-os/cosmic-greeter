@@ -13,5 +13,8 @@ mod logind;
 #[cfg(feature = "networkmanager")]
 mod networkmanager;
 
+#[cfg(feature = "systemd")]
+mod systemd;
+
 #[cfg(feature = "upower")]
 mod upower;

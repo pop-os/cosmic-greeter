@@ -7,7 +7,6 @@ use logind_zbus::{
     session::SessionProxy,
 };
 use std::{any::TypeId, error::Error, os::fd::OwnedFd, process, sync::Arc};
-use tokio::time;
 use zbus::Connection;
 
 use crate::locker::Message;
