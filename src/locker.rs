@@ -642,9 +642,9 @@ impl cosmic::Application for App {
                 }
                 None => {}
             }
-            match &self.flags.current_user.gecos {
+            match self.flags.current_user.gecos.as_ref().filter(|s| !s.is_empty()) {
                 Some(gecos) => {
-                    let full_name = gecos.split(",").next().unwrap_or("");
+                    let full_name = gecos.split(",").next().unwrap_or_default();
                     column = column.push(
                         widget::container(widget::text::title4(full_name))
                             .width(Length::Fill)

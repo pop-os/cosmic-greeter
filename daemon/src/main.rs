@@ -109,6 +109,7 @@ impl GreeterProxy {
                 full_name_opt: user
                     .gecos
                     .as_ref()
+                    .filter(|s| !s.is_empty())
                     .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
                 icon_opt,
                 theme_opt: None,

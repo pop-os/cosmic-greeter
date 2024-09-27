@@ -105,6 +105,7 @@ fn user_data_fallback() -> Vec<UserData> {
                     name: user.name,
                     full_name_opt: user
                         .gecos
+                        .filter(|s| !s.is_empty())
                         .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
                     icon_opt,
                     theme_opt: None,
