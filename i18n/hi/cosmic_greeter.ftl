@@ -1,0 +1,11 @@
+cancel = रद्द करें
+keyboard-layout = कीबोर्ड लेआउट
+restart = पुनरारंभ करें
+restart-now = क्या अभी पुनरारंभ करें?
+restart-timeout = सिस्टम {$seconds} सेकंड में स्वचालित रूप से पुनरारंभ होगा।
+session = सत्र
+shutdown = बंद करें
+shutdown-now = क्या अभी बंद करें?
+shutdown-timeout = सिस्टम {$seconds} सेकंड में स्वचालित रूप से बंद होगा।
+suspend = निलंबित करें
+user = उपयोगकर्ता
