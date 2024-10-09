@@ -27,6 +27,7 @@ Depends:
     dbus,
     ${misc:Depends},
     ${shlibs:Depends}
+Suggests: libpam-fprintd
 Provides: x-display-manager
 Description: Cosmic Greeter
 
