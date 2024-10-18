@@ -41,6 +41,8 @@ i18n-embed = { version = "0.14", features = [
 i18n-embed-fl = "0.7"
 rust-embed = "8"
 futures-util = "0.3.30"
+sctk = { package = "smithay-client-toolkit", version = "0.19.2" }
+image = "0.25.4"
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
@@ -82,6 +84,8 @@ zbus = "4"
 
 [workspace.dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"
+branch = "cosmic-bg-update"
+features = ["scaler"]
 default-features = false
 
 [workspace.dependencies.cosmic-comp-config]

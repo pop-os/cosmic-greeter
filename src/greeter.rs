@@ -503,6 +503,7 @@ impl App {
 
                 log::info!("updating wallpaper for {:?}", output_name);
 
+                // TODO
                 for (wallpaper_output_name, wallpaper_data) in wallpapers.iter() {
                     if wallpaper_output_name == output_name {
                         match wallpaper_data {
