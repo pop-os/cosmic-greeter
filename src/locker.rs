@@ -19,6 +19,7 @@ use cosmic::{
     style, widget, Element,
 };
 use cosmic_config::CosmicConfigEntry;
+use sctk::output::OutputInfo;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -200,6 +201,7 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
+    BackgroundConfig(cosmic_bg_config::Config),
     Inhibit(Arc<OwnedFd>),
     NetworkIcon(Option<&'static str>),
     PowerInfo(Option<(String, f64)>),
@@ -227,7 +229,7 @@ pub struct App {
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
-    surface_names: HashMap<SurfaceId, String>,
+    surface_output_infos: HashMap<SurfaceId, OutputInfo>,
     text_input_ids: HashMap<SurfaceId, widget::Id>,
     inhibit_opt: Option<Arc<OwnedFd>>,
     network_icon_opt: Option<&'static str>,
@@ -245,12 +247,18 @@ impl App {
                 continue;
             }
 
-            let output_name = match self.surface_names.get(surface_id) {
-                Some(some) => some,
-                None => continue,
+            let Some(OutputInfo {
+                name: Some(output_name),
+                logical_size: Some((width, height)),
+                ..
+            }) = self.surface_output_infos.get(surface_id)
+            else {
+                continue;
             };
 
             log::info!("updating wallpaper for {:?}", output_name);
+
+            // TODO scale, color
 
             for (wallpaper_output_name, wallpaper_source) in self.flags.wallpapers.iter() {
                 if wallpaper_output_name == output_name {
@@ -258,7 +266,31 @@ impl App {
                         cosmic_bg_config::Source::Path(path) => {
                             match fs::read(path) {
                                 Ok(bytes) => {
-                                    let image = widget::image::Handle::from_memory(bytes);
+                                    // TODO read from cosmic-config, or copy to state in comsic-bg
+                                    let scaling_mode =
+                                        cosmic_bg_config::ScalingMode::Fit([1., 0., 0.]);
+                                    // XXX unwrap
+                                    let image = image::ImageReader::open(path)
+                                        .unwrap()
+                                        .with_guessed_format()
+                                        .unwrap()
+                                        .decode()
+                                        .unwrap();
+                                    let scaled_image = image::DynamicImage::from(
+                                        cosmic_bg_config::scaler::scale(
+                                            &image,
+                                            scaling_mode,
+                                            *width as u32,
+                                            *height as u32,
+                                        )
+                                        .into_rgba8(),
+                                    );
+                                    // TODO use subsurface
+                                    let image = widget::image::Handle::from_pixels(
+                                        *width as u32,
+                                        *height as u32,
+                                        scaled_image.into_bytes(),
+                                    );
                                     self.surface_images.insert(*surface_id, image);
                                     //TODO: what to do about duplicates?
                                     break;
@@ -323,7 +355,7 @@ impl cosmic::Application for App {
                 surface_ids: HashMap::new(),
                 active_surface_id_opt: None,
                 surface_images: HashMap::new(),
-                surface_names: HashMap::new(),
+                surface_output_infos: HashMap::new(),
                 text_input_ids: HashMap::new(),
                 inhibit_opt: None,
                 network_icon_opt: None,
@@ -365,16 +397,21 @@ impl cosmic::Application for App {
                         }
 
                         match output_info_opt {
-                            Some(output_info) => match output_info.name {
-                                Some(output_name) => {
-                                    self.surface_names.insert(surface_id, output_name.clone());
-                                    self.surface_images.remove(&surface_id);
-                                    self.update_wallpapers();
+                            Some(output_info) => {
+                                self.surface_output_infos
+                                    .insert(surface_id, output_info.clone());
+
+                                match &output_info.name {
+                                    Some(output_name) => {
+                                        // TODO dimensions
+                                        self.surface_images.remove(&surface_id);
+                                        self.update_wallpapers();
+                                    }
+                                    None => {
+                                        log::warn!("output {}: no output name", output.id());
+                                    }
                                 }
-                                None => {
-                                    log::warn!("output {}: no output name", output.id());
-                                }
-                            },
+                            }
                             None => {
                                 log::warn!("output {}: no output info", output.id());
                             }
@@ -396,7 +433,7 @@ impl cosmic::Application for App {
                         match self.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.surface_images.remove(&surface_id);
-                                self.surface_names.remove(&surface_id);
+                                self.surface_output_infos.remove(&surface_id);
                                 self.text_input_ids.remove(&surface_id);
                                 if matches!(self.state, State::Locked) {
                                     return destroy_lock_surface(surface_id);
@@ -450,6 +487,10 @@ impl cosmic::Application for App {
             }
             Message::BackgroundState(background_state) => {
                 self.flags.wallpapers = background_state.wallpapers;
+                self.surface_images.clear();
+                self.update_wallpapers();
+            }
+            Message::BackgroundConfig(background_config) => {
                 self.surface_images.clear();
                 self.update_wallpapers();
             }
@@ -642,7 +683,13 @@ impl cosmic::Application for App {
                 }
                 None => {}
             }
-            match self.flags.current_user.gecos.as_ref().filter(|s| !s.is_empty()) {
+            match self
+                .flags
+                .current_user
+                .gecos
+                .as_ref()
+                .filter(|s| !s.is_empty())
+            {
                 Some(gecos) => {
                     let full_name = gecos.split(",").next().unwrap_or_default();
                     column = column.push(
@@ -749,10 +796,28 @@ impl cosmic::Application for App {
             _ => None,
         }));
 
-        struct BackgroundSubscription;
+        // TODO background config
+        /*
+        struct BackgroundConfigSubscription;
+        subscriptions.push(
+            cosmic_config::config_subscription(
+                TypeId::of::<BackgroundConfigSubscription>(),
+                cosmic_bg_config::NAME.into(),
+                1,
+            )
+            .map(|res| {
+                if !res.errors.is_empty() {
+                    log::info!("errors loading background state: {:?}", res.errors);
+                }
+                Message::BackgroundConfig(res.config)
+            }),
+        );
+        */
+
+        struct BackgroundStateSubscription;
         subscriptions.push(
             cosmic_config::config_state_subscription(
-                TypeId::of::<BackgroundSubscription>(),
+                TypeId::of::<BackgroundStateSubscription>(),
                 cosmic_bg_config::NAME.into(),
                 cosmic_bg_config::state::State::version(),
             )

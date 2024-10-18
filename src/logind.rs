@@ -68,7 +68,9 @@ pub fn subscription() -> Subscription<Message> {
 pub async fn handler(msg_tx: &mut mpsc::Sender<Message>) -> Result<(), Box<dyn Error>> {
     let connection = Connection::system().await?;
     let manager = ManagerProxy::new(&connection).await?;
-    let session_path = manager.get_session_by_PID(std::os::unix::process::parent_id()).await?;
+    let session_path = manager
+        .get_session_by_PID(std::os::unix::process::parent_id())
+        .await?;
     let session = SessionProxy::builder(&connection)
         .path(&session_path)?
         .build()
