@@ -1,21 +1,22 @@
 // Copyright 2023 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-use cosmic::app::{message, Command, Core, Settings};
+use cosmic::app::{message, Core, Settings, Task};
 use cosmic::{
     executor,
     iced::{
-        self, alignment,
+        self,
         event::{
             self,
             wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent},
         },
         futures::{self, SinkExt},
-        subscription,
-        wayland::session_lock::{destroy_lock_surface, get_lock_surface, lock, unlock},
-        Length, Subscription,
+        stream, Alignment, Length, Subscription,
     },
     iced_runtime::core::window::Id as SurfaceId,
+    iced_winit::wayland::commands::session_lock::{
+        destroy_lock_surface, get_lock_surface, lock, unlock,
+    },
     style, widget, Element,
 };
 use cosmic_config::CosmicConfigEntry;
@@ -48,7 +49,7 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
     let icon_path = Path::new("/var/lib/AccountsService/icons").join(&current_user.name);
     let icon_opt = if icon_path.is_file() {
         match fs::read(&icon_path) {
-            Ok(icon_data) => Some(widget::image::Handle::from_memory(icon_data)),
+            Ok(icon_data) => Some(widget::image::Handle::from_bytes(icon_data)),
             Err(err) => {
                 log::error!("failed to read {:?}: {:?}", icon_path, err);
                 None
@@ -267,7 +268,7 @@ impl App {
                         cosmic_bg_config::Source::Path(path) => {
                             match fs::read(path) {
                                 Ok(bytes) => {
-                                    let image = widget::image::Handle::from_memory(bytes);
+                                    let image = widget::image::Handle::from_bytes(bytes);
                                     self.surface_images.insert(*surface_id, image);
                                     //TODO: what to do about duplicates?
                                     break;
@@ -316,7 +317,7 @@ impl cosmic::Application for App {
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(mut core: Core, flags: Self::Flags) -> (Self, Command<Self::Message>) {
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         core.window.show_window_menu = false;
         core.window.show_headerbar = false;
         core.window.sharp_corners = true;
@@ -354,7 +355,7 @@ impl cosmic::Application for App {
                 lock()
             } else {
                 // When logind feature is used, wait for lock signal
-                Command::none()
+                Task::none()
             }
         } else {
             // When logind feature not used, lock immediately
@@ -367,7 +368,7 @@ impl cosmic::Application for App {
     }
 
     /// Handle application events here.
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
+    fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
             Message::None => {}
             Message::OutputEvent(output_event, output) => {
@@ -409,7 +410,7 @@ impl cosmic::Application for App {
                             .insert(surface_id, text_input_id.clone());
 
                         if matches!(self.state, State::Locked) {
-                            return Command::batch([
+                            return Task::batch([
                                 get_lock_surface(surface_id, output),
                                 widget::text_input::focus(text_input_id),
                             ]);
@@ -454,7 +455,7 @@ impl cosmic::Application for App {
                     for (output, surface_id) in self.surface_ids.iter() {
                         commands.push(get_lock_surface(*surface_id, output.clone()));
                     }
-                    return Command::batch(commands);
+                    return Task::batch(commands);
                 }
                 SessionLockEvent::Unlocked => {
                     log::info!("session unlocked");
@@ -504,7 +505,7 @@ impl cosmic::Application for App {
                         Some(value_tx) => {
                             // Clear errors
                             self.error_opt = None;
-                            return cosmic::command::future(async move {
+                            return cosmic::task::future(async move {
                                 value_tx.send(value).await.unwrap();
                                 Message::Channel(value_tx)
                             });
@@ -517,7 +518,7 @@ impl cosmic::Application for App {
             },
             Message::Suspend => {
                 #[cfg(feature = "logind")]
-                return cosmic::command::future(async move {
+                return cosmic::task::future(async move {
                     match crate::logind::suspend().await {
                         Ok(()) => message::none(),
                         Err(err) => {
@@ -577,7 +578,7 @@ impl cosmic::Application for App {
                         // Tell compositor to unlock
                         commands.push(unlock());
                         // Wait to exit until `Unlocked` event, when server has processed unlock
-                        return Command::batch(commands);
+                        return Task::batch(commands);
                     }
                     State::Locking => {
                         log::info!("session still locking");
@@ -588,7 +589,7 @@ impl cosmic::Application for App {
                 }
             }
         }
-        Command::none()
+        Task::none()
     }
 
     // Not used for layer surface window
@@ -607,13 +608,13 @@ impl cosmic::Application for App {
 
                 let date = dt.format_localized("%A, %B %-d", locale);
                 column = column
-                    .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
+                    .push(widget::text::title2(format!("{}", date)).class(style::Text::Accent));
 
                 let time = dt.format_localized("%R", locale);
                 column = column.push(
                     widget::text(format!("{}", time))
                         .size(112.0)
-                        .style(style::Text::Accent),
+                        .class(style::Text::Accent),
                 );
 
                 column
@@ -634,18 +635,18 @@ impl cosmic::Application for App {
 
             //TODO: implement these buttons
             let button_row = iced::widget::row![
-                widget::button(widget::icon::from_name(
+                widget::button::custom(widget::icon::from_name(
                     "applications-accessibility-symbolic"
                 ))
                 .padding(12.0)
                 .on_press(Message::None),
-                widget::button(widget::icon::from_name("input-keyboard-symbolic"))
+                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
                     .padding(12.0)
                     .on_press(Message::None),
-                widget::button(widget::icon::from_name("system-users-symbolic"))
+                widget::button::custom(widget::icon::from_name("system-users-symbolic"))
                     .padding(12.0)
                     .on_press(Message::None),
-                widget::button(widget::icon::from_name("system-suspend-symbolic"))
+                widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
                     .padding(12.0)
                     .on_press(Message::Suspend),
             ]
@@ -660,7 +661,7 @@ impl cosmic::Application for App {
                 button_row,
             ])
             .width(Length::Fill)
-            .align_x(alignment::Horizontal::Left)
+            .align_x(Alignment::Start)
         };
 
         let right_element = {
@@ -676,8 +677,7 @@ impl cosmic::Application for App {
                                 .width(Length::Fixed(78.0))
                                 .height(Length::Fixed(78.0)),
                         )
-                        .width(Length::Fill)
-                        .align_x(alignment::Horizontal::Center),
+                        .center_x(Length::Fill),
                     )
                 }
                 None => {}
@@ -692,9 +692,7 @@ impl cosmic::Application for App {
                 Some(gecos) => {
                     let full_name = gecos.split(",").next().unwrap_or_default();
                     column = column.push(
-                        widget::container(widget::text::title4(full_name))
-                            .width(Length::Fill)
-                            .align_x(alignment::Horizontal::Center),
+                        widget::container(widget::text::title4(full_name)).center_x(Length::Fill),
                     );
                 }
                 None => {}
@@ -737,27 +735,24 @@ impl cosmic::Application for App {
                 column = column.push(widget::text(error));
             }
 
-            widget::container(column)
-                .align_x(alignment::Horizontal::Center)
-                .width(Length::Fill)
+            widget::container(column).center_x(Length::Fill)
         };
 
         crate::image_container::ImageContainer::new(
             widget::container(
                 widget::layer_container(
-                    iced::widget::row![left_element, right_element]
-                        .align_items(alignment::Alignment::Center),
+                    iced::widget::row![left_element, right_element].align_y(Alignment::Center),
                 )
                 .layer(cosmic::cosmic_theme::Layer::Background)
                 .padding(16)
-                .style(cosmic::theme::Container::Custom(Box::new(
+                .class(cosmic::theme::Container::Custom(Box::new(
                     |theme: &cosmic::Theme| {
                         // Use background appearance as the base
-                        let mut appearance = widget::container::StyleSheet::appearance(
+                        let mut appearance = widget::container::Catalog::style(
                             theme,
                             &cosmic::theme::Container::Background,
                         );
-                        appearance.border = iced::Border::with_radius(16.0);
+                        appearance.border = iced::Border::rounded(appearance.border, 16.0);
                         appearance
                     },
                 )))
@@ -766,14 +761,14 @@ impl cosmic::Application for App {
             .padding([32.0, 0.0, 0.0, 0.0])
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Top)
-            .style(cosmic::theme::Container::Transparent),
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Start)
+            .class(cosmic::theme::Container::Transparent),
         )
         .image(match self.surface_images.get(&surface_id) {
             Some(some) => some.clone(),
             //TODO: default image
-            None => widget::image::Handle::from_pixels(1, 1, vec![0x00, 0x00, 0x00, 0xFF]),
+            None => widget::image::Handle::from_rgba(1, 1, vec![0x00, 0x00, 0x00, 0xFF]),
         })
         .content_fit(iced::ContentFit::Cover)
         .into()
@@ -782,7 +777,7 @@ impl cosmic::Application for App {
     fn subscription(&self) -> Subscription<Self::Message> {
         let mut subscriptions = Vec::with_capacity(7);
 
-        subscriptions.push(event::listen_with(|event, _| match event {
+        subscriptions.push(event::listen_with(|event, _, _| match event {
             iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
                 wayland_event,
             )) => match wayland_event {
@@ -812,26 +807,24 @@ impl cosmic::Application for App {
 
         if matches!(self.state, State::Locked) {
             struct HeartbeatSubscription;
-            subscriptions.push(subscription::channel(
+            subscriptions.push(Subscription::run_with_id(
                 TypeId::of::<HeartbeatSubscription>(),
-                16,
-                |mut msg_tx| async move {
+                stream::channel(16, |mut msg_tx| async move {
                     loop {
                         // Send heartbeat once a second to update time
                         //TODO: only send this when needed
                         msg_tx.send(Message::None).await.unwrap();
                         time::sleep(time::Duration::new(1, 0)).await;
                     }
-                },
+                }),
             ));
 
             struct PamSubscription;
             //TODO: how to avoid cloning this on every time subscription is called?
             let username = self.flags.current_user.name.clone();
-            subscriptions.push(subscription::channel(
+            subscriptions.push(Subscription::run_with_id(
                 TypeId::of::<PamSubscription>(),
-                16,
-                |mut msg_tx| async move {
+                stream::channel(16, |mut msg_tx| async move {
                     loop {
                         let (value_tx, value_rx) = mpsc::channel(16);
                         msg_tx.send(Message::Channel(value_tx)).await.unwrap();
@@ -862,7 +855,7 @@ impl cosmic::Application for App {
                     loop {
                         time::sleep(time::Duration::new(60, 0)).await;
                     }
-                },
+                }),
             ));
         }
 

@@ -1,6 +1,6 @@
 use cosmic::iced::{
     futures::{channel::mpsc, SinkExt, StreamExt},
-    subscription, Subscription,
+    stream, Subscription,
 };
 use logind_zbus::{
     manager::{InhibitType, ManagerProxy},
@@ -46,10 +46,9 @@ async fn inhibit(manager: &ManagerProxy<'_>) -> zbus::Result<OwnedFd> {
 pub fn subscription() -> Subscription<Message> {
     struct LogindSubscription;
 
-    subscription::channel(
+    Subscription::run_with_id(
         TypeId::of::<LogindSubscription>(),
-        16,
-        |mut msg_tx| async move {
+        stream::channel(16, |mut msg_tx| async move {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
                 Err(err) => {
@@ -59,7 +58,7 @@ pub fn subscription() -> Subscription<Message> {
             }
 
             std::process::exit(1);
-        },
+        }),
     )
 }
 
