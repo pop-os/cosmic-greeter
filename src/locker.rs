@@ -22,15 +22,29 @@ use cosmic_config::CosmicConfigEntry;
 use std::{
     any::TypeId,
     collections::HashMap,
+    env,
     ffi::{CStr, CString},
     fs,
     os::fd::OwnedFd,
-    path::Path,
+    path::{Path, PathBuf},
     process,
     sync::Arc,
 };
 use tokio::{sync::mpsc, task, time};
 use wayland_client::{protocol::wl_output::WlOutput, Proxy};
+
+fn lockfile_opt() -> Option<PathBuf> {
+    let runtime_dir = dirs::runtime_dir()?;
+    let session_id_str = env::var("XDG_SESSION_ID").ok()?;
+    let session_id = match session_id_str.parse::<u64>() {
+        Ok(ok) => ok,
+        Err(err) => {
+            log::warn!("failed to parse session ID {:?}: {}", session_id_str, err);
+            return None;
+        }
+    };
+    Some(runtime_dir.join(format!("cosmic-greeter-{}.lock", session_id)))
+}
 
 pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
@@ -69,6 +83,7 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
     let flags = Flags {
         current_user,
         icon_opt,
+        lockfile_opt: lockfile_opt(),
         wallpapers,
     };
 
@@ -189,6 +204,7 @@ impl pam_client::ConversationHandler for Conversation {
 pub struct Flags {
     current_user: pwd::Passwd,
     icon_opt: Option<widget::image::Handle>,
+    lockfile_opt: Option<PathBuf>,
     wallpapers: Vec<(String, cosmic_bg_config::Source)>,
 }
 
@@ -315,31 +331,46 @@ impl cosmic::Application for App {
         core.window.show_minimize = false;
         core.window.use_template = false;
 
-        (
-            App {
-                core,
-                flags,
-                state: State::Unlocked,
-                surface_ids: HashMap::new(),
-                active_surface_id_opt: None,
-                surface_images: HashMap::new(),
-                surface_names: HashMap::new(),
-                text_input_ids: HashMap::new(),
-                inhibit_opt: None,
-                network_icon_opt: None,
-                power_info_opt: None,
-                value_tx_opt: None,
-                prompt_opt: None,
-                error_opt: None,
-            },
-            if cfg!(feature = "logind") {
+        let already_locked = match flags.lockfile_opt {
+            Some(ref lockfile) => lockfile.exists(),
+            None => false,
+        };
+
+        let mut app = App {
+            core,
+            flags,
+            state: State::Unlocked,
+            surface_ids: HashMap::new(),
+            active_surface_id_opt: None,
+            surface_images: HashMap::new(),
+            surface_names: HashMap::new(),
+            text_input_ids: HashMap::new(),
+            inhibit_opt: None,
+            network_icon_opt: None,
+            power_info_opt: None,
+            value_tx_opt: None,
+            prompt_opt: None,
+            error_opt: None,
+        };
+
+        let command = if cfg!(feature = "logind") {
+            if already_locked {
+                // Recover previously locked state
+                log::info!("recovering previous locked state");
+                app.state = State::Locking;
+                lock()
+            } else {
                 // When logind feature is used, wait for lock signal
                 Command::none()
-            } else {
-                // When logind feature not used, lock immediately
-                lock()
-            },
-        )
+            }
+        } else {
+            // When logind feature not used, lock immediately
+            log::info!("locking immediately");
+            app.state = State::Locking;
+            lock()
+        };
+
+        (app, command)
     }
 
     /// Handle application events here.
@@ -425,6 +456,7 @@ impl cosmic::Application for App {
                     self.state = State::Locked;
                     // Allow suspend
                     self.inhibit_opt = None;
+                    // Create lock surfaces
                     let mut commands = Vec::with_capacity(self.surface_ids.len());
                     for (output, surface_id) in self.surface_ids.iter() {
                         commands.push(get_lock_surface(*surface_id, output.clone()));
@@ -513,6 +545,13 @@ impl cosmic::Application for App {
                     self.error_opt = None;
                     // Clear value_tx
                     self.value_tx_opt = None;
+                    // Try to create lockfile when locking
+                    if let Some(ref lockfile) = self.flags.lockfile_opt {
+                        if let Err(err) = fs::File::create(lockfile) {
+                            log::warn!("failed to create lockfile {:?}: {}", lockfile, err);
+                        }
+                    }
+                    // Tell compositor to lock
                     return lock();
                 }
                 State::Unlocking => {
@@ -531,10 +570,18 @@ impl cosmic::Application for App {
                         self.error_opt = None;
                         // Clear value_tx
                         self.value_tx_opt = None;
+                        // Try to delete lockfile when unlocking
+                        if let Some(ref lockfile) = self.flags.lockfile_opt {
+                            if let Err(err) = fs::remove_file(lockfile) {
+                                log::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
+                            }
+                        }
+                        // Destroy lock surfaces
                         let mut commands = Vec::with_capacity(self.surface_ids.len() + 1);
                         for (_output, surface_id) in self.surface_ids.iter() {
                             commands.push(destroy_lock_surface(*surface_id));
                         }
+                        // Tell compositor to unlock
                         commands.push(unlock());
                         // Wait to exit until `Unlocked` event, when server has processed unlock
                         return Command::batch(commands);
@@ -642,7 +689,13 @@ impl cosmic::Application for App {
                 }
                 None => {}
             }
-            match self.flags.current_user.gecos.as_ref().filter(|s| !s.is_empty()) {
+            match self
+                .flags
+                .current_user
+                .gecos
+                .as_ref()
+                .filter(|s| !s.is_empty())
+            {
                 Some(gecos) => {
                     let full_name = gecos.split(",").next().unwrap_or_default();
                     column = column.push(

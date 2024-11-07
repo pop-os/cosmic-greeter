@@ -10,6 +10,7 @@ cosmic-comp-config.workspace = true
 cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
+dirs = "5"
 env_logger.workspace = true
 freedesktop_entry_parser = "1.3.0"
 libcosmic = { workspace = true, features = ["tokio", "wayland"] }
