@@ -282,7 +282,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions
     };
 
-    let layouts_opt = match xkb_data::keyboard_layouts() {
+    let layouts_opt = match xkb_data::all_keyboard_layouts() {
         Ok(ok) => Some(Arc::new(ok)),
         Err(err) => {
             log::warn!("failed to load keyboard layouts: {}", err);
