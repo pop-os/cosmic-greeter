@@ -1,6 +1,6 @@
 cancel = إلغاء
 keyboard-layout = لغة لوحة المفاتيح
-restart = Restart
+restart = اعادة التشغيل
 restart-now = اعادة التشغيل الآن؟
 restart-timeout = ثانية {$seconds} سيتم اعادة التشغيل فخلال
 session = الواجهة
