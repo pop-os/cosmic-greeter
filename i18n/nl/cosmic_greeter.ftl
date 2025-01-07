@@ -1,10 +1,10 @@
 cancel = Annuleren
 keyboard-layout = Toetsenbordindeling
-restart = Herstarten
-restart-now = Nu herstarten?
+restart = Opnieuw opstarten
+restart-now = Nu opnieuw opstarten?
 restart-timeout = Het systeem zal na { $seconds ->
   [one] één seconde
-  *[other] {$seconds} seconden} automatisch herstarten.
+  *[other] {$seconds} seconden} automatisch opnieuw opstarten.
 session = Sessie
 shutdown = Afsluiten
 shutdown-now = Nu afsluiten?
