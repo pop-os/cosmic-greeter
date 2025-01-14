@@ -1,0 +1,11 @@
+cancel = İptal et
+keyboard-layout = Klavye düzeni
+restart = Yeniden başlat
+restart-now = Şimdi yeniden başlat?
+restart-timeout = Sistem {$seconds} saniyede kendiliğinden yeniden başlatılacak.
+session = Oturum
+shutdown = Bilgisayarı kapat
+shutdown-now = Şimdi bilgisayarı kapat?
+shutdown-timeout = Sistem {$seconds} saniyede kendiliğinden kapatılacak.
+suspend = Askıya al
+user = Kullanıcı
