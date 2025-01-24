@@ -35,14 +35,7 @@ use wayland_client::{protocol::wl_output::WlOutput, Proxy};
 
 fn lockfile_opt() -> Option<PathBuf> {
     let runtime_dir = dirs::runtime_dir()?;
-    let session_id_str = env::var("XDG_SESSION_ID").ok()?;
-    let session_id = match session_id_str.parse::<u64>() {
-        Ok(ok) => ok,
-        Err(err) => {
-            log::warn!("failed to parse session ID {:?}: {}", session_id_str, err);
-            return None;
-        }
-    };
+    let session_id = env::var("XDG_SESSION_ID").ok()?;
     Some(runtime_dir.join(format!("cosmic-greeter-{}.lock", session_id)))
 }
 
