@@ -109,6 +109,7 @@ fn user_data_fallback() -> Vec<UserData> {
                         .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
                     icon_opt,
                     theme_opt: None,
+                    interface_font_opt: None,
                     wallpapers_opt: None,
                     xkb_config_opt: None,
                     clock_military_time: false,
@@ -299,6 +300,14 @@ pub fn main() -> Result<(), Box<dyn Error>> {
             }
         };
 
+    let tk_config_handler = match cosmic_config::Config::new("com.system76.CosmicTk", 1) {
+        Ok(config_handler) => Some(config_handler),
+        Err(err) => {
+            log::error!("failed to create cosmic-tk config handler: {}", err);
+            None
+        }
+    };
+
     let fallback_background =
         widget::image::Handle::from_memory(include_bytes!("../res/background.jpg"));
 
@@ -307,6 +316,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions,
         layouts_opt,
         comp_config_handler,
+        tk_config_handler,
         greeter_config,
         greeter_config_handler,
         fallback_background,
@@ -325,6 +335,7 @@ pub struct Flags {
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
     layouts_opt: Option<Arc<xkb_data::KeyboardLayouts>>,
     comp_config_handler: Option<cosmic_config::Config>,
+    tk_config_handler: Option<cosmic_config::Config>,
     greeter_config: CosmicGreeterConfig,
     greeter_config_handler: Option<cosmic_config::Config>,
     fallback_background: widget::image::Handle,
@@ -480,6 +491,26 @@ impl App {
         }
     }
 
+    fn set_interface_font(&self) {
+        let user_data = match self
+            .selected_username
+            .data_idx
+            .and_then(|i| self.flags.user_datas.get(i))
+        {
+            Some(some) => some,
+            None => return,
+        };
+
+        if let Some(tk_config_handler) = &self.flags.tk_config_handler {
+            if let Some(font) = &user_data.interface_font_opt {
+                match tk_config_handler.set("interface_font", font) {
+                    Ok(()) => log::info!("updated cosmic-tk interface_font"),
+                    Err(err) => log::error!("failed to update cosmic-tk interface_font: {}", err),
+                }
+            }
+        }
+    }
+
     fn update_user_config(&mut self) -> Command<Message> {
         let user_data = match self
             .selected_username
@@ -571,6 +602,10 @@ impl App {
                 // Ensure that user's xkb config is used
                 self.set_xkb_config();
             }
+        }
+
+        if let Some(font) = &user_data.interface_font_opt {
+            self.set_interface_font();
         }
 
         match &user_data.theme_opt {

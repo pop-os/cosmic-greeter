@@ -9,6 +9,7 @@ pub struct UserData {
     pub full_name_opt: Option<String>,
     pub icon_opt: Option<Vec<u8>>,
     pub theme_opt: Option<Theme>,
+    pub interface_font_opt: Option<String>,
     pub wallpapers_opt: Option<Vec<(String, WallpaperData)>>,
     pub xkb_config_opt: Option<XkbConfig>,
     pub clock_military_time: bool,

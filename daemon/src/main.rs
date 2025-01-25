@@ -113,6 +113,7 @@ impl GreeterProxy {
                     .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
                 icon_opt,
                 theme_opt: None,
+                interface_font_opt: None,
                 //TODO: should wallpapers come from a per-user call?
                 wallpapers_opt: None,
                 xkb_config_opt: None,
@@ -224,6 +225,15 @@ impl GreeterProxy {
                             "failed to create CosmicAppletTime config handler: {:?}",
                             err
                         );
+                    }
+                };
+
+                match cosmic_config::Config::new("com.system76.CosmicTk", 1) {
+                    Ok(config_handler) => {
+                        user_data.interface_font_opt = config_handler.get("interface_font").unwrap_or_default();
+                    }
+                    Err(err) => {
+                        log::error!("failed to create CosmicTk config handler: {:?}", err);
                     }
                 };
             })
