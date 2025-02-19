@@ -1,5 +1,5 @@
 pub use cosmic_bg_config::Color;
-pub use cosmic_comp_config::XkbConfig;
+pub use cosmic_comp_config::{XkbConfig, ZoomConfig};
 pub use cosmic_theme::Theme;
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -11,6 +11,7 @@ pub struct UserData {
     pub theme_opt: Option<Theme>,
     pub wallpapers_opt: Option<Vec<(String, WallpaperData)>>,
     pub xkb_config_opt: Option<XkbConfig>,
+    pub zoom_config_opt: Option<ZoomConfig>,
     pub clock_military_time: bool,
     // pub clock_show_seconds: bool,
 }

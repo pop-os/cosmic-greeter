@@ -116,6 +116,7 @@ impl GreeterProxy {
                 //TODO: should wallpapers come from a per-user call?
                 wallpapers_opt: None,
                 xkb_config_opt: None,
+                zoom_config_opt: None,
                 clock_military_time: false,
                 // clock_show_seconds: false,
             };
@@ -201,10 +202,12 @@ impl GreeterProxy {
                     Ok(config_handler) => match CosmicCompConfig::get_entry(&config_handler) {
                         Ok(config) => {
                             user_data.xkb_config_opt = Some(config.xkb_config);
+                            user_data.zoom_config_opt = Some(config.accessibility_zoom);
                         }
                         Err((errs, config)) => {
                             log::error!("errors loading cosmic-comp config: {:?}", errs);
                             user_data.xkb_config_opt = Some(config.xkb_config);
+                            user_data.zoom_config_opt = Some(config.accessibility_zoom);
                         }
                     },
                     Err(err) => {
