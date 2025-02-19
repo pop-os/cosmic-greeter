@@ -111,6 +111,7 @@ fn user_data_fallback() -> Vec<UserData> {
                     theme_opt: None,
                     wallpapers_opt: None,
                     xkb_config_opt: None,
+                    zoom_config_opt: None,
                     clock_military_time: false,
                     // clock_show_seconds: false,
                 }
@@ -480,6 +481,30 @@ impl App {
         }
     }
 
+    fn set_zoom_config(&self) {
+        let user_data = match self
+            .selected_username
+            .data_idx
+            .and_then(|i| self.flags.user_datas.get(i))
+        {
+            Some(some) => some,
+            None => return,
+        };
+
+        if let Some(zoom_config) = user_data
+            .zoom_config_opt
+            .clone()
+            .or_else(|| Default::default())
+        {
+            if let Some(comp_config_handler) = &self.flags.comp_config_handler {
+                match comp_config_handler.set("accessibility_zoom", zoom_config) {
+                    Ok(()) => log::info!("updated cosmic-comp zoom_config"),
+                    Err(err) => log::error!("failed to update cosmic-comp zoom_config: {}", err),
+                }
+            }
+        }
+    }
+
     fn update_user_config(&mut self) -> Command<Message> {
         let user_data = match self
             .selected_username
@@ -570,6 +595,9 @@ impl App {
 
                 // Ensure that user's xkb config is used
                 self.set_xkb_config();
+
+                // Set zoom according to user's config
+                self.set_zoom_config();
             }
         }
 

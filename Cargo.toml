@@ -87,6 +87,7 @@ default-features = false
 
 [workspace.dependencies.cosmic-comp-config]
 git = "https://github.com/pop-os/cosmic-comp"
+branch = "a11y-zoom_noble"
 default-features = false
 
 [workspace.dependencies.cosmic-greeter-config]
