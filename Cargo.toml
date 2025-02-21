@@ -13,7 +13,15 @@ cosmic-greeter-daemon = { path = "daemon" }
 dirs = "5"
 env_logger.workspace = true
 freedesktop_entry_parser = "1.3.0"
-libcosmic = { workspace = true, features = ["tokio", "wayland"] }
+libcosmic = { workspace = true, features = [
+    "autosize",
+    "winit",
+    "multi-window",
+    "desktop",
+    "wayland",
+    "tokio",
+    "dbus-config",
+] }
 log.workspace = true
 pam-client = "0.5.0"
 pwd.workspace = true
@@ -81,6 +89,7 @@ serde = "1"
 tokio = "1.39.1"
 zbus = "4"
 
+
 [workspace.dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"
 default-features = false
@@ -103,3 +112,11 @@ default-features = false
 [workspace.dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
+
+[patch.'https://github.com/pop-os/libcosmic']
+libcosmic = { git = "https://github.com/pop-os/libcosmic//", branch = "drop-menu-tree-changes" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic//", branch = "drop-menu-tree-changes" }
+cosmic-theme = { git = "https://github.com/pop-os/libcosmic//", branch = "drop-menu-tree-changes" }
+# libcosmic = { path = "../libcosmic" }
+# cosmic-config = { path = "../libcosmic/cosmic-config" }
+# cosmic-theme = { path = "../libcosmic/cosmic-theme" }
