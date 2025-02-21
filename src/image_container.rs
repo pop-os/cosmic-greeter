@@ -1,8 +1,11 @@
-use cosmic::iced::widget::{
-    image::{draw, FilterMethod, Handle},
-    Container,
-};
 use cosmic::iced::ContentFit;
+use cosmic::iced::{
+    widget::{
+        image::{draw, FilterMethod, Handle},
+        Container,
+    },
+    Rotation,
+};
 use cosmic::iced_core::event::{self, Event};
 use cosmic::iced_core::layout;
 use cosmic::iced_core::mouse;
@@ -10,26 +13,16 @@ use cosmic::iced_core::overlay;
 use cosmic::iced_core::renderer;
 use cosmic::iced_core::widget::{Operation, Tree};
 use cosmic::iced_core::{Clipboard, Element, Layout, Length, Rectangle, Shell, Size, Widget};
-use cosmic::iced_renderer::core::widget::OperationOutputWrapper;
+use cosmic::{Renderer, Theme};
 
-pub use cosmic::iced_style::container::StyleSheet;
-
-pub struct ImageContainer<'a, Message, Theme, Renderer>
-where
-    Renderer: cosmic::iced_core::Renderer + cosmic::iced_core::image::Renderer<Handle = Handle>,
-    Theme: StyleSheet,
-{
+pub struct ImageContainer<'a, Message> {
     container: Container<'a, Message, Theme, Renderer>,
     image_opt: Option<Handle>,
     content_fit: ContentFit,
 }
 
-impl<'a, Message, Renderer> ImageContainer<'a, Message, cosmic::Theme, Renderer>
-where
-    Renderer: cosmic::iced_core::Renderer + cosmic::iced_core::image::Renderer<Handle = Handle>,
-    cosmic::Theme: StyleSheet,
-{
-    pub fn new(container: Container<'a, Message, cosmic::Theme, Renderer>) -> Self {
+impl<'a, Message> ImageContainer<'a, Message> {
+    pub fn new(container: Container<'a, Message, Theme, Renderer>) -> Self {
         Self {
             container,
             image_opt: None,
@@ -48,11 +41,7 @@ where
     }
 }
 
-impl<'a, Message, Renderer> Widget<Message, cosmic::Theme, Renderer>
-    for ImageContainer<'a, Message, cosmic::Theme, Renderer>
-where
-    Renderer: cosmic::iced_core::Renderer + cosmic::iced_core::image::Renderer<Handle = Handle>,
-{
+impl<'a, Message> Widget<Message, Theme, Renderer> for ImageContainer<'a, Message> {
     fn children(&self) -> Vec<Tree> {
         self.container.children()
     }
@@ -79,7 +68,7 @@ where
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn Operation<OperationOutputWrapper<Message>>,
+        operation: &mut dyn Operation<()>,
     ) {
         self.container.operate(tree, layout, renderer, operation)
     }
@@ -116,7 +105,7 @@ where
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &cosmic::Theme,
+        theme: &Theme,
         renderer_style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
@@ -129,42 +118,43 @@ where
                 image,
                 self.content_fit,
                 FilterMethod::Linear,
+                Rotation::default(),
+                1.,
                 [0.0, 0.0, 0.0, 0.0],
             ),
             None => {}
         }
 
-        self.container.draw(
-            tree,
-            renderer,
-            theme,
-            renderer_style,
-            layout,
-            cursor,
-            viewport,
-        )
+        use cosmic::iced_renderer::core::Renderer as IcedRenderer;
+        renderer.with_layer(layout.bounds(), |renderer| {
+            self.container.draw(
+                tree,
+                renderer,
+                theme,
+                renderer_style,
+                layout,
+                cursor,
+                viewport,
+            )
+        });
     }
 
     fn overlay<'b>(
         &'b mut self,
-        tree: &'b mut Tree,
+        state: &'b mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
-    ) -> Option<overlay::Element<'b, Message, cosmic::Theme, Renderer>> {
-        self.container.overlay(tree, layout, renderer)
+        translation: cosmic::iced::Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        self.container.overlay(state, layout, renderer, translation)
     }
 }
 
-impl<'a, Message, Renderer> From<ImageContainer<'a, Message, cosmic::Theme, Renderer>>
-    for Element<'a, Message, cosmic::Theme, Renderer>
+impl<'a, Message> From<ImageContainer<'a, Message>> for Element<'a, Message, Theme, Renderer>
 where
     Message: 'a,
-    Renderer:
-        'a + cosmic::iced_core::Renderer + cosmic::iced_core::image::Renderer<Handle = Handle>,
 {
-    fn from(
-        container: ImageContainer<'a, Message, cosmic::Theme, Renderer>,
-    ) -> Element<'a, Message, cosmic::Theme, Renderer> {
+    fn from(container: ImageContainer<'a, Message>) -> Element<'a, Message, Theme, Renderer> {
         Element::new(container)
     }
 }
