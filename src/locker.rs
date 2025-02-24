@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use cosmic::app::{message, Core, Settings, Task};
-use cosmic::surface_message::{MessageWrapper, SurfaceMessage, SurfaceMessageHandler};
+use cosmic::surface_message::{MessageWrapper, SurfaceMessage};
 use cosmic::{
     executor,
     iced::{
@@ -214,9 +214,9 @@ pub struct Flags {
     wallpapers: Vec<(String, cosmic_bg_config::Source)>,
 }
 
-impl SurfaceMessageHandler for Message {
-    fn to_surface_message(self) -> MessageWrapper<Self> {
-        match self {
+impl From<Message> for MessageWrapper<Message> {
+    fn from(value: Message) -> Self {
+        match value {
             Message::Surface(msg) => MessageWrapper::Surface(msg),
             msg => MessageWrapper::Message(msg),
         }
