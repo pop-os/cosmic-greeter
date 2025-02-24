@@ -7,7 +7,7 @@ use cosmic::app::{message, Core, Settings, Task};
 use cosmic::iced::{Point, Size};
 use cosmic::iced_core::{image, window};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::surface_message::{MessageWrapper, SurfaceMessage, SurfaceMessageHandler};
+use cosmic::surface_message::{MessageWrapper, SurfaceMessage};
 use cosmic::widget::text;
 use cosmic::{
     cosmic_config::{self, ConfigSet, CosmicConfigEntry},
@@ -389,9 +389,9 @@ struct NameIndexPair {
     data_idx: Option<usize>,
 }
 
-impl SurfaceMessageHandler for Message {
-    fn to_surface_message(self) -> MessageWrapper<Self> {
-        match self {
+impl From<Message> for MessageWrapper<Message> {
+    fn from(value: Message) -> Self {
+        match value {
             Message::Surface(msg) => MessageWrapper::Surface(msg),
             msg => MessageWrapper::Message(msg),
         }
