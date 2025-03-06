@@ -3,11 +3,12 @@
 
 mod ipc;
 
-use cosmic::app::{message, Core, Settings, Task};
-use cosmic::iced::{Point, Size};
+use cosmic::app::{Core, Settings, Task};
+use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
+use cosmic::iced::{Point, Rectangle, Size};
 use cosmic::iced_core::{image, window};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::surface_message::{MessageWrapper, SurfaceMessage};
+use cosmic::surface;
 use cosmic::widget::text;
 use cosmic::{
     cosmic_config::{self, ConfigSet, CosmicConfigEntry},
@@ -389,21 +390,6 @@ struct NameIndexPair {
     data_idx: Option<usize>,
 }
 
-impl From<Message> for MessageWrapper<Message> {
-    fn from(value: Message) -> Self {
-        match value {
-            Message::Surface(msg) => MessageWrapper::Surface(msg),
-            msg => MessageWrapper::Message(msg),
-        }
-    }
-}
-
-impl From<SurfaceMessage> for Message {
-    fn from(value: SurfaceMessage) -> Self {
-        Message::Surface(value)
-    }
-}
-
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -430,7 +416,7 @@ pub enum Message {
     Session(String),
     Shutdown,
     Socket(SocketState),
-    Surface(SurfaceMessage),
+    Surface(surface::Action),
     Suspend,
     Username(String),
     WindowOpen(SurfaceId),
@@ -855,7 +841,7 @@ impl App {
             let sender = sender.clone();
             return cosmic::task::future(async move {
                 _ = sender.send(request).await;
-                message::none()
+                cosmic::action::none()
             });
         }
 
@@ -989,7 +975,7 @@ impl App {
 
         match &user_data.theme_opt {
             Some(theme) => {
-                cosmic::app::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
+                cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
             }
             None => Task::none(),
         }
@@ -1025,7 +1011,7 @@ impl cosmic::Application for App {
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
         core.window.show_window_menu = false;
         core.window.show_headerbar = false;
         // XXX must be false or define custom style to have transparent bg
@@ -1096,7 +1082,7 @@ impl cosmic::Application for App {
     }
 
     /// Handle application events here.
-    fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
+    fn update(&mut self, message: Self::Message) -> Task<Message> {
         match message {
             Message::None => {}
             Message::OutputEvent(output_event, output) => {
@@ -1161,7 +1147,8 @@ impl cosmic::Application for App {
                             surface_id,
                             Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
                         );
-                        let msg = cosmic::app::message::subsurface(
+                        dbg!(loc, size);
+                        let msg = cosmic::surface::action::subsurface(
                             move |_: &mut App| SctkSubsurfaceSettings {
                                 parent: surface_id,
                                 id: subsurface_id,
@@ -1169,9 +1156,12 @@ impl cosmic::Application for App {
                                 size: Some(sub_size),
                                 z: 10,
                                 steal_keyboard_focus: true,
+                                gravity: Gravity::BottomRight,
+                                offset: (0, 0),
+                                input_zone: None,
                             },
                             Some(Box::new(move |app: &App| {
-                                app.menu(subsurface_id).map(cosmic::app::Message::App)
+                                app.menu(subsurface_id).map(cosmic::Action::App)
                             })),
                         );
                         return Task::batch([
@@ -1194,7 +1184,9 @@ impl cosmic::Application for App {
                                 exclusive_zone: -1,
                                 size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
                             }),
-                            cosmic::task::message(msg),
+                            cosmic::task::message(cosmic::Action::Cosmic(
+                                cosmic::app::Action::Surface(msg),
+                            )),
                         ]);
                     }
                     OutputEvent::Removed => {
@@ -1409,7 +1401,7 @@ impl cosmic::Application for App {
                                 log::error!("failed to reboot: {:?}", err);
                             }
                         }
-                        message::none()
+                        cosmic::action::none()
                     });
                 }
                 Some(DialogPage::Shutdown(_)) => {
@@ -1421,7 +1413,7 @@ impl cosmic::Application for App {
                                 log::error!("failed to power off: {:?}", err);
                             }
                         }
-                        message::none()
+                        cosmic::action::none()
                     });
                 }
                 None => {}
@@ -1451,7 +1443,7 @@ impl cosmic::Application for App {
                             log::error!("failed to suspend: {:?}", err);
                         }
                     }
-                    message::none()
+                    cosmic::action::none()
                 });
             }
             Message::Restart => {
@@ -1484,7 +1476,11 @@ impl cosmic::Application for App {
             Message::GreetdChannel(sender) => {
                 self.greetd_sender = Some(sender);
             }
-            Message::Surface(_) => {}
+            Message::Surface(a) => {
+                return cosmic::task::message(cosmic::Action::Cosmic(
+                    cosmic::app::Action::Surface(a),
+                ));
+            }
             Message::WindowOpen(id) if self.surface_ids.values().any(|i| *i == id) => {
                 if let Some(text_input_id) = self.surface_names.get(&id).and_then(|id| {
                     if self
