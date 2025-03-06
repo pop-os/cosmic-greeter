@@ -1,8 +1,8 @@
 // Copyright 2023 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-use cosmic::app::{message, Core, Settings, Task};
-use cosmic::surface_message::{MessageWrapper, SurfaceMessage};
+use cosmic::app::{Action, Core, Settings, Task};
+use cosmic::surface;
 use cosmic::{
     executor,
     iced::{
@@ -214,21 +214,6 @@ pub struct Flags {
     wallpapers: Vec<(String, cosmic_bg_config::Source)>,
 }
 
-impl From<Message> for MessageWrapper<Message> {
-    fn from(value: Message) -> Self {
-        match value {
-            Message::Surface(msg) => MessageWrapper::Surface(msg),
-            msg => MessageWrapper::Message(msg),
-        }
-    }
-}
-
-impl From<SurfaceMessage> for Message {
-    fn from(value: SurfaceMessage) -> Self {
-        Message::Surface(value)
-    }
-}
-
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -242,7 +227,7 @@ pub enum Message {
     PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
     Submit,
-    Surface(SurfaceMessage),
+    Surface(surface::Action),
     Suspend,
     Error(String),
     Lock,
@@ -550,10 +535,10 @@ impl cosmic::Application for App {
                 #[cfg(feature = "logind")]
                 return cosmic::task::future(async move {
                     match crate::logind::suspend().await {
-                        Ok(()) => message::none(),
+                        Ok(()) => cosmic::action::none(),
                         Err(err) => {
                             log::error!("failed to suspend: {:?}", err);
-                            message::app(Message::Error(err.to_string()))
+                            cosmic::Action::App(Message::Error(err.to_string()))
                         }
                     }
                 });
@@ -618,7 +603,11 @@ impl cosmic::Application for App {
                     }
                 }
             }
-            Message::Surface(_) => {}
+            Message::Surface(a) => {
+                return cosmic::task::message(cosmic::Action::Cosmic(
+                    cosmic::app::Action::Surface(a),
+                ));
+            }
         }
         Task::none()
     }
