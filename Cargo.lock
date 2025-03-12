@@ -1046,7 +1046,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "atomicwrites",
  "calloop 0.14.2",
@@ -1069,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config-derive"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "quote",
  "syn 1.0.109",
@@ -1212,7 +1212,7 @@ dependencies = [
 [[package]]
 name = "cosmic-theme"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "almost",
  "cosmic-config",
@@ -2487,7 +2487,7 @@ dependencies = [
 [[package]]
 name = "iced"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "dnd",
  "iced_accessibility",
@@ -2505,7 +2505,7 @@ dependencies = [
 [[package]]
 name = "iced_accessibility"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2514,7 +2514,7 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "bitflags 2.8.0",
  "bytes",
@@ -2538,7 +2538,7 @@ dependencies = [
 [[package]]
 name = "iced_futures"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "futures",
  "iced_core",
@@ -2564,7 +2564,7 @@ dependencies = [
 [[package]]
 name = "iced_graphics"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "bitflags 2.8.0",
  "bytemuck",
@@ -2586,7 +2586,7 @@ dependencies = [
 [[package]]
 name = "iced_renderer"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "iced_graphics",
  "iced_tiny_skia",
@@ -2598,7 +2598,7 @@ dependencies = [
 [[package]]
 name = "iced_runtime"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "bytes",
  "cosmic-client-toolkit",
@@ -2613,7 +2613,7 @@ dependencies = [
 [[package]]
 name = "iced_tiny_skia"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -2629,7 +2629,7 @@ dependencies = [
 [[package]]
 name = "iced_wgpu"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "as-raw-xcb-connection",
  "bitflags 2.8.0",
@@ -2660,7 +2660,7 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "cosmic-client-toolkit",
  "dnd",
@@ -2678,7 +2678,7 @@ dependencies = [
 [[package]]
 name = "iced_winit"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "cosmic-client-toolkit",
  "dnd",
@@ -3144,7 +3144,7 @@ checksum = "875b3680cb2f8f71bdcf9a30f38d48282f5d3c95cbf9b3fa57269bb5d5c06828"
 [[package]]
 name = "libcosmic"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#4c78a5620218a67f6653b171e9136f4bd9e89bf1"
+source = "git+https://github.com/pop-os/libcosmic//?branch=drop-menu-tree-changes#5976b48f677649067d1240f6386d153261204278"
 dependencies = [
  "apply",
  "ashpd 0.9.2",
