@@ -5,7 +5,7 @@ mod ipc;
 
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
-use cosmic::iced::{Point, Rectangle, Size};
+use cosmic::iced::{Point, Size};
 use cosmic::iced_core::{image, window};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::surface;
@@ -400,11 +400,11 @@ pub enum Message {
     DropdownToggle(Dropdown),
     Error(String),
     Exit,
+    Focus(SurfaceId),
     // Sets channel used to communicate with the greetd IPC subscription.
     GreetdChannel(tokio::sync::mpsc::Sender<Request>),
     Heartbeat,
     KeyboardLayout(usize),
-    LayerEvent(LayerEvent, SurfaceId),
     Login,
     NetworkIcon(Option<&'static str>),
     None,
@@ -419,7 +419,6 @@ pub enum Message {
     Surface(surface::Action),
     Suspend,
     Username(String),
-    WindowOpen(SurfaceId),
 }
 
 /// The [`App`] stores application-specific state.
@@ -718,9 +717,6 @@ impl App {
                                 )
                                 .id(text_input_id)
                                 .manage_value(true)
-                                // .on_input(|value| {
-                                //     Message::Prompt(prompt.clone(), *secret, Some(value))
-                                // })
                                 .on_submit(|v| Message::Auth(Some(v)));
 
                                 if let Some(text_input_id) = self
@@ -1141,13 +1137,16 @@ impl cosmic::Application for App {
                                 Size::new(800., unwrapped_size.1 as f32 - 32.),
                             )
                         } else {
-                            (Point::ORIGIN, Size::new(1920., 1080.))
+                            (
+                                Point::new(0., 32.),
+                                Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32 - 32.),
+                            )
                         };
                         self.window_size.insert(
                             surface_id,
                             Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
                         );
-                        dbg!(loc, size);
+
                         let msg = cosmic::surface::action::subsurface(
                             move |_: &mut App| SctkSubsurfaceSettings {
                                 parent: surface_id,
@@ -1209,20 +1208,6 @@ impl cosmic::Application for App {
                     }
                 }
             }
-            Message::LayerEvent(layer_event, surface_id) => match layer_event {
-                LayerEvent::Focused => {
-                    log::info!("focus surface {:?}", surface_id);
-                    self.active_surface_id_opt = Some(surface_id);
-                    if let Some(text_input_id) = self
-                        .surface_names
-                        .get(&surface_id)
-                        .and_then(|id| self.text_input_ids.get(id))
-                    {
-                        return widget::text_input::focus(text_input_id.clone());
-                    }
-                }
-                _ => {}
-            },
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
                 match &self.socket_state {
@@ -1481,22 +1466,17 @@ impl cosmic::Application for App {
                     cosmic::app::Action::Surface(a),
                 ));
             }
-            Message::WindowOpen(id) if self.surface_ids.values().any(|i| *i == id) => {
-                if let Some(text_input_id) = self.surface_names.get(&id).and_then(|id| {
-                    if self
-                        .active_surface_id_opt
-                        .and_then(|active_id| self.surface_names.get(&active_id))
-                        == Some(id)
-                    {
-                        self.text_input_ids.get(id)
-                    } else {
-                        None
-                    }
-                }) {
+
+            Message::Focus(surface_id) => {
+                self.active_surface_id_opt = Some(surface_id);
+                if let Some(text_input_id) = self
+                    .surface_names
+                    .get(&surface_id)
+                    .and_then(|id| self.text_input_ids.get(id))
+                {
                     return widget::text_input::focus(text_input_id.clone());
                 }
             }
-            Message::WindowOpen(_) => {}
         }
         Task::none()
     }
@@ -1530,12 +1510,10 @@ impl cosmic::Application for App {
                     WaylandEvent::Output(output_event, output) => {
                         Some(Message::OutputEvent(output_event, output))
                     }
-                    WaylandEvent::Layer(layer_event, _surface, surface_id) => {
-                        Some(Message::LayerEvent(layer_event, surface_id))
-                    }
+
                     _ => None,
                 },
-                iced::Event::Window(window::Event::Opened { .. }) => Some(Message::WindowOpen(id)),
+                iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(id)),
                 _ => None,
             }),
             Subscription::run_with_id(
