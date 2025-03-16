@@ -1,6 +1,6 @@
 use cosmic::iced::{
     futures::{channel::mpsc, SinkExt, StreamExt},
-    subscription, Subscription,
+    Subscription,
 };
 use cosmic_dbus_networkmanager::{device::SpecificDevice, nm::NetworkManager};
 use std::{any::TypeId, cmp};
@@ -37,10 +37,9 @@ impl NetworkIcon {
 pub fn subscription() -> Subscription<Option<&'static str>> {
     struct NetworkSubscription;
 
-    subscription::channel(
+    Subscription::run_with_id(
         TypeId::of::<NetworkSubscription>(),
-        16,
-        |mut msg_tx| async move {
+        cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
                 Err(err) => {
@@ -56,7 +55,7 @@ pub fn subscription() -> Subscription<Option<&'static str>> {
             loop {
                 time::sleep(time::Duration::new(60, 0)).await;
             }
-        },
+        }),
     )
 }
 

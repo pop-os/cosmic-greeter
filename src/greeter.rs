@@ -3,7 +3,13 @@
 
 mod ipc;
 
-use cosmic::app::{message, Command, Core, Settings};
+use cosmic::app::{Core, Settings, Task};
+use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
+use cosmic::iced::{Point, Size};
+use cosmic::iced_core::{image, window};
+use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
+use cosmic::surface;
+use cosmic::widget::text;
 use cosmic::{
     cosmic_config::{self, ConfigSet, CosmicConfigEntry},
     executor,
@@ -13,11 +19,10 @@ use cosmic::{
             self,
             wayland::{Event as WaylandEvent, LayerEvent, OutputEvent},
         },
-        futures::{self, SinkExt},
-        subscription,
-        wayland::{
-            actions::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
-            layer_surface::{
+        futures::SinkExt,
+        platform_specific::{
+            runtime::wayland::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
+            shell::wayland::commands::layer_surface::{
                 destroy_layer_surface, get_layer_surface, Anchor, KeyboardInteractivity, Layer,
             },
         },
@@ -123,8 +128,11 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     crate::localize::localize();
-
-    let mut user_datas = match futures::executor::block_on(async { user_data_dbus().await }) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut user_datas = match runtime.block_on(user_data_dbus()) {
         Ok(ok) => ok,
         Err(err) => {
             log::error!("failed to load user data from daemon: {}", err);
@@ -300,7 +308,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         };
 
     let fallback_background =
-        widget::image::Handle::from_memory(include_bytes!("../res/background.jpg"));
+        widget::image::Handle::from_bytes(include_bytes!("../res/background.jpg").as_slice());
 
     let flags = Flags {
         user_datas,
@@ -392,11 +400,11 @@ pub enum Message {
     DropdownToggle(Dropdown),
     Error(String),
     Exit,
+    Focus(SurfaceId),
     // Sets channel used to communicate with the greetd IPC subscription.
     GreetdChannel(tokio::sync::mpsc::Sender<Request>),
     Heartbeat,
     KeyboardLayout(usize),
-    LayerEvent(LayerEvent, SurfaceId),
     Login,
     NetworkIcon(Option<&'static str>),
     None,
@@ -408,6 +416,7 @@ pub enum Message {
     Session(String),
     Shutdown,
     Socket(SocketState),
+    Surface(surface::Action),
     Suspend,
     Username(String),
 }
@@ -419,9 +428,9 @@ pub struct App {
     greetd_sender: Option<tokio::sync::mpsc::Sender<greetd_ipc::Request>>,
     surface_ids: HashMap<WlOutput, SurfaceId>,
     active_surface_id_opt: Option<SurfaceId>,
-    surface_images: HashMap<SurfaceId, widget::image::Handle>,
+    surface_images: HashMap<SurfaceId, image::Handle>,
     surface_names: HashMap<SurfaceId, String>,
-    text_input_ids: HashMap<SurfaceId, widget::Id>,
+    text_input_ids: HashMap<String, widget::Id>,
     network_icon_opt: Option<&'static str>,
     power_info_opt: Option<(String, f64)>,
     socket_state: SocketState,
@@ -434,20 +443,405 @@ pub struct App {
     error_opt: Option<String>,
     dialog_page_opt: Option<DialogPage>,
     dropdown_opt: Option<Dropdown>,
+    window_size: HashMap<SurfaceId, Size>,
 }
 
 impl App {
+    fn menu<'a>(&'a self, id: SurfaceId) -> Element<'a, Message> {
+        let left_element = {
+            let date_time_column = {
+                let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
+
+                let dt = chrono::Local::now();
+                let locale = *crate::localize::LANGUAGE_CHRONO;
+
+                let date = dt.format_localized("%A, %B %-d", locale);
+                column = column
+                    .push(widget::text::title2(format!("{}", date)).class(style::Text::Accent));
+
+                let (time, time_size) = if self
+                    .selected_username
+                    .data_idx
+                    .and_then(|i| {
+                        self.flags
+                            .user_datas
+                            .get(i)
+                            .map(|user| user.clock_military_time)
+                    })
+                    .unwrap_or_default()
+                {
+                    (dt.format_localized("%R", locale), 112.0)
+                } else {
+                    // xxx format_localized doesn't seem to show am/pm for some languages, such as
+                    // French or Hungarian. This is apparently correct
+                    // Also, time size needs to be reduced a bit here so that it fits on one line
+                    (dt.format_localized("%I:%M %p", locale), 75.0)
+                };
+                column = column.push(
+                    widget::text(format!("{}", time))
+                        .size(time_size)
+                        .class(style::Text::Accent),
+                );
+
+                column
+            };
+
+            let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
+
+            if let Some(network_icon) = self.network_icon_opt {
+                status_row = status_row.push(widget::icon::from_name(network_icon));
+            }
+
+            if let Some((power_icon, power_percent)) = &self.power_info_opt {
+                status_row = status_row.push(iced::widget::row![
+                    widget::icon::from_name(power_icon.clone()),
+                    widget::text(format!("{:.0}%", power_percent)),
+                ]);
+            }
+
+            //TODO: move code for custom dropdowns to libcosmic
+            let menu_checklist = |label, value, message| {
+                Element::from(
+                    widget::menu::menu_button(vec![
+                        if value {
+                            widget::icon::from_name("object-select-symbolic")
+                                .size(16)
+                                .icon()
+                                .width(Length::Fixed(16.0))
+                                .into()
+                        } else {
+                            widget::Space::with_width(Length::Fixed(17.0)).into()
+                        },
+                        widget::Space::with_width(Length::Fixed(8.0)).into(),
+                        widget::text(label)
+                            .align_x(iced::alignment::Horizontal::Left)
+                            .into(),
+                    ])
+                    .on_press(message),
+                )
+            };
+            let dropdown_menu = |items| {
+                widget::container(widget::column::with_children(items))
+                    .padding(1)
+                    //TODO: move style to libcosmic
+                    .class(theme::Container::custom(|theme| {
+                        let cosmic = theme.cosmic();
+                        let component = &cosmic.background.component;
+                        widget::container::Style {
+                            icon_color: Some(component.on.into()),
+                            text_color: Some(component.on.into()),
+                            background: Some(Background::Color(component.base.into())),
+                            border: Border {
+                                radius: 8.0.into(),
+                                width: 1.0,
+                                color: component.divider.into(),
+                            },
+                            ..Default::default()
+                        }
+                    }))
+                    .width(Length::Fixed(240.0))
+            };
+
+            let mut input_button = widget::popover(
+                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
+            )
+            .position(widget::popover::Position::Bottom);
+            if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
+                let mut items = Vec::with_capacity(self.active_layouts.len());
+                for (i, layout) in self.active_layouts.iter().enumerate() {
+                    items.push(menu_checklist(
+                        &layout.description,
+                        i == 0,
+                        Message::KeyboardLayout(i),
+                    ));
+                }
+                input_button = input_button.popup(dropdown_menu(items));
+            }
+
+            let mut user_button = widget::popover(
+                widget::button::custom(widget::icon::from_name("system-users-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::DropdownToggle(Dropdown::User)),
+            )
+            .position(widget::popover::Position::Bottom);
+            if matches!(self.dropdown_opt, Some(Dropdown::User)) {
+                let mut items = Vec::with_capacity(self.usernames.len());
+                for (name, full_name) in self.usernames.iter() {
+                    items.push(menu_checklist(
+                        full_name,
+                        name == &self.selected_username.username,
+                        Message::Username(name.clone()),
+                    ));
+                }
+                user_button = user_button.popup(dropdown_menu(items));
+            }
+
+            let mut session_button = widget::popover(
+                widget::button::custom(widget::icon::from_name("application-menu-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::DropdownToggle(Dropdown::Session)),
+            )
+            .position(widget::popover::Position::Bottom);
+            if matches!(self.dropdown_opt, Some(Dropdown::Session)) {
+                let mut items = Vec::with_capacity(self.session_names.len());
+                for session_name in self.session_names.iter() {
+                    items.push(menu_checklist(
+                        session_name,
+                        session_name == &self.selected_session,
+                        Message::Session(session_name.clone()),
+                    ));
+                }
+                session_button = session_button.popup(dropdown_menu(items));
+            }
+
+            let button_row = iced::widget::row![
+                /*TODO: greeter accessibility options
+                widget::button(widget::icon::from_name(
+                    "applications-accessibility-symbolic"
+                ))
+                .padding(12.0)
+                .on_press(Message::None),
+                */
+                widget::tooltip(
+                    input_button,
+                    text(fl!("keyboard-layout")),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    user_button,
+                    text(fl!("user")),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    session_button,
+                    text(fl!("session")),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Suspend),
+                    text(fl!("suspend")),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    widget::button::custom(widget::icon::from_name("system-reboot-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Restart),
+                    text(fl!("restart")),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    widget::button::custom(widget::icon::from_name("system-shutdown-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Shutdown),
+                    text(fl!("shutdown")),
+                    widget::tooltip::Position::Top
+                )
+            ]
+            .padding([16.0, 0.0, 0.0, 0.0])
+            .spacing(8.0);
+
+            widget::container(iced::widget::column![
+                date_time_column,
+                widget::divider::horizontal::default(),
+                status_row,
+                widget::divider::horizontal::default(),
+                button_row,
+            ])
+            .width(Length::Fill)
+            .align_x(alignment::Horizontal::Left)
+        };
+
+        let right_element = {
+            let mut column = widget::column::with_capacity(2)
+                .spacing(12.0)
+                .max_width(280.0);
+
+            match &self.socket_state {
+                SocketState::Pending => {
+                    column = column.push(widget::text("Opening GREETD_SOCK"));
+                }
+                SocketState::Open => {
+                    for user_data in &self.flags.user_datas {
+                        if &user_data.name == &self.selected_username.username {
+                            match &user_data.icon_opt {
+                                Some(icon) => {
+                                    column = column.push(
+                                        widget::container(
+                                            widget::Image::new(
+                                                //TODO: cache handle
+                                                widget::image::Handle::from_bytes(icon.clone()),
+                                            )
+                                            .width(Length::Fixed(78.0))
+                                            .height(Length::Fixed(78.0)),
+                                        )
+                                        .width(Length::Fill)
+                                        .align_x(alignment::Horizontal::Center),
+                                    )
+                                }
+                                None => {}
+                            }
+                            match &user_data.full_name_opt {
+                                Some(full_name) => {
+                                    column = column.push(
+                                        widget::container(widget::text::title4(full_name))
+                                            .width(Length::Fill)
+                                            .align_x(alignment::Horizontal::Center),
+                                    );
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                    match &self.prompt_opt {
+                        Some((prompt, secret, value_opt)) => match value_opt {
+                            Some(value) => {
+                                let text_input_id = self
+                                    .surface_names
+                                    .get(&id)
+                                    .and_then(|id| self.text_input_ids.get(id))
+                                    .cloned()
+                                    .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
+                                let mut text_input = widget::secure_input(
+                                    prompt.clone(),
+                                    "",
+                                    Some(Message::Prompt(
+                                        prompt.clone(),
+                                        !*secret,
+                                        Some(value.clone()),
+                                    )),
+                                    *secret,
+                                )
+                                .id(text_input_id)
+                                .manage_value(true)
+                                .on_submit(|v| Message::Auth(Some(v)));
+
+                                if let Some(text_input_id) = self
+                                    .surface_names
+                                    .get(&id)
+                                    .and_then(|id| self.text_input_ids.get(id))
+                                {
+                                    text_input = text_input.id(text_input_id.clone());
+                                }
+
+                                if *secret {
+                                    text_input = text_input.password()
+                                }
+
+                                column = column.push(text_input);
+                            }
+                            None => {
+                                column = column.push(
+                                    widget::button::custom("Confirm").on_press(Message::Auth(None)),
+                                );
+                            }
+                        },
+                        None => {}
+                    }
+                }
+                SocketState::NotSet => {
+                    column = column.push(widget::text("GREETD_SOCK variable not set"));
+                }
+                SocketState::Error(err) => {
+                    column = column.push(widget::text(format!(
+                        "Failed to open GREETD_SOCK: {:?}",
+                        err
+                    )))
+                }
+            }
+
+            if let Some(error) = &self.error_opt {
+                column = column.push(widget::text(error));
+            }
+
+            widget::container(column)
+                .align_x(alignment::Horizontal::Center)
+                .width(Length::Fill)
+        };
+        let menu = widget::container(
+            widget::layer_container(
+                iced::widget::row![left_element, right_element]
+                    .align_y(alignment::Alignment::Center),
+            )
+            .layer(cosmic::cosmic_theme::Layer::Background)
+            .padding(16)
+            .class(cosmic::theme::Container::Custom(Box::new(
+                |theme: &cosmic::Theme| {
+                    // Use background appearance as the base
+                    let mut appearance = widget::container::Catalog::style(
+                        theme,
+                        &cosmic::theme::Container::Background,
+                    );
+                    appearance.border = iced::Border::default().rounded(16);
+                    appearance
+                },
+            )))
+            .class(cosmic::theme::Container::Background)
+            .width(Length::Fixed(800.0)),
+        )
+        .padding([32.0, 0.0, 0.0, 0.0])
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Top);
+
+        let popover = widget::popover(menu).modal(true);
+        match self.dialog_page_opt {
+            Some(DialogPage::Restart(instant)) => {
+                let remaining = DialogPage::remaining(instant).unwrap_or_default();
+                popover
+                    .popup(
+                        widget::dialog()
+                            .title(fl!("restart-now"))
+                            .icon(widget::icon::from_name("system-reboot-symbolic").size(64))
+                            .body(fl!("restart-timeout", seconds = remaining.as_secs()))
+                            .primary_action(
+                                widget::button::suggested(fl!("restart"))
+                                    .on_press(Message::DialogConfirm),
+                            )
+                            .secondary_action(
+                                widget::button::standard(fl!("cancel"))
+                                    .on_press(Message::DialogCancel),
+                            ),
+                    )
+                    .into()
+            }
+            Some(DialogPage::Shutdown(instant)) => {
+                let remaining = DialogPage::remaining(instant).unwrap_or_default();
+                popover
+                    .popup(
+                        widget::dialog()
+                            .title(fl!("shutdown-now"))
+                            .icon(widget::icon::from_name("system-shutdown-symbolic").size(64))
+                            .body(fl!("shutdown-timeout", seconds = remaining.as_secs()))
+                            .primary_action(
+                                widget::button::suggested(fl!("shutdown"))
+                                    .on_press(Message::DialogConfirm),
+                            )
+                            .secondary_action(
+                                widget::button::standard(fl!("cancel"))
+                                    .on_press(Message::DialogCancel),
+                            ),
+                    )
+                    .into()
+            }
+            None => popover.into(),
+        }
+    }
     /// Send a [`Request`] to the greetd IPC subscription.
-    fn send_request(&self, request: Request) -> Command<Message> {
+    fn send_request(&self, request: Request) -> Task<Message> {
         if let Some(ref sender) = self.greetd_sender {
             let sender = sender.clone();
-            return cosmic::command::future(async move {
+            return cosmic::task::future(async move {
                 _ = sender.send(request).await;
-                message::none()
+                cosmic::action::none()
             });
         }
 
-        Command::none()
+        Task::none()
     }
 
     fn set_xkb_config(&self) {
@@ -480,14 +874,16 @@ impl App {
         }
     }
 
-    fn update_user_config(&mut self) -> Command<Message> {
+    fn update_user_config(&mut self) -> Task<Message> {
         let user_data = match self
             .selected_username
             .data_idx
             .and_then(|i| self.flags.user_datas.get(i))
         {
             Some(some) => some,
-            None => return Command::none(),
+            None => {
+                return Task::none();
+            }
         };
 
         if let Some(wallpapers) = &user_data.wallpapers_opt {
@@ -507,8 +903,9 @@ impl App {
                     if wallpaper_output_name == output_name {
                         match wallpaper_data {
                             WallpaperData::Bytes(bytes) => {
-                                let image = widget::image::Handle::from_memory(bytes.clone());
-                                self.surface_images.insert(*surface_id, image);
+                                self.surface_images
+                                    .insert(*surface_id, image::Handle::from_bytes(bytes.clone()));
+
                                 //TODO: what to do about duplicates?
                                 break;
                             }
@@ -525,7 +922,6 @@ impl App {
                 }
             }
         }
-
         // From cosmic-applet-input-sources
         if let Some(keyboard_layouts) = &self.flags.layouts_opt {
             if let Some(xkb_config) = &user_data.xkb_config_opt {
@@ -575,9 +971,9 @@ impl App {
 
         match &user_data.theme_opt {
             Some(theme) => {
-                cosmic::app::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
+                cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
             }
-            None => Command::none(),
+            None => Task::none(),
         }
     }
 
@@ -611,10 +1007,11 @@ impl cosmic::Application for App {
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(mut core: Core, flags: Self::Flags) -> (Self, Command<Self::Message>) {
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
         core.window.show_window_menu = false;
         core.window.show_headerbar = false;
-        core.window.sharp_corners = true;
+        // XXX must be false or define custom style to have transparent bg
+        core.window.sharp_corners = false;
         core.window.show_maximize = false;
         core.window.show_minimize = false;
         core.window.use_template = false;
@@ -675,12 +1072,13 @@ impl cosmic::Application for App {
             error_opt: None,
             dialog_page_opt: None,
             dropdown_opt: None,
+            window_size: HashMap::new(),
         };
-        (app, Command::none())
+        (app, Task::none())
     }
 
     /// Handle application events here.
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
+    fn update(&mut self, message: Self::Message) -> Task<Message> {
         match message {
             Message::None => {}
             Message::OutputEvent(output_event, output) => {
@@ -689,6 +1087,8 @@ impl cosmic::Application for App {
                         log::info!("output {}: created", output.id());
 
                         let surface_id = SurfaceId::unique();
+                        let subsurface_id = SurfaceId::unique();
+
                         match self.surface_ids.insert(output.clone(), surface_id) {
                             Some(old_surface_id) => {
                                 //TODO: remove old surface?
@@ -700,12 +1100,24 @@ impl cosmic::Application for App {
                             }
                             None => {}
                         }
-
+                        let size = if let Some((w, h)) =
+                            output_info_opt.as_ref().and_then(|info| info.logical_size)
+                        {
+                            Some((Some(w as u32), Some(h as u32)))
+                        } else {
+                            Some((None, None))
+                        };
                         match output_info_opt {
                             Some(output_info) => match output_info.name {
                                 Some(output_name) => {
                                     self.surface_names.insert(surface_id, output_name.clone());
+                                    self.surface_names
+                                        .insert(subsurface_id, output_name.clone());
                                     self.surface_images.remove(&surface_id);
+                                    let text_input_id =
+                                        widget::Id::new(format!("input-{output_name}",));
+                                    self.text_input_ids
+                                        .insert(output_name.clone(), text_input_id.clone());
                                 }
                                 None => {
                                     log::warn!("output {}: no output name", output.id());
@@ -716,18 +1128,49 @@ impl cosmic::Application for App {
                             }
                         }
 
-                        let text_input_id = widget::Id::unique();
-                        self.text_input_ids
-                            .insert(surface_id, text_input_id.clone());
+                        let unwrapped_size = size
+                            .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
+                            .unwrap_or((1920, 1080));
+                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
+                            (
+                                Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
+                                Size::new(800., unwrapped_size.1 as f32 - 32.),
+                            )
+                        } else {
+                            (
+                                Point::new(0., 32.),
+                                Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32 - 32.),
+                            )
+                        };
+                        self.window_size.insert(
+                            surface_id,
+                            Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
+                        );
 
-                        return Command::batch([
+                        let msg = cosmic::surface::action::subsurface(
+                            move |_: &mut App| SctkSubsurfaceSettings {
+                                parent: surface_id,
+                                id: subsurface_id,
+                                loc,
+                                size: Some(sub_size),
+                                z: 10,
+                                steal_keyboard_focus: true,
+                                gravity: Gravity::BottomRight,
+                                offset: (0, 0),
+                                input_zone: None,
+                            },
+                            Some(Box::new(move |app: &App| {
+                                app.menu(subsurface_id).map(cosmic::Action::App)
+                            })),
+                        );
+                        return Task::batch([
                             self.update_user_config(),
                             get_layer_surface(SctkLayerSurfaceSettings {
                                 id: surface_id,
                                 layer: Layer::Overlay,
                                 keyboard_interactivity: KeyboardInteractivity::Exclusive,
                                 pointer_interactivity: true,
-                                anchor: Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                                anchor: Anchor::TOP | Anchor::LEFT | Anchor::BOTTOM | Anchor::RIGHT,
                                 output: IcedOutput::Output(output),
                                 namespace: "cosmic-locker".into(),
                                 size: Some((None, None)),
@@ -740,7 +1183,9 @@ impl cosmic::Application for App {
                                 exclusive_zone: -1,
                                 size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
                             }),
-                            widget::text_input::focus(text_input_id),
+                            cosmic::task::message(cosmic::Action::Cosmic(
+                                cosmic::app::Action::Surface(msg),
+                            )),
                         ]);
                     }
                     OutputEvent::Removed => {
@@ -748,8 +1193,9 @@ impl cosmic::Application for App {
                         match self.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.surface_images.remove(&surface_id);
-                                self.surface_names.remove(&surface_id);
-                                self.text_input_ids.remove(&surface_id);
+                                if let Some(n) = self.surface_names.remove(&surface_id) {
+                                    self.text_input_ids.remove(&n);
+                                }
                                 return destroy_layer_surface(surface_id);
                             }
                             None => {
@@ -762,16 +1208,6 @@ impl cosmic::Application for App {
                     }
                 }
             }
-            Message::LayerEvent(layer_event, surface_id) => match layer_event {
-                LayerEvent::Focused => {
-                    log::info!("focus surface {:?}", surface_id);
-                    self.active_surface_id_opt = Some(surface_id);
-                    if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
-                        return widget::text_input::focus(text_input_id.clone());
-                    }
-                }
-                _ => {}
-            },
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
                 match &self.socket_state {
@@ -799,7 +1235,11 @@ impl cosmic::Application for App {
                 self.prompt_opt = Some((prompt, secret, value_opt));
                 if value_is_some && !value_was_some {
                     if let Some(surface_id) = self.active_surface_id_opt {
-                        if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
+                        if let Some(text_input_id) = self
+                            .surface_names
+                            .get(&surface_id)
+                            .and_then(|id| self.text_input_ids.get(id))
+                        {
                             return widget::text_input::focus(text_input_id.clone());
                         }
                     }
@@ -855,7 +1295,7 @@ impl cosmic::Application for App {
                         })
                 }) else {
                     log::error!("Couldn't find user: {:?}", self.selected_username.username);
-                    return Command::none();
+                    return Task::none();
                 };
 
                 let Some(handler) = self.flags.greeter_config_handler.as_mut() else {
@@ -864,7 +1304,7 @@ impl cosmic::Application for App {
                         self.selected_username.username,
                         user_entry.key()
                     );
-                    return Command::none();
+                    return Task::none();
                 };
 
                 let uid = *user_entry.key();
@@ -879,7 +1319,7 @@ impl cosmic::Application for App {
                             .as_ref()
                             .is_some_and(|session| session.as_str() == self.selected_session)
                         {
-                            return Command::none();
+                            return Task::none();
                         }
                         if let Some(session) = last_session {
                             self.selected_session.clone_into(session);
@@ -918,7 +1358,7 @@ impl cosmic::Application for App {
                 self.error_opt = None;
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
-                        return Command::batch([
+                        return Task::batch([
                             self.update(Message::ConfigUpdateUser),
                             self.send_request(Request::StartSession { cmd, env }),
                         ]);
@@ -939,26 +1379,26 @@ impl cosmic::Application for App {
             Message::DialogConfirm => match self.dialog_page_opt.take() {
                 Some(DialogPage::Restart(_)) => {
                     #[cfg(feature = "logind")]
-                    return cosmic::command::future(async move {
+                    return cosmic::task::future(async move {
                         match crate::logind::reboot().await {
                             Ok(()) => (),
                             Err(err) => {
                                 log::error!("failed to reboot: {:?}", err);
                             }
                         }
-                        message::none()
+                        cosmic::action::none()
                     });
                 }
                 Some(DialogPage::Shutdown(_)) => {
                     #[cfg(feature = "logind")]
-                    return cosmic::command::future(async move {
+                    return cosmic::task::future(async move {
                         match crate::logind::power_off().await {
                             Ok(()) => (),
                             Err(err) => {
                                 log::error!("failed to power off: {:?}", err);
                             }
                         }
-                        message::none()
+                        cosmic::action::none()
                     });
                 }
                 None => {}
@@ -981,14 +1421,14 @@ impl cosmic::Application for App {
             }
             Message::Suspend => {
                 #[cfg(feature = "logind")]
-                return cosmic::command::future(async move {
+                return cosmic::task::future(async move {
                     match crate::logind::suspend().await {
                         Ok(()) => (),
                         Err(err) => {
                             log::error!("failed to suspend: {:?}", err);
                         }
                     }
-                    message::none()
+                    cosmic::action::none()
                 });
             }
             Message::Restart => {
@@ -1010,17 +1450,35 @@ impl cosmic::Application for App {
                 for (_output, surface_id) in self.surface_ids.drain() {
                     self.surface_images.remove(&surface_id);
                     self.surface_names.remove(&surface_id);
-                    self.text_input_ids.remove(&surface_id);
+                    if let Some(n) = self.surface_names.remove(&surface_id) {
+                        self.text_input_ids.remove(&n);
+                    }
                     commands.push(destroy_layer_surface(surface_id));
                 }
-                commands.push(Command::perform(async { process::exit(0) }, |x| x));
-                return Command::batch(commands);
+                commands.push(Task::perform(async { process::exit(0) }, |x| x));
+                return Task::batch(commands);
             }
             Message::GreetdChannel(sender) => {
                 self.greetd_sender = Some(sender);
             }
+            Message::Surface(a) => {
+                return cosmic::task::message(cosmic::Action::Cosmic(
+                    cosmic::app::Action::Surface(a),
+                ));
+            }
+
+            Message::Focus(surface_id) => {
+                self.active_surface_id_opt = Some(surface_id);
+                if let Some(text_input_id) = self
+                    .surface_names
+                    .get(&surface_id)
+                    .and_then(|id| self.text_input_ids.get(id))
+                {
+                    return widget::text_input::focus(text_input_id.clone());
+                }
+            }
         }
-        Command::none()
+        Task::none()
     }
 
     // Not used for layer surface window
@@ -1030,411 +1488,44 @@ impl cosmic::Application for App {
 
     /// Creates a view after each update.
     fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
-        let left_element = {
-            let date_time_column = {
-                let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
-
-                let dt = chrono::Local::now();
-                let locale = *crate::localize::LANGUAGE_CHRONO;
-
-                let date = dt.format_localized("%A, %B %-d", locale);
-                column = column
-                    .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
-
-                let (time, time_size) = if self
-                    .selected_username
-                    .data_idx
-                    .and_then(|i| {
-                        self.flags
-                            .user_datas
-                            .get(i)
-                            .map(|user| user.clock_military_time)
-                    })
-                    .unwrap_or_default()
-                {
-                    (dt.format_localized("%R", locale), 112.0)
-                } else {
-                    // xxx format_localized doesn't seem to show am/pm for some languages, such as
-                    // French or Hungarian. This is apparently correct
-                    // Also, time size needs to be reduced a bit here so that it fits on one line
-                    (dt.format_localized("%I:%M %p", locale), 75.0)
-                };
-                column = column.push(
-                    widget::text(format!("{}", time))
-                        .size(time_size)
-                        .style(style::Text::Accent),
-                );
-
-                column
-            };
-
-            let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
-
-            if let Some(network_icon) = self.network_icon_opt {
-                status_row = status_row.push(widget::icon::from_name(network_icon));
-            }
-
-            if let Some((power_icon, power_percent)) = &self.power_info_opt {
-                status_row = status_row.push(iced::widget::row![
-                    widget::icon::from_name(power_icon.clone()),
-                    widget::text(format!("{:.0}%", power_percent)),
-                ]);
-            }
-
-            //TODO: move code for custom dropdowns to libcosmic
-            let menu_checklist = |label, value, message| {
-                Element::from(
-                    widget::menu::menu_button(vec![
-                        if value {
-                            widget::icon::from_name("object-select-symbolic")
-                                .size(16)
-                                .icon()
-                                .width(Length::Fixed(16.0))
-                                .into()
-                        } else {
-                            widget::Space::with_width(Length::Fixed(17.0)).into()
-                        },
-                        widget::Space::with_width(Length::Fixed(8.0)).into(),
-                        widget::text(label)
-                            .horizontal_alignment(iced::alignment::Horizontal::Left)
-                            .into(),
-                    ])
-                    .on_press(message),
-                )
-            };
-            let dropdown_menu = |items| {
-                widget::container(widget::column::with_children(items))
-                    .padding(1)
-                    //TODO: move style to libcosmic
-                    .style(theme::Container::custom(|theme| {
-                        let cosmic = theme.cosmic();
-                        let component = &cosmic.background.component;
-                        widget::container::Appearance {
-                            icon_color: Some(component.on.into()),
-                            text_color: Some(component.on.into()),
-                            background: Some(Background::Color(component.base.into())),
-                            border: Border {
-                                radius: 8.0.into(),
-                                width: 1.0,
-                                color: component.divider.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }))
-                    .width(Length::Fixed(240.0))
-            };
-
-            let mut input_button = widget::popover(
-                widget::button(widget::icon::from_name("input-keyboard-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
-            )
-            .position(widget::popover::Position::Bottom);
-            if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
-                let mut items = Vec::with_capacity(self.active_layouts.len());
-                for (i, layout) in self.active_layouts.iter().enumerate() {
-                    items.push(menu_checklist(
-                        &layout.description,
-                        i == 0,
-                        Message::KeyboardLayout(i),
-                    ));
-                }
-                input_button = input_button.popup(dropdown_menu(items));
-            }
-
-            let mut user_button = widget::popover(
-                widget::button(widget::icon::from_name("system-users-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::DropdownToggle(Dropdown::User)),
-            )
-            .position(widget::popover::Position::Bottom);
-            if matches!(self.dropdown_opt, Some(Dropdown::User)) {
-                let mut items = Vec::with_capacity(self.usernames.len());
-                for (name, full_name) in self.usernames.iter() {
-                    items.push(menu_checklist(
-                        full_name,
-                        name == &self.selected_username.username,
-                        Message::Username(name.clone()),
-                    ));
-                }
-                user_button = user_button.popup(dropdown_menu(items));
-            }
-
-            let mut session_button = widget::popover(
-                widget::button(widget::icon::from_name("application-menu-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::DropdownToggle(Dropdown::Session)),
-            )
-            .position(widget::popover::Position::Bottom);
-            if matches!(self.dropdown_opt, Some(Dropdown::Session)) {
-                let mut items = Vec::with_capacity(self.session_names.len());
-                for session_name in self.session_names.iter() {
-                    items.push(menu_checklist(
-                        session_name,
-                        session_name == &self.selected_session,
-                        Message::Session(session_name.clone()),
-                    ));
-                }
-                session_button = session_button.popup(dropdown_menu(items));
-            }
-
-            let button_row = iced::widget::row![
-                /*TODO: greeter accessibility options
-                widget::button(widget::icon::from_name(
-                    "applications-accessibility-symbolic"
-                ))
-                .padding(12.0)
-                .on_press(Message::None),
-                */
-                widget::tooltip(
-                    input_button,
-                    fl!("keyboard-layout"),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(user_button, fl!("user"), widget::tooltip::Position::Top),
-                widget::tooltip(
-                    session_button,
-                    fl!("session"),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    widget::button(widget::icon::from_name("system-suspend-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Suspend),
-                    fl!("suspend"),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    widget::button(widget::icon::from_name("system-reboot-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Restart),
-                    fl!("restart"),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    widget::button(widget::icon::from_name("system-shutdown-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Shutdown),
-                    fl!("shutdown"),
-                    widget::tooltip::Position::Top
-                )
-            ]
-            .padding([16.0, 0.0, 0.0, 0.0])
-            .spacing(8.0);
-
-            widget::container(iced::widget::column![
-                date_time_column,
-                widget::divider::horizontal::default(),
-                status_row,
-                widget::divider::horizontal::default(),
-                button_row,
-            ])
-            .width(Length::Fill)
-            .align_x(alignment::Horizontal::Left)
-        };
-
-        let right_element = {
-            let mut column = widget::column::with_capacity(2)
-                .spacing(12.0)
-                .max_width(280.0);
-
-            match &self.socket_state {
-                SocketState::Pending => {
-                    column = column.push(widget::text("Opening GREETD_SOCK"));
-                }
-                SocketState::Open => {
-                    for user_data in &self.flags.user_datas {
-                        if &user_data.name == &self.selected_username.username {
-                            match &user_data.icon_opt {
-                                Some(icon) => {
-                                    column = column.push(
-                                        widget::container(
-                                            widget::Image::new(
-                                                //TODO: cache handle
-                                                widget::image::Handle::from_memory(icon.clone()),
-                                            )
-                                            .width(Length::Fixed(78.0))
-                                            .height(Length::Fixed(78.0)),
-                                        )
-                                        .width(Length::Fill)
-                                        .align_x(alignment::Horizontal::Center),
-                                    )
-                                }
-                                None => {}
-                            }
-                            match &user_data.full_name_opt {
-                                Some(full_name) => {
-                                    column = column.push(
-                                        widget::container(widget::text::title4(full_name))
-                                            .width(Length::Fill)
-                                            .align_x(alignment::Horizontal::Center),
-                                    );
-                                }
-                                None => {}
-                            }
-                        }
-                    }
-                    match &self.prompt_opt {
-                        Some((prompt, secret, value_opt)) => match value_opt {
-                            Some(value) => {
-                                let mut text_input = widget::secure_input(
-                                    prompt.clone(),
-                                    value.clone(),
-                                    Some(Message::Prompt(
-                                        prompt.clone(),
-                                        !*secret,
-                                        Some(value.clone()),
-                                    )),
-                                    *secret,
-                                )
-                                .on_input(|value| {
-                                    Message::Prompt(prompt.clone(), *secret, Some(value))
-                                })
-                                .on_submit(Message::Auth(Some(value.clone())));
-
-                                if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
-                                    text_input = text_input.id(text_input_id.clone());
-                                }
-
-                                if *secret {
-                                    text_input = text_input.password()
-                                }
-
-                                column = column.push(text_input);
-                            }
-                            None => {
-                                column = column
-                                    .push(widget::button("Confirm").on_press(Message::Auth(None)));
-                            }
-                        },
-                        None => {}
-                    }
-                }
-                SocketState::NotSet => {
-                    column = column.push(widget::text("GREETD_SOCK variable not set"));
-                }
-                SocketState::Error(err) => {
-                    column = column.push(widget::text(format!(
-                        "Failed to open GREETD_SOCK: {:?}",
-                        err
-                    )))
-                }
-            }
-
-            if let Some(error) = &self.error_opt {
-                column = column.push(widget::text(error));
-            }
-
-            widget::container(column)
-                .align_x(alignment::Horizontal::Center)
-                .width(Length::Fill)
-        };
-
-        let content = crate::image_container::ImageContainer::new(
-            widget::container(
-                widget::layer_container(
-                    iced::widget::row![left_element, right_element]
-                        .align_items(alignment::Alignment::Center),
-                )
-                .layer(cosmic::cosmic_theme::Layer::Background)
-                .padding(16)
-                .style(cosmic::theme::Container::Custom(Box::new(
-                    |theme: &cosmic::Theme| {
-                        // Use background appearance as the base
-                        let mut appearance = widget::container::StyleSheet::appearance(
-                            theme,
-                            &cosmic::theme::Container::Background,
-                        );
-                        appearance.border = iced::Border::with_radius(16.0);
-                        appearance
-                    },
-                )))
-                .width(Length::Fixed(800.0)),
-            )
-            .padding([32.0, 0.0, 0.0, 0.0])
+        let img = self
+            .surface_images
+            .get(&surface_id)
+            .unwrap_or(&self.flags.fallback_background);
+        widget::image(img)
+            .content_fit(iced::ContentFit::Cover)
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Top)
-            .style(cosmic::theme::Container::Transparent),
-        )
-        .image(match self.surface_images.get(&surface_id) {
-            Some(some) => some.clone(),
-            None => self.flags.fallback_background.clone(),
-        })
-        .content_fit(iced::ContentFit::Cover);
-
-        let popover = widget::popover(content).modal(true);
-        match self.dialog_page_opt {
-            Some(DialogPage::Restart(instant)) => {
-                let remaining = DialogPage::remaining(instant).unwrap_or_default();
-                popover
-                    .popup(
-                        widget::dialog(fl!("restart-now"))
-                            .icon(widget::icon::from_name("system-reboot-symbolic").size(64))
-                            .body(fl!("restart-timeout", seconds = remaining.as_secs()))
-                            .primary_action(
-                                widget::button::suggested(fl!("restart"))
-                                    .on_press(Message::DialogConfirm),
-                            )
-                            .secondary_action(
-                                widget::button::standard(fl!("cancel"))
-                                    .on_press(Message::DialogCancel),
-                            ),
-                    )
-                    .into()
-            }
-            Some(DialogPage::Shutdown(instant)) => {
-                let remaining = DialogPage::remaining(instant).unwrap_or_default();
-                popover
-                    .popup(
-                        widget::dialog(fl!("shutdown-now"))
-                            .icon(widget::icon::from_name("system-shutdown-symbolic").size(64))
-                            .body(fl!("shutdown-timeout", seconds = remaining.as_secs()))
-                            .primary_action(
-                                widget::button::suggested(fl!("shutdown"))
-                                    .on_press(Message::DialogConfirm),
-                            )
-                            .secondary_action(
-                                widget::button::standard(fl!("cancel"))
-                                    .on_press(Message::DialogCancel),
-                            ),
-                    )
-                    .into()
-            }
-            None => popover.into(),
-        }
+            .into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
         struct HeartbeatSubscription;
 
         let mut subscriptions = vec![
-            event::listen_with(|event, _| match event {
+            event::listen_with(|event, _, id| match event {
                 iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
                     wayland_event,
                 )) => match wayland_event {
                     WaylandEvent::Output(output_event, output) => {
                         Some(Message::OutputEvent(output_event, output))
                     }
-                    WaylandEvent::Layer(layer_event, _surface, surface_id) => {
-                        Some(Message::LayerEvent(layer_event, surface_id))
-                    }
+
                     _ => None,
                 },
+                iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(id)),
                 _ => None,
             }),
-            subscription::channel(
+            Subscription::run_with_id(
                 std::any::TypeId::of::<HeartbeatSubscription>(),
-                16,
-                |mut msg_tx| async move {
+                cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
                     loop {
                         // Send heartbeat once a second to update time
                         //TODO: only send this when needed
                         msg_tx.send(Message::Heartbeat).await.unwrap();
                         time::sleep(time::Duration::new(1, 0)).await;
                     }
-                },
+                }),
             ),
             ipc::subscription(),
         ];

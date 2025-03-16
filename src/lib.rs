@@ -4,7 +4,6 @@
 pub mod greeter;
 pub mod locker;
 
-mod image_container;
 mod localize;
 
 #[cfg(feature = "logind")]

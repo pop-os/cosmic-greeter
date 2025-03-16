@@ -1,7 +1,11 @@
 // Copyright 2023 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-use cosmic::app::{message, Command, Core, Settings};
+use cosmic::app::{Core, Settings, Task};
+use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
+use cosmic::iced::{Point, Rectangle, Size};
+use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
+use cosmic::surface;
 use cosmic::{
     executor,
     iced::{
@@ -11,8 +15,9 @@ use cosmic::{
             wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent},
         },
         futures::{self, SinkExt},
-        subscription,
-        wayland::session_lock::{destroy_lock_surface, get_lock_surface, lock, unlock},
+        platform_specific::shell::wayland::commands::session_lock::{
+            destroy_lock_surface, get_lock_surface, lock, unlock,
+        },
         Length, Subscription,
     },
     iced_runtime::core::window::Id as SurfaceId,
@@ -48,7 +53,7 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
     let icon_path = Path::new("/var/lib/AccountsService/icons").join(&current_user.name);
     let icon_opt = if icon_path.is_file() {
         match fs::read(&icon_path) {
-            Ok(icon_data) => Some(widget::image::Handle::from_memory(icon_data)),
+            Ok(icon_data) => Some(widget::image::Handle::from_bytes(icon_data)),
             Err(err) => {
                 log::error!("failed to read {:?}: {:?}", icon_path, err);
                 None
@@ -72,12 +77,15 @@ pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>>
             log::error!("failed to create cosmic-bg state helper: {:?}", err);
         }
     }
+    let fallback_background =
+        widget::image::Handle::from_bytes(include_bytes!("../res/background.jpg").as_slice());
 
     let flags = Flags {
         current_user,
         icon_opt,
         lockfile_opt: lockfile_opt(),
         wallpapers,
+        fallback_background,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -119,20 +127,24 @@ impl Conversation {
             log::error!("failed to convert prompt to UTF-8: {:?}", err);
             pam_client::ErrorCode::CONV_ERR
         })?;
-
-        futures::executor::block_on(async {
-            self.msg_tx
-                .send(Message::Prompt(
-                    prompt.to_string(),
-                    secret,
-                    Some(String::new()),
-                ))
-                .await
-        })
-        .map_err(|err| {
-            log::error!("failed to send prompt: {:?}", err);
-            pam_client::ErrorCode::CONV_ERR
-        })?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(async {
+                self.msg_tx
+                    .send(Message::Prompt(
+                        prompt.to_string(),
+                        secret,
+                        Some(String::new()),
+                    ))
+                    .await
+            })
+            .map_err(|err| {
+                log::error!("failed to send prompt: {:?}", err);
+                pam_client::ErrorCode::CONV_ERR
+            })?;
 
         let value = self.value_rx.blocking_recv().ok_or_else(|| {
             log::error!("failed to receive value: channel closed");
@@ -199,6 +211,7 @@ pub struct Flags {
     icon_opt: Option<widget::image::Handle>,
     lockfile_opt: Option<PathBuf>,
     wallpapers: Vec<(String, cosmic_bg_config::Source)>,
+    fallback_background: widget::image::Handle,
 }
 
 /// Messages that are used specifically by our [`App`].
@@ -209,11 +222,13 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
+    Focus(SurfaceId),
     Inhibit(Arc<OwnedFd>),
     NetworkIcon(Option<&'static str>),
     PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
-    Submit,
+    Submit(String),
+    Surface(surface::Action),
     Suspend,
     Error(String),
     Lock,
@@ -233,11 +248,13 @@ pub struct App {
     core: Core,
     flags: Flags,
     state: State,
+    output_names: HashMap<WlOutput, String>,
     surface_ids: HashMap<WlOutput, SurfaceId>,
+    subsurface_rects: HashMap<WlOutput, Rectangle>,
     active_surface_id_opt: Option<SurfaceId>,
     surface_images: HashMap<SurfaceId, widget::image::Handle>,
     surface_names: HashMap<SurfaceId, String>,
-    text_input_ids: HashMap<SurfaceId, widget::Id>,
+    text_input_ids: HashMap<String, widget::Id>,
     inhibit_opt: Option<Arc<OwnedFd>>,
     network_icon_opt: Option<&'static str>,
     power_info_opt: Option<(String, f64)>,
@@ -247,357 +264,7 @@ pub struct App {
 }
 
 impl App {
-    //TODO: cache wallpapers by source?
-    fn update_wallpapers(&mut self) {
-        for (output, surface_id) in self.surface_ids.iter() {
-            if self.surface_images.contains_key(surface_id) {
-                continue;
-            }
-
-            let output_name = match self.surface_names.get(surface_id) {
-                Some(some) => some,
-                None => continue,
-            };
-
-            log::info!("updating wallpaper for {:?}", output_name);
-
-            for (wallpaper_output_name, wallpaper_source) in self.flags.wallpapers.iter() {
-                if wallpaper_output_name == output_name {
-                    match wallpaper_source {
-                        cosmic_bg_config::Source::Path(path) => {
-                            match fs::read(path) {
-                                Ok(bytes) => {
-                                    let image = widget::image::Handle::from_memory(bytes);
-                                    self.surface_images.insert(*surface_id, image);
-                                    //TODO: what to do about duplicates?
-                                    break;
-                                }
-                                Err(err) => {
-                                    log::warn!(
-                                        "output {}: failed to load wallpaper {:?}: {:?}",
-                                        output.id(),
-                                        path,
-                                        err
-                                    );
-                                }
-                            }
-                        }
-                        cosmic_bg_config::Source::Color(color) => {
-                            //TODO: support color sources
-                            log::warn!("output {}: unsupported source {:?}", output.id(), color);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Implement [`cosmic::Application`] to integrate with COSMIC.
-impl cosmic::Application for App {
-    /// Default async executor to use with the app.
-    type Executor = executor::Default;
-
-    /// Argument received [`cosmic::Application::new`].
-    type Flags = Flags;
-
-    /// Message type specific to our [`App`].
-    type Message = Message;
-
-    /// The unique application ID to supply to the window manager.
-    const APP_ID: &'static str = "com.system76.CosmicGreeter";
-
-    fn core(&self) -> &Core {
-        &self.core
-    }
-
-    fn core_mut(&mut self) -> &mut Core {
-        &mut self.core
-    }
-
-    /// Creates the application, and optionally emits command on initialize.
-    fn init(mut core: Core, flags: Self::Flags) -> (Self, Command<Self::Message>) {
-        core.window.show_window_menu = false;
-        core.window.show_headerbar = false;
-        core.window.sharp_corners = true;
-        core.window.show_maximize = false;
-        core.window.show_minimize = false;
-        core.window.use_template = false;
-
-        let already_locked = match flags.lockfile_opt {
-            Some(ref lockfile) => lockfile.exists(),
-            None => false,
-        };
-
-        let mut app = App {
-            core,
-            flags,
-            state: State::Unlocked,
-            surface_ids: HashMap::new(),
-            active_surface_id_opt: None,
-            surface_images: HashMap::new(),
-            surface_names: HashMap::new(),
-            text_input_ids: HashMap::new(),
-            inhibit_opt: None,
-            network_icon_opt: None,
-            power_info_opt: None,
-            value_tx_opt: None,
-            prompt_opt: None,
-            error_opt: None,
-        };
-
-        let command = if cfg!(feature = "logind") {
-            if already_locked {
-                // Recover previously locked state
-                log::info!("recovering previous locked state");
-                app.state = State::Locking;
-                lock()
-            } else {
-                // When logind feature is used, wait for lock signal
-                Command::none()
-            }
-        } else {
-            // When logind feature not used, lock immediately
-            log::info!("locking immediately");
-            app.state = State::Locking;
-            lock()
-        };
-
-        (app, command)
-    }
-
-    /// Handle application events here.
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
-        match message {
-            Message::None => {}
-            Message::OutputEvent(output_event, output) => {
-                match output_event {
-                    OutputEvent::Created(output_info_opt) => {
-                        log::info!("output {}: created", output.id());
-
-                        let surface_id = SurfaceId::unique();
-                        match self.surface_ids.insert(output.clone(), surface_id) {
-                            Some(old_surface_id) => {
-                                //TODO: remove old surface?
-                                log::warn!(
-                                    "output {}: already had surface ID {:?}",
-                                    output.id(),
-                                    old_surface_id
-                                );
-                            }
-                            None => {}
-                        }
-
-                        match output_info_opt {
-                            Some(output_info) => match output_info.name {
-                                Some(output_name) => {
-                                    self.surface_names.insert(surface_id, output_name.clone());
-                                    self.surface_images.remove(&surface_id);
-                                    self.update_wallpapers();
-                                }
-                                None => {
-                                    log::warn!("output {}: no output name", output.id());
-                                }
-                            },
-                            None => {
-                                log::warn!("output {}: no output info", output.id());
-                            }
-                        }
-
-                        let text_input_id = widget::Id::unique();
-                        self.text_input_ids
-                            .insert(surface_id, text_input_id.clone());
-
-                        if matches!(self.state, State::Locked) {
-                            return Command::batch([
-                                get_lock_surface(surface_id, output),
-                                widget::text_input::focus(text_input_id),
-                            ]);
-                        }
-                    }
-                    OutputEvent::Removed => {
-                        log::info!("output {}: removed", output.id());
-                        match self.surface_ids.remove(&output) {
-                            Some(surface_id) => {
-                                self.surface_images.remove(&surface_id);
-                                self.surface_names.remove(&surface_id);
-                                self.text_input_ids.remove(&surface_id);
-                                if matches!(self.state, State::Locked) {
-                                    return destroy_lock_surface(surface_id);
-                                }
-                            }
-                            None => {
-                                log::warn!("output {}: no surface found", output.id());
-                            }
-                        }
-                    }
-                    OutputEvent::InfoUpdate(_output_info) => {
-                        log::info!("output {}: info update", output.id());
-                    }
-                }
-            }
-            Message::SessionLockEvent(session_lock_event) => match session_lock_event {
-                SessionLockEvent::Focused(_, surface_id) => {
-                    log::info!("focus surface {:?}", surface_id);
-                    self.active_surface_id_opt = Some(surface_id);
-                    if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
-                        return widget::text_input::focus(text_input_id.clone());
-                    }
-                }
-                SessionLockEvent::Locked => {
-                    log::info!("session locked");
-                    self.state = State::Locked;
-                    // Allow suspend
-                    self.inhibit_opt = None;
-                    // Create lock surfaces
-                    let mut commands = Vec::with_capacity(self.surface_ids.len());
-                    for (output, surface_id) in self.surface_ids.iter() {
-                        commands.push(get_lock_surface(*surface_id, output.clone()));
-                    }
-                    return Command::batch(commands);
-                }
-                SessionLockEvent::Unlocked => {
-                    log::info!("session unlocked");
-                    self.state = State::Unlocked;
-                    if cfg!(feature = "logind") {
-                        // When using logind feature, stick around for more lock signals
-                    } else {
-                        // When not using logind feature, exit immediately after unlocking
-                        //TODO: cleaner method to exit?
-                        process::exit(0);
-                    }
-                }
-                //TODO: handle finished signal
-                _ => {}
-            },
-            Message::Channel(value_tx) => {
-                self.value_tx_opt = Some(value_tx);
-            }
-            Message::BackgroundState(background_state) => {
-                self.flags.wallpapers = background_state.wallpapers;
-                self.surface_images.clear();
-                self.update_wallpapers();
-            }
-            Message::Inhibit(inhibit) => {
-                self.inhibit_opt = Some(inhibit);
-            }
-            Message::NetworkIcon(network_icon_opt) => {
-                self.network_icon_opt = network_icon_opt;
-            }
-            Message::PowerInfo(power_info_opt) => {
-                self.power_info_opt = power_info_opt;
-            }
-            Message::Prompt(prompt, secret, value_opt) => {
-                let prompt_was_none = self.prompt_opt.is_none();
-                self.prompt_opt = Some((prompt, secret, value_opt));
-                if prompt_was_none {
-                    if let Some(surface_id) = self.active_surface_id_opt {
-                        if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
-                            return widget::text_input::focus(text_input_id.clone());
-                        }
-                    }
-                }
-            }
-            Message::Submit => match self.prompt_opt.take() {
-                Some((_prompt, _secret, value_opt)) => match value_opt {
-                    Some(value) => match self.value_tx_opt.take() {
-                        Some(value_tx) => {
-                            // Clear errors
-                            self.error_opt = None;
-                            return cosmic::command::future(async move {
-                                value_tx.send(value).await.unwrap();
-                                Message::Channel(value_tx)
-                            });
-                        }
-                        None => log::warn!("tried to submit when value_tx_opt not set"),
-                    },
-                    None => log::warn!("tried to submit without value"),
-                },
-                None => log::warn!("tried to submit without prompt"),
-            },
-            Message::Suspend => {
-                #[cfg(feature = "logind")]
-                return cosmic::command::future(async move {
-                    match crate::logind::suspend().await {
-                        Ok(()) => message::none(),
-                        Err(err) => {
-                            log::error!("failed to suspend: {:?}", err);
-                            message::app(Message::Error(err.to_string()))
-                        }
-                    }
-                });
-            }
-            Message::Error(error) => {
-                self.error_opt = Some(error);
-            }
-            Message::Lock => match self.state {
-                State::Unlocked => {
-                    log::info!("session locking");
-                    self.state = State::Locking;
-                    // Clear errors
-                    self.error_opt = None;
-                    // Clear value_tx
-                    self.value_tx_opt = None;
-                    // Try to create lockfile when locking
-                    if let Some(ref lockfile) = self.flags.lockfile_opt {
-                        if let Err(err) = fs::File::create(lockfile) {
-                            log::warn!("failed to create lockfile {:?}: {}", lockfile, err);
-                        }
-                    }
-                    // Tell compositor to lock
-                    return lock();
-                }
-                State::Unlocking => {
-                    log::info!("session still unlocking");
-                }
-                State::Locking | State::Locked => {
-                    log::info!("session already locking or locked");
-                }
-            },
-            Message::Unlock => {
-                match self.state {
-                    State::Locked => {
-                        log::info!("sessing unlocking");
-                        self.state = State::Unlocking;
-                        // Clear errors
-                        self.error_opt = None;
-                        // Clear value_tx
-                        self.value_tx_opt = None;
-                        // Try to delete lockfile when unlocking
-                        if let Some(ref lockfile) = self.flags.lockfile_opt {
-                            if let Err(err) = fs::remove_file(lockfile) {
-                                log::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
-                            }
-                        }
-                        // Destroy lock surfaces
-                        let mut commands = Vec::with_capacity(self.surface_ids.len() + 1);
-                        for (_output, surface_id) in self.surface_ids.iter() {
-                            commands.push(destroy_lock_surface(*surface_id));
-                        }
-                        // Tell compositor to unlock
-                        commands.push(unlock());
-                        // Wait to exit until `Unlocked` event, when server has processed unlock
-                        return Command::batch(commands);
-                    }
-                    State::Locking => {
-                        log::info!("session still locking");
-                    }
-                    State::Unlocking | State::Unlocked => {
-                        log::info!("session already unlocking or unlocked");
-                    }
-                }
-            }
-        }
-        Command::none()
-    }
-
-    // Not used for layer surface window
-    fn view(&self) -> Element<Self::Message> {
-        unimplemented!()
-    }
-
-    /// Creates a view after each update.
-    fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
+    fn menu<'a>(&'a self, surface_id: SurfaceId) -> Element<'a, Message> {
         let left_element = {
             let date_time_column = {
                 let mut column = widget::column::with_capacity(2).padding(16.0);
@@ -607,13 +274,13 @@ impl cosmic::Application for App {
 
                 let date = dt.format_localized("%A, %B %-d", locale);
                 column = column
-                    .push(widget::text::title2(format!("{}", date)).style(style::Text::Accent));
+                    .push(widget::text::title2(format!("{}", date)).class(style::Text::Accent));
 
                 let time = dt.format_localized("%R", locale);
                 column = column.push(
                     widget::text(format!("{}", time))
                         .size(112.0)
-                        .style(style::Text::Accent),
+                        .class(style::Text::Accent),
                 );
 
                 column
@@ -634,18 +301,18 @@ impl cosmic::Application for App {
 
             //TODO: implement these buttons
             let button_row = iced::widget::row![
-                widget::button(widget::icon::from_name(
+                widget::button::custom(widget::icon::from_name(
                     "applications-accessibility-symbolic"
                 ))
                 .padding(12.0)
                 .on_press(Message::None),
-                widget::button(widget::icon::from_name("input-keyboard-symbolic"))
+                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
                     .padding(12.0)
                     .on_press(Message::None),
-                widget::button(widget::icon::from_name("system-users-symbolic"))
+                widget::button::custom(widget::icon::from_name("system-users-symbolic"))
                     .padding(12.0)
                     .on_press(Message::None),
-                widget::button(widget::icon::from_name("system-suspend-symbolic"))
+                widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
                     .padding(12.0)
                     .on_press(Message::Suspend),
             ]
@@ -703,9 +370,16 @@ impl cosmic::Application for App {
             match &self.prompt_opt {
                 Some((prompt, secret, value_opt)) => match value_opt {
                     Some(value) => {
+                        let text_input_id = self
+                            .surface_names
+                            .get(&surface_id)
+                            .and_then(|id| self.text_input_ids.get(id))
+                            .cloned()
+                            .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
+
                         let mut text_input = widget::secure_input(
                             prompt.clone(),
-                            value.clone(),
+                            "",
                             Some(Message::Prompt(
                                 prompt.clone(),
                                 !*secret,
@@ -713,12 +387,9 @@ impl cosmic::Application for App {
                             )),
                             *secret,
                         )
-                        .on_input(|value| Message::Prompt(prompt.clone(), *secret, Some(value)))
-                        .on_submit(Message::Submit);
-
-                        if let Some(text_input_id) = self.text_input_ids.get(&surface_id) {
-                            text_input = text_input.id(text_input_id.clone());
-                        }
+                        .id(text_input_id)
+                        .manage_value(true)
+                        .on_submit(|v| Message::Submit(v));
 
                         if *secret {
                             text_input = text_input.password()
@@ -742,47 +413,529 @@ impl cosmic::Application for App {
                 .width(Length::Fill)
         };
 
-        crate::image_container::ImageContainer::new(
-            widget::container(
-                widget::layer_container(
-                    iced::widget::row![left_element, right_element]
-                        .align_items(alignment::Alignment::Center),
-                )
-                .layer(cosmic::cosmic_theme::Layer::Background)
-                .padding(16)
-                .style(cosmic::theme::Container::Custom(Box::new(
-                    |theme: &cosmic::Theme| {
-                        // Use background appearance as the base
-                        let mut appearance = widget::container::StyleSheet::appearance(
-                            theme,
-                            &cosmic::theme::Container::Background,
-                        );
-                        appearance.border = iced::Border::with_radius(16.0);
-                        appearance
-                    },
-                )))
-                .width(Length::Fixed(800.0)),
+        widget::container(
+            widget::layer_container(
+                iced::widget::row![left_element, right_element]
+                    .align_y(alignment::Alignment::Center),
             )
-            .padding([32.0, 0.0, 0.0, 0.0])
+            .layer(cosmic::cosmic_theme::Layer::Background)
+            .padding(16)
+            .class(cosmic::theme::Container::Custom(Box::new(
+                |theme: &cosmic::Theme| {
+                    // Use background appearance as the base
+                    let mut appearance = widget::container::Catalog::style(
+                        theme,
+                        &cosmic::theme::Container::Background,
+                    );
+                    appearance.border = iced::Border::default().rounded(16.0);
+                    appearance
+                },
+            )))
+            .width(Length::Fill)
+            .height(Length::Shrink),
+        )
+        .padding([32.0, 0.0, 0.0, 0.0])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Top)
+        .class(cosmic::theme::Container::Transparent)
+        .into()
+    }
+
+    //TODO: cache wallpapers by source?
+    fn update_wallpapers(&mut self) {
+        for (output, surface_id) in self.surface_ids.iter() {
+            if self.surface_images.contains_key(surface_id) {
+                continue;
+            }
+
+            let output_name = match self.surface_names.get(surface_id) {
+                Some(some) => some,
+                None => continue,
+            };
+
+            log::info!("updating wallpaper for {:?}", output_name);
+
+            for (wallpaper_output_name, wallpaper_source) in self.flags.wallpapers.iter() {
+                if wallpaper_output_name == output_name {
+                    match wallpaper_source {
+                        cosmic_bg_config::Source::Path(path) => {
+                            match fs::read(path) {
+                                Ok(bytes) => {
+                                    let image = widget::image::Handle::from_bytes(bytes);
+                                    self.surface_images.insert(*surface_id, image);
+                                    //TODO: what to do about duplicates?
+                                    break;
+                                }
+                                Err(err) => {
+                                    log::warn!(
+                                        "output {}: failed to load wallpaper {:?}: {:?}",
+                                        output.id(),
+                                        path,
+                                        err
+                                    );
+                                }
+                            }
+                        }
+                        cosmic_bg_config::Source::Color(color) => {
+                            //TODO: support color sources
+                            log::warn!("output {}: unsupported source {:?}", output.id(), color);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Implement [`cosmic::Application`] to integrate with COSMIC.
+impl cosmic::Application for App {
+    /// Default async executor to use with the app.
+    type Executor = executor::Default;
+
+    /// Argument received [`cosmic::Application::new`].
+    type Flags = Flags;
+
+    /// Message type specific to our [`App`].
+    type Message = Message;
+
+    /// The unique application ID to supply to the window manager.
+    const APP_ID: &'static str = "com.system76.CosmicGreeter";
+
+    fn core(&self) -> &Core {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut Core {
+        &mut self.core
+    }
+
+    /// Creates the application, and optionally emits command on initialize.
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
+        core.window.show_window_menu = false;
+        core.window.show_headerbar = false;
+        // XXX must be false or define custom style to have transparent bg
+        core.window.sharp_corners = false;
+        core.window.show_maximize = false;
+        core.window.show_minimize = false;
+        core.window.use_template = false;
+
+        let already_locked = match flags.lockfile_opt {
+            Some(ref lockfile) => lockfile.exists(),
+            None => false,
+        };
+
+        let mut app = App {
+            core,
+            flags,
+            state: State::Unlocked,
+            surface_ids: HashMap::new(),
+            active_surface_id_opt: None,
+            output_names: HashMap::new(),
+            surface_images: HashMap::new(),
+            surface_names: HashMap::new(),
+            text_input_ids: HashMap::new(),
+            subsurface_rects: HashMap::new(),
+            inhibit_opt: None,
+            network_icon_opt: None,
+            power_info_opt: None,
+            value_tx_opt: None,
+            prompt_opt: None,
+            error_opt: None,
+        };
+
+        let command = if cfg!(feature = "logind") {
+            if already_locked {
+                // Recover previously locked state
+                log::info!("recovering previous locked state");
+                app.state = State::Locking;
+                lock()
+            } else {
+                // When logind feature is used, wait for lock signal
+                Task::none()
+            }
+        } else {
+            // When logind feature not used, lock immediately
+            log::info!("locking immediately");
+            app.state = State::Locking;
+            lock()
+        };
+
+        (app, command)
+    }
+
+    /// Handle application events here.
+    fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
+        match message {
+            Message::None => {}
+            Message::OutputEvent(output_event, output) => {
+                match output_event {
+                    OutputEvent::Created(output_info_opt) => {
+                        log::info!("output {}: created", output.id());
+
+                        let surface_id = SurfaceId::unique();
+                        let subsurface_id = SurfaceId::unique();
+
+                        match self.surface_ids.insert(output.clone(), surface_id) {
+                            Some(old_surface_id) => {
+                                //TODO: remove old surface?
+                                log::warn!(
+                                    "output {}: already had surface ID {:?}",
+                                    output.id(),
+                                    old_surface_id
+                                );
+                                return Task::none();
+                            }
+                            None => {}
+                        }
+                        let size = if let Some((w, h)) =
+                            output_info_opt.as_ref().and_then(|info| info.logical_size)
+                        {
+                            Some((Some(w as u32), Some(h as u32)))
+                        } else {
+                            Some((None, None))
+                        };
+                        match output_info_opt {
+                            Some(output_info) => match output_info.name {
+                                Some(output_name) => {
+                                    self.output_names
+                                        .insert(output.clone(), output_name.clone());
+                                    self.surface_names.insert(surface_id, output_name.clone());
+                                    self.surface_names
+                                        .insert(subsurface_id, output_name.clone());
+                                    self.surface_images.remove(&surface_id);
+                                    self.update_wallpapers();
+                                    let text_input_id =
+                                        widget::Id::new(format!("input-{output_name}",));
+                                    self.text_input_ids
+                                        .insert(output_name.clone(), text_input_id.clone());
+                                }
+                                None => {
+                                    log::warn!("output {}: no output name", output.id());
+                                }
+                            },
+                            None => {
+                                log::warn!("output {}: no output info", output.id());
+                            }
+                        }
+
+                        let unwrapped_size = size
+                            .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
+                            .unwrap_or((1920, 1080));
+                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
+                            (
+                                Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
+                                Size::new(800., unwrapped_size.1 as f32 - 32.),
+                            )
+                        } else {
+                            (
+                                Point::new(0., 32.),
+                                Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32 - 32.),
+                            )
+                        };
+                        self.subsurface_rects
+                            .insert(output.clone(), Rectangle::new(loc, sub_size));
+
+                        let msg = cosmic::surface::action::subsurface(
+                            move |_: &mut App| SctkSubsurfaceSettings {
+                                parent: surface_id,
+                                id: subsurface_id,
+                                loc,
+                                size: Some(sub_size),
+                                z: 10,
+                                steal_keyboard_focus: true,
+                                gravity: Gravity::BottomRight,
+                                offset: (0, 0),
+                                input_zone: None,
+                            },
+                            Some(Box::new(move |app: &App| {
+                                app.menu(subsurface_id).map(cosmic::Action::App)
+                            })),
+                        );
+
+                        if matches!(self.state, State::Locked) {
+                            return Task::batch([
+                                get_lock_surface(surface_id, output),
+                                cosmic::task::message(cosmic::Action::Cosmic(
+                                    cosmic::app::Action::Surface(msg),
+                                )),
+                            ]);
+                        }
+                    }
+                    OutputEvent::Removed => {
+                        log::info!("output {}: removed", output.id());
+                        match self.surface_ids.remove(&output) {
+                            Some(surface_id) => {
+                                self.surface_images.remove(&surface_id);
+                                self.surface_names.remove(&surface_id);
+                                if let Some(n) = self.surface_names.remove(&surface_id) {
+                                    self.text_input_ids.remove(&n);
+                                }
+                                if matches!(self.state, State::Locked) {
+                                    return destroy_lock_surface(surface_id);
+                                }
+                            }
+                            None => {
+                                log::warn!("output {}: no surface found", output.id());
+                            }
+                        }
+                    }
+                    OutputEvent::InfoUpdate(info) => {
+                        let size = if let Some((w, h)) = info.logical_size {
+                            Some((Some(w as u32), Some(h as u32)))
+                        } else {
+                            Some((None, None))
+                        };
+                        let unwrapped_size = size
+                            .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
+                            .unwrap_or((1920, 1080));
+                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
+                            (
+                                Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
+                                Size::new(800., unwrapped_size.1 as f32 - 32.),
+                            )
+                        } else {
+                            (Point::ORIGIN, Size::new(1920., 1080.))
+                        };
+                        self.subsurface_rects
+                            .insert(output.clone(), Rectangle::new(loc, sub_size));
+
+                        log::info!("output {}: info update", output.id());
+                    }
+                }
+            }
+            Message::SessionLockEvent(session_lock_event) => match session_lock_event {
+                SessionLockEvent::Focused(..) => {}
+                SessionLockEvent::Locked => {
+                    log::info!("session locked");
+                    if matches!(self.state, State::Locked) {
+                        return Task::none();
+                    }
+                    self.state = State::Locked;
+                    // Allow suspend
+                    self.inhibit_opt = None;
+                    // Create lock surfaces
+
+                    let mut commands = Vec::with_capacity(self.surface_ids.len());
+                    for (output, surface_id) in self.surface_ids.iter() {
+                        commands.push(get_lock_surface(*surface_id, output.clone()));
+
+                        if let Some((rect, name)) = self
+                            .subsurface_rects
+                            .get(output)
+                            .copied()
+                            .zip(self.output_names.get(output))
+                        {
+                            let subsurface_id = SurfaceId::unique();
+                            let surface_id = *surface_id;
+                            self.surface_names.insert(surface_id, name.clone());
+                            self.surface_names.insert(subsurface_id, name.clone());
+                            let msg = cosmic::surface::action::subsurface(
+                                move |_: &mut App| SctkSubsurfaceSettings {
+                                    parent: surface_id,
+                                    id: subsurface_id,
+                                    loc: Point::new(rect.x, rect.y),
+                                    size: Some(Size::new(rect.width, rect.height)),
+                                    z: 10,
+                                    steal_keyboard_focus: true,
+                                    gravity: Gravity::BottomRight,
+                                    offset: (0, 0),
+                                    input_zone: None,
+                                },
+                                Some(Box::new(move |app: &App| {
+                                    app.menu(subsurface_id).map(cosmic::Action::App)
+                                })),
+                            );
+                            commands.push(cosmic::task::message(cosmic::Action::Cosmic(
+                                cosmic::app::Action::Surface(msg),
+                            )));
+                        } else {
+                            log::error!("no rectangle for subsurface...");
+                        }
+                    }
+                    return Task::batch(commands);
+                }
+                SessionLockEvent::Unlocked => {
+                    log::info!("session unlocked");
+                    self.state = State::Unlocked;
+
+                    let mut commands = Vec::new();
+                    for (_output, surface_id) in self.surface_ids.iter() {
+                        self.surface_names.remove(surface_id);
+
+                        commands.push(destroy_lock_surface(*surface_id));
+                    }
+                    if cfg!(feature = "logind") {
+                        return Task::batch(commands);
+                        // When using logind feature, stick around for more lock signals
+                    } else {
+                        // When not using logind feature, exit immediately after unlocking
+                        //TODO: cleaner method to exit?
+                        process::exit(0);
+                    }
+                }
+                //TODO: handle finished signal
+                _ => {}
+            },
+            Message::Channel(value_tx) => {
+                self.value_tx_opt = Some(value_tx);
+            }
+            Message::BackgroundState(background_state) => {
+                self.flags.wallpapers = background_state.wallpapers;
+                self.surface_images.clear();
+                self.update_wallpapers();
+            }
+            Message::Inhibit(inhibit) => {
+                self.inhibit_opt = Some(inhibit);
+            }
+            Message::NetworkIcon(network_icon_opt) => {
+                self.network_icon_opt = network_icon_opt;
+            }
+            Message::PowerInfo(power_info_opt) => {
+                self.power_info_opt = power_info_opt;
+            }
+            Message::Focus(surface_id) => {
+                self.active_surface_id_opt = Some(surface_id);
+                self.active_surface_id_opt = Some(surface_id);
+                if let Some(text_input_id) = self
+                    .surface_names
+                    .get(&surface_id)
+                    .and_then(|id| self.text_input_ids.get(id))
+                {
+                    return widget::text_input::focus(text_input_id.clone());
+                }
+            }
+            Message::Prompt(prompt, secret, value_opt) => {
+                let prompt_was_none = self.prompt_opt.is_none();
+                self.prompt_opt = Some((prompt, secret, value_opt));
+                if prompt_was_none {
+                    if let Some(surface_id) = self.active_surface_id_opt {
+                        if let Some(text_input_id) = self
+                            .surface_names
+                            .get(&surface_id)
+                            .and_then(|id| self.text_input_ids.get(id))
+                        {
+                            log::error!("focus surface found id {:?}", text_input_id);
+
+                            return widget::text_input::focus(text_input_id.clone());
+                        }
+                    }
+                }
+            }
+            Message::Submit(value) => match self.value_tx_opt.take() {
+                Some(value_tx) => {
+                    // Clear errors
+                    self.error_opt = None;
+                    return cosmic::task::future(async move {
+                        value_tx.send(value).await.unwrap();
+                        Message::Channel(value_tx)
+                    });
+                }
+                None => log::warn!("tried to submit when value_tx_opt not set"),
+            },
+            Message::Suspend => {
+                #[cfg(feature = "logind")]
+                return cosmic::task::future(async move {
+                    match crate::logind::suspend().await {
+                        Ok(()) => cosmic::action::none(),
+                        Err(err) => {
+                            log::error!("failed to suspend: {:?}", err);
+                            cosmic::Action::App(Message::Error(err.to_string()))
+                        }
+                    }
+                });
+            }
+            Message::Error(error) => {
+                self.error_opt = Some(error);
+            }
+            Message::Lock => match self.state {
+                State::Unlocked => {
+                    log::info!("session locking");
+                    self.state = State::Locking;
+                    // Clear errors
+                    self.error_opt = None;
+                    // Clear value_tx
+                    self.value_tx_opt = None;
+                    // Try to create lockfile when locking
+                    if let Some(ref lockfile) = self.flags.lockfile_opt {
+                        if let Err(err) = fs::File::create(lockfile) {
+                            log::warn!("failed to create lockfile {:?}: {}", lockfile, err);
+                        }
+                    }
+                    // Tell compositor to lock
+                    return lock();
+                }
+                State::Unlocking => {
+                    log::info!("session still unlocking");
+                }
+                State::Locking | State::Locked => {
+                    log::info!("session already locking or locked");
+                }
+            },
+            Message::Unlock => {
+                match self.state {
+                    State::Locked => {
+                        log::info!("sessing unlocking");
+                        self.state = State::Unlocking;
+                        // Clear errors
+                        self.error_opt = None;
+                        // Clear value_tx
+                        self.value_tx_opt = None;
+                        // Try to delete lockfile when unlocking
+                        if let Some(ref lockfile) = self.flags.lockfile_opt {
+                            if let Err(err) = fs::remove_file(lockfile) {
+                                log::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
+                            }
+                        }
+
+                        // Destroy lock surfaces
+                        let mut commands = Vec::with_capacity(self.surface_ids.len() + 1);
+                        // Tell compositor to unlock
+                        commands.push(unlock());
+
+                        // Wait to exit until `Unlocked` event, when server has processed unlock
+                        return Task::batch(commands);
+                    }
+                    State::Locking => {
+                        log::info!("session still locking");
+                    }
+                    State::Unlocking | State::Unlocked => {
+                        log::info!("session already unlocking or unlocked");
+                    }
+                }
+            }
+            Message::Surface(a) => {
+                return cosmic::task::message(cosmic::Action::Cosmic(
+                    cosmic::app::Action::Surface(a),
+                ));
+            }
+        }
+        Task::none()
+    }
+
+    // Not used for layer surface window
+    fn view(&self) -> Element<Self::Message> {
+        unimplemented!()
+    }
+
+    /// Creates a view after each update.
+    fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
+        let img = self
+            .surface_images
+            .get(&surface_id)
+            .unwrap_or(&self.flags.fallback_background);
+        widget::image(img)
+            .content_fit(iced::ContentFit::Cover)
             .width(Length::Fill)
             .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Top)
-            .style(cosmic::theme::Container::Transparent),
-        )
-        .image(match self.surface_images.get(&surface_id) {
-            Some(some) => some.clone(),
-            //TODO: default image
-            None => widget::image::Handle::from_pixels(1, 1, vec![0x00, 0x00, 0x00, 0xFF]),
-        })
-        .content_fit(iced::ContentFit::Cover)
-        .into()
+            .into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
         let mut subscriptions = Vec::with_capacity(7);
 
-        subscriptions.push(event::listen_with(|event, _| match event {
+        subscriptions.push(event::listen_with(|event, _, id| match event {
             iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
                 wayland_event,
             )) => match wayland_event {
@@ -792,6 +945,7 @@ impl cosmic::Application for App {
                 WaylandEvent::SessionLock(evt) => Some(Message::SessionLockEvent(evt)),
                 _ => None,
             },
+            iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(id)),
             _ => None,
         }));
 
@@ -812,26 +966,24 @@ impl cosmic::Application for App {
 
         if matches!(self.state, State::Locked) {
             struct HeartbeatSubscription;
-            subscriptions.push(subscription::channel(
+            subscriptions.push(Subscription::run_with_id(
                 TypeId::of::<HeartbeatSubscription>(),
-                16,
-                |mut msg_tx| async move {
+                cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
                     loop {
                         // Send heartbeat once a second to update time
                         //TODO: only send this when needed
                         msg_tx.send(Message::None).await.unwrap();
                         time::sleep(time::Duration::new(1, 0)).await;
                     }
-                },
+                }),
             ));
 
             struct PamSubscription;
             //TODO: how to avoid cloning this on every time subscription is called?
             let username = self.flags.current_user.name.clone();
-            subscriptions.push(subscription::channel(
+            subscriptions.push(Subscription::run_with_id(
                 TypeId::of::<PamSubscription>(),
-                16,
-                |mut msg_tx| async move {
+                cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
                     loop {
                         let (value_tx, value_rx) = mpsc::channel(16);
                         msg_tx.send(Message::Channel(value_tx)).await.unwrap();
@@ -862,7 +1014,7 @@ impl cosmic::Application for App {
                     loop {
                         time::sleep(time::Duration::new(60, 0)).await;
                     }
-                },
+                }),
             ));
         }
 
