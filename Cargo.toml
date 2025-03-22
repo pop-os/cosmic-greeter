@@ -1,7 +1,7 @@
 [package]
 name = "cosmic-greeter"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4", features = ["unstable-locales"] }
@@ -42,6 +42,8 @@ nix = { workspace = true, optional = true }
 upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", rev = "badfc6a", optional = true }
 # Required for some features
 zbus = { workspace = true, optional = true }
+# CLI arguments
+lexopt = "0.3.0"
 # Internationalization
 i18n-embed = { version = "0.14", features = [
     "fluent-system",
