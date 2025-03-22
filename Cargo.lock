@@ -1169,7 +1169,7 @@ dependencies = [
  "libcosmic",
  "log",
  "logind-zbus",
- "nix 0.26.4",
+ "nix 0.29.0",
  "pam-client",
  "pwd",
  "ron 0.8.1",
@@ -1204,7 +1204,7 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
- "nix 0.26.4",
+ "nix 0.29.0",
  "pwd",
  "ron 0.8.1",
  "serde",
@@ -3605,7 +3605,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "memoffset 0.7.1",
- "pin-utils",
 ]
 
 [[package]]
