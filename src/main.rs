@@ -7,12 +7,17 @@ use lexopt::{Parser, Arg};
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn print_help() {
-    println!("Usage: cosmic-greeter");
-    println!("\nCOSMIC Greeter");
-    println!("A login and lock screen manager designed for the COSMIC desktop environment. \nFor more information, visit the GitHub repository at https://github.com/pop-os/cosmic-greeter.");
-    println!("\nOptions:");
-    println!("  --help     Show this message");
-    println!("  --version  Show the version of cosmic-greeter");
+    println!(
+        r#"
+COSMIC Greeter
+A login and lock screen manager designed for the COSMIC desktop environment.
+
+Project home page: https://github.com/pop-os/cosmic-greeter
+
+Options:
+  --help     Show this message
+  --version  Show the version of cosmic-greeter"#
+    );
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
