@@ -3,6 +3,9 @@ name = "cosmic-greeter"
 version = "0.1.0"
 edition = "2024"
 
+[build-dependencies]
+vergen = { version = "8", features = ["git", "gitcl"] }
+
 [dependencies]
 chrono = { version = "0.4", features = ["unstable-locales"] }
 cosmic-bg-config.workspace = true

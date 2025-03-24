@@ -4,12 +4,10 @@
 use cosmic_greeter::{greeter, locker};
 
 use lexopt::{Parser, Arg};
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn print_help() {
     println!(
-        r#"
-COSMIC Greeter
+        r#"COSMIC Greeter
 A login and lock screen manager designed for the COSMIC desktop environment.
 
 Project home page: https://github.com/pop-os/cosmic-greeter
@@ -26,12 +24,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse the arguments
     while let Some(arg) = parser.next()? {
         match arg {
-            Arg::Long("help") => {
+            Arg::Short('h') | Arg::Long("help") => {
                 print_help();
                 return Ok(());
             }
-            Arg::Long("version") => {
-                println!("cosmic-greeter {}", APP_VERSION);
+            Arg::Short('v') | Arg::Long("version") => {
+                println!("cosmic-term {} (git commit {})",
+                    env!("CARGO_PKG_VERSION"),
+                    env!("VERGEN_GIT_SHA")
+                );
                 return Ok(());
             }
             _ => {}
