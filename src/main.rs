@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             Arg::Short('v') | Arg::Long("version") => {
-                println!("cosmic-term {} (git commit {})",
+                println!("cosmic-greeter {} (git commit {})",
                     env!("CARGO_PKG_VERSION"),
                     env!("VERGEN_GIT_SHA")
                 );
