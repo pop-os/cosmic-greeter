@@ -2,20 +2,21 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use cosmic_greeter::{greeter, locker};
+use clap_lex::RawArgs;
+use std::error::Error;
 
-use lexopt::{Arg, Parser};
+fn main() -> Result<(), Box<dyn Error>> {
+    let raw_args = RawArgs::from_args();
+    let mut cursor = raw_args.cursor();
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut parser = Parser::from_env();
-
-    // Parse the arguments
-    while let Some(arg) = parser.next()? {
-        match arg {
-            Arg::Short('h') | Arg::Long("help") => {
+    // Parse les arguments
+    while let Some(arg) = raw_args.next_os(&mut cursor) {
+        match arg.to_str() {
+            Some("--help") | Some("-h") => {
                 print_help(env!("CARGO_PKG_VERSION"), env!("VERGEN_GIT_SHA"));
                 return Ok(());
             }
-            Arg::Short('v') | Arg::Long("version") => {
+            Some("--version") | Some("-v") => {
                 println!(
                     "cosmic-greeter {} (git commit {})",
                     env!("CARGO_PKG_VERSION"),
@@ -51,3 +52,4 @@ Options:
   -v, --version  Show the version of cosmic-greeter"#
     );
 }
+
