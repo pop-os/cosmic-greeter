@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let raw_args = RawArgs::from_args();
     let mut cursor = raw_args.cursor();
 
-    // Parse les arguments
+    // Parse the arguments
     while let Some(arg) = raw_args.next_os(&mut cursor) {
         match arg.to_str() {
             Some("--help") | Some("-h") => {
