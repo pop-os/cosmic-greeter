@@ -46,7 +46,7 @@ upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", rev = 
 # Required for some features
 zbus = { workspace = true, optional = true }
 # CLI arguments
-lexopt = "0.3.0"
+clap_lex = "0.7"
 # Internationalization
 i18n-embed = { version = "0.14", features = [
     "fluent-system",
