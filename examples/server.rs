@@ -11,8 +11,7 @@ async fn main() {
 
     let listener = UnixListener::bind(&greetd_sock).unwrap();
     println!("listening at {:?}", greetd_sock);
-
-    env::set_var("GREETD_SOCK", &greetd_sock);
+    unsafe { env::set_var("GREETD_SOCK", &greetd_sock) };
     thread::spawn(|| {
         cosmic_greeter::greeter::main().unwrap();
     });
