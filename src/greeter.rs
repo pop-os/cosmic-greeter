@@ -29,7 +29,7 @@ use cosmic::{
         },
     },
     iced_runtime::core::window::Id as SurfaceId,
-    style, theme, widget,
+    theme, widget,
 };
 use cosmic_comp_config::CosmicCompConfig;
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
@@ -417,6 +417,8 @@ pub enum Message {
     Socket(SocketState),
     Surface(surface::Action),
     Suspend,
+    Tick,
+    Tz(chrono_tz::Tz),
     Username(String),
 }
 
@@ -444,47 +446,23 @@ pub struct App {
     dropdown_opt: Option<Dropdown>,
     window_size: HashMap<SurfaceId, Size>,
     heartbeat_handle: Option<cosmic::iced::task::Handle>,
+    time: crate::time::Time,
 }
 
 impl App {
     fn menu(&self, id: SurfaceId) -> Element<Message> {
         let left_element = {
-            let date_time_column = {
-                let mut column = widget::column::with_capacity(2).padding(16.0).spacing(12.0);
-
-                let dt = chrono::Local::now();
-                let locale = *crate::localize::LANGUAGE_CHRONO;
-
-                let date = dt.format_localized("%A, %B %-d", locale);
-                column = column
-                    .push(widget::text::title2(format!("{}", date)).class(style::Text::Accent));
-
-                let (time, time_size) = if self
-                    .selected_username
-                    .data_idx
-                    .and_then(|i| {
-                        self.flags
-                            .user_datas
-                            .get(i)
-                            .map(|user| user.clock_military_time)
-                    })
-                    .unwrap_or_default()
-                {
-                    (dt.format_localized("%R", locale), 112.0)
-                } else {
-                    // xxx format_localized doesn't seem to show am/pm for some languages, such as
-                    // French or Hungarian. This is apparently correct
-                    // Also, time size needs to be reduced a bit here so that it fits on one line
-                    (dt.format_localized("%I:%M %p", locale), 75.0)
-                };
-                column = column.push(
-                    widget::text(format!("{}", time))
-                        .size(time_size)
-                        .class(style::Text::Accent),
-                );
-
-                column
-            };
+            let military_time = self
+                .selected_username
+                .data_idx
+                .and_then(|i| {
+                    self.flags
+                        .user_datas
+                        .get(i)
+                        .map(|user| user.clock_military_time)
+                })
+                .unwrap_or_default();
+            let date_time_column = self.time.date_time_widget(military_time);
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
 
@@ -1071,8 +1049,15 @@ impl cosmic::Application for App {
             dropdown_opt: None,
             window_size: HashMap::new(),
             heartbeat_handle: None,
+            time: crate::time::Time::new(),
         };
-        (app, Task::none())
+        (
+            app,
+            Task::batch(vec![
+                crate::time::tick().map(|_| cosmic::Action::App(Message::Tick)),
+                crate::time::tz_updates().map(|tz| cosmic::Action::App(Message::Tz(tz))),
+            ]),
+        )
     }
 
     /// Handle application events here.
@@ -1489,7 +1474,6 @@ impl cosmic::Application for App {
                     cosmic::app::Action::Surface(a),
                 ));
             }
-
             Message::Focus(surface_id) => {
                 self.active_surface_id_opt = Some(surface_id);
                 if let Some(text_input_id) = self
@@ -1499,6 +1483,12 @@ impl cosmic::Application for App {
                 {
                     return widget::text_input::focus(text_input_id.clone());
                 }
+            }
+            Message::Tick => {
+                self.time.tick();
+            }
+            Message::Tz(tz) => {
+                self.time.set_tz(tz);
             }
         }
         Task::none()
