@@ -1,12 +1,12 @@
 use cosmic::iced::{
-    futures::{channel::mpsc, SinkExt, StreamExt},
     Subscription,
+    futures::{SinkExt, StreamExt, channel::mpsc},
 };
 use logind_zbus::{
     manager::{InhibitType, ManagerProxy},
     session::SessionProxy,
 };
-use std::{any::TypeId, error::Error, os::fd::OwnedFd, sync::Arc};
+use std::{any::TypeId, error::Error, os::fd::OwnedFd, sync::Arc, time::Duration};
 use zbus::Connection;
 
 use crate::locker::Message;
@@ -78,6 +78,9 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Message>) -> Result<(), Box<dyn E
     let mut prepare_for_sleep = manager.receive_prepare_for_sleep().await?;
     let mut lock = session.receive_lock().await?;
     let mut unlock = session.receive_unlock().await?;
+
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+
     loop {
         // Waits until a signal has been received
         tokio::select!(
@@ -114,5 +117,7 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Message>) -> Result<(), Box<dyn E
             log::info!("logind unlock");
             msg_tx.send(Message::Unlock).await?;
         });
+
+        interval.tick().await;
     }
 }

@@ -1,10 +1,9 @@
 use cosmic::iced::{
-    futures::{channel::mpsc, SinkExt, StreamExt},
     Subscription,
+    futures::{SinkExt, StreamExt, channel::mpsc},
 };
 use cosmic_dbus_networkmanager::{device::SpecificDevice, nm::NetworkManager};
-use std::{any::TypeId, cmp};
-use tokio::time;
+use std::{any::TypeId, cmp, time::Duration};
 use zbus::{Connection, Result};
 
 #[derive(Clone, Copy, Debug)]
@@ -52,9 +51,7 @@ pub fn subscription() -> Subscription<Option<&'static str>> {
             msg_tx.send(None).await.unwrap();
 
             //TODO: should we retry on error?
-            loop {
-                time::sleep(time::Duration::new(60, 0)).await;
-            }
+            futures_util::future::pending().await
         }),
     )
 }
@@ -63,8 +60,9 @@ pub fn subscription() -> Subscription<Option<&'static str>> {
 pub async fn handler(msg_tx: &mut mpsc::Sender<Option<&'static str>>) -> Result<()> {
     let zbus = Connection::system().await?;
     let nm = NetworkManager::new(&zbus).await?;
-
     let mut active_conns_changed = nm.receive_active_connections_changed().await;
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+
     loop {
         let mut icon = NetworkIcon::None;
 
@@ -100,9 +98,7 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<&'static str>>) -> Result<
         msg_tx.send(Some(icon.name())).await.unwrap();
 
         // Waits until active connections have changed and at least one second has passed
-        tokio::join!(
-            active_conns_changed.next(),
-            time::sleep(time::Duration::from_secs(1))
-        );
+        active_conns_changed.next().await;
+        interval.tick().await;
     }
 }

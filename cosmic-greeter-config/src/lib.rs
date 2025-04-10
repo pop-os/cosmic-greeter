@@ -33,7 +33,7 @@ where
         Ok(handler) => {
             let config = C::get_entry(&handler)
                 .inspect_err(|(errors, _)| {
-                    for err in errors {
+                    for err in errors.iter().filter(|err| err.is_err()) {
                         log::error!("{err}")
                     }
                 })
