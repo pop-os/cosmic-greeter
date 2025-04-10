@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::{
-    str::FromStr,
-    sync::{LazyLock, OnceLock},
-};
+use std::sync::OnceLock;
 
 use i18n_embed::{
-    fluent::{fluent_language_loader, FluentLanguageLoader},
     DefaultLocalizer, LanguageLoader, Localizer,
+    fluent::{FluentLanguageLoader, fluent_language_loader},
 };
 use rust_embed::RustEmbed;
 
@@ -16,19 +13,6 @@ use rust_embed::RustEmbed;
 struct Localizations;
 
 pub static LANGUAGE_LOADER: OnceLock<FluentLanguageLoader> = OnceLock::new();
-pub static LANGUAGE_CHRONO: LazyLock<chrono::Locale> = LazyLock::new(|| {
-    std::env::var("LC_TIME")
-        .ok()
-        .or_else(|| std::env::var("LANG").ok())
-        .and_then(|locale_full| {
-            // Split LANG because it may be set to a locale such as en_US.UTF8
-            locale_full
-                .split('.')
-                .next()
-                .and_then(|locale| chrono::Locale::from_str(locale).ok())
-        })
-        .unwrap_or(chrono::Locale::en_US)
-});
 
 #[macro_export]
 macro_rules! fl {

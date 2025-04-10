@@ -20,7 +20,7 @@ use cosmic::{
         },
     },
     iced_runtime::core::window::Id as SurfaceId,
-    style, widget,
+    widget,
 };
 use cosmic_config::CosmicConfigEntry;
 use std::time::Duration;
@@ -35,7 +35,7 @@ use std::{
     process,
     sync::Arc,
 };
-use tokio::{sync::mpsc, task};
+use tokio::{sync::mpsc, task, time};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 
 fn lockfile_opt() -> Option<PathBuf> {
@@ -232,6 +232,8 @@ pub enum Message {
     Suspend,
     Error(String),
     Lock,
+    Tick,
+    Tz(chrono_tz::Tz),
     Unlock,
 }
 
@@ -273,30 +275,15 @@ pub struct App {
     value_tx_opt: Option<mpsc::Sender<String>>,
     prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
+    time: crate::time::Time,
 }
 
 impl App {
     fn menu(&self, surface_id: SurfaceId) -> Element<Message> {
         let left_element = {
-            let date_time_column = {
-                let mut column = widget::column::with_capacity(2).padding(16.0);
-
-                let dt = chrono::Local::now();
-                let locale = *crate::localize::LANGUAGE_CHRONO;
-
-                let date = dt.format_localized("%A, %B %-d", locale);
-                column = column
-                    .push(widget::text::title2(format!("{}", date)).class(style::Text::Accent));
-
-                let time = dt.format_localized("%R", locale);
-                column = column.push(
-                    widget::text(format!("{}", time))
-                        .size(112.0)
-                        .class(style::Text::Accent),
-                );
-
-                column
-            };
+            // TODO how should we get user preference for military time here?
+            let military_time = false;
+            let date_time_column = self.time.date_time_widget(military_time);
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
 
@@ -555,9 +542,10 @@ impl cosmic::Application for App {
             value_tx_opt: None,
             prompt_opt: None,
             error_opt: None,
+            time: crate::time::Time::new(),
         };
 
-        let command = if cfg!(feature = "logind") {
+        let task = if cfg!(feature = "logind") {
             if already_locked {
                 // Recover previously locked state
                 log::info!("recovering previous locked state");
@@ -574,7 +562,14 @@ impl cosmic::Application for App {
             lock()
         };
 
-        (app, command)
+        (
+            app,
+            Task::batch(vec![
+                task,
+                crate::time::tick().map(|_| cosmic::Action::App(Message::Tick)),
+                crate::time::tz_updates().map(|tz| cosmic::Action::App(Message::Tz(tz))),
+            ]),
+        )
     }
 
     /// Handle application events here.
@@ -997,6 +992,12 @@ impl cosmic::Application for App {
                 return cosmic::task::message(cosmic::Action::Cosmic(
                     cosmic::app::Action::Surface(a),
                 ));
+            }
+            Message::Tick => {
+                self.time.tick();
+            }
+            Message::Tz(tz) => {
+                self.time.set_tz(tz);
             }
         }
         Task::none()
