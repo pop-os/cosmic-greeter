@@ -1,9 +1,8 @@
 use cosmic::iced::{
-    futures::{channel::mpsc, SinkExt, StreamExt},
     Subscription,
+    futures::{SinkExt, StreamExt, channel::mpsc},
 };
-use std::any::TypeId;
-use tokio::time;
+use std::{any::TypeId, time::Duration};
 use upower_dbus::UPowerProxy;
 use zbus::{Connection, Result};
 
@@ -25,9 +24,7 @@ pub fn subscription() -> Subscription<Option<(String, f64)>> {
             msg_tx.send(None).await.unwrap();
 
             //TODO: should we retry on error?
-            loop {
-                time::sleep(time::Duration::new(60, 0)).await;
-            }
+            futures_util::future::pending().await
         }),
     )
 }
@@ -40,6 +37,8 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<(String, f64)>>) -> Result
 
     let mut icon_name_changed = dev.receive_icon_name_changed().await;
     let mut percentage_changed = dev.receive_percentage_changed().await;
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+
     loop {
         let mut info_opt = None;
 
@@ -53,7 +52,8 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<(String, f64)>>) -> Result
 
         msg_tx.send(info_opt).await.unwrap();
 
-        // Waits until icon or percentage have changed
-        tokio::select!(_ = icon_name_changed.next() => (), _ = percentage_changed.next() => ());
+        // Waits until icon or percentage have changed, and at least one second has passed.
+        futures_util::future::select(icon_name_changed.next(), percentage_changed.next()).await;
+        interval.tick().await;
     }
 }

@@ -6,6 +6,7 @@ use cosmic::iced::Subscription;
 use futures_util::SinkExt;
 use greetd_ipc::codec::TokioCodec;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
@@ -20,12 +21,15 @@ pub fn subscription() -> Subscription<Message> {
             let socket_path =
                 std::env::var_os("GREETD_SOCK").expect("GREETD_SOCK environment not set");
 
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+
             loop {
                 _ = sender.send(Message::Reconnect).await;
 
                 let mut stream = match UnixStream::connect(&socket_path).await {
                     Ok(stream) => stream,
                     Err(why) => {
+                        log::error!("greetd IPC socket connection failed: {why:?}");
                         _ = sender.send(Message::Socket(SocketState::Error(Arc::new(why))));
 
                         break;
@@ -36,7 +40,7 @@ pub fn subscription() -> Subscription<Message> {
 
                 while let Some(request) = rx.recv().await {
                     if let Err(why) = request.write_to(&mut stream).await {
-                        log::error!("error writing to GREETD_SOCK stream: {why}");
+                        log::error!("error writing to GREETD_SOCK stream: {why:?}");
                         break;
                     }
 
@@ -85,8 +89,9 @@ pub fn subscription() -> Subscription<Message> {
                                                 "error while cancelling session: {}",
                                                 description
                                             );
+
                                             // Reconnect to socket
-                                            _ = break
+                                            break;
                                         }
                                         _ => {
                                             _ = sender.send(Message::Error(description)).await;
@@ -107,6 +112,7 @@ pub fn subscription() -> Subscription<Message> {
                                         _ = sender.send(Message::Exit).await;
                                     }
                                     greetd_ipc::Request::CancelSession => {
+                                        log::info!("greetd IPC session canceled");
                                         // Reconnect to socket
                                         break;
                                     }
@@ -119,6 +125,9 @@ pub fn subscription() -> Subscription<Message> {
                         }
                     }
                 }
+
+                log::info!("reconnecting to greetd IPC socket");
+                interval.tick().await;
             }
 
             futures_util::future::pending().await
