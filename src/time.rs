@@ -116,7 +116,7 @@ impl Time {
             preferences::HourCycle::H12
         };
 
-        top_bag.preferences = Some(preferences::Bag::from_hour_cycle(hour_cycle));
+        bottom_bag.preferences = Some(preferences::Bag::from_hour_cycle(hour_cycle));
 
         Element::from(
             column()
