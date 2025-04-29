@@ -451,6 +451,12 @@ pub struct App {
 
 impl App {
     fn menu(&self, id: SurfaceId) -> Element<Message> {
+        let window_width = self.window_size.get(&id).map(|s| s.width).unwrap_or(800.);
+        let menu_width = if window_width > 800. {
+            800.
+        } else {
+            window_width
+        };
         let left_element = {
             let military_time = self
                 .selected_username
@@ -624,12 +630,11 @@ impl App {
 
             widget::container(iced::widget::column![
                 date_time_column,
-                widget::divider::horizontal::default(),
+                widget::divider::horizontal::default().width(Length::Fixed(menu_width / 2. - 16.)),
                 status_row,
-                widget::divider::horizontal::default(),
+                widget::divider::horizontal::default().width(Length::Fixed(menu_width / 2. - 16.)),
                 button_row,
             ])
-            .width(Length::Fill)
             .align_x(alignment::Horizontal::Left)
         };
 
@@ -1175,6 +1180,7 @@ impl cosmic::Application for App {
                         match self.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.surface_images.remove(&surface_id);
+                                self.window_size.remove(&surface_id);
                                 if let Some(n) = self.surface_names.remove(&surface_id) {
                                     self.text_input_ids.remove(&n);
                                 }
