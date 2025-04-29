@@ -35,7 +35,7 @@ use std::{
     process,
     sync::Arc,
 };
-use tokio::{sync::mpsc, task, time};
+use tokio::{sync::mpsc, task};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 
 fn lockfile_opt() -> Option<PathBuf> {
@@ -276,10 +276,21 @@ pub struct App {
     prompt_opt: Option<(String, bool, Option<String>)>,
     error_opt: Option<String>,
     time: crate::time::Time,
+    window_size: HashMap<SurfaceId, Size>,
 }
 
 impl App {
     fn menu(&self, surface_id: SurfaceId) -> Element<Message> {
+        let window_width = self
+            .window_size
+            .get(&surface_id)
+            .map(|s| s.width)
+            .unwrap_or(800.);
+        let menu_width = if window_width > 800. {
+            800.
+        } else {
+            window_width
+        };
         let left_element = {
             // TODO how should we get user preference for military time here?
             let military_time = false;
@@ -320,12 +331,11 @@ impl App {
 
             widget::container(iced::widget::column![
                 date_time_column,
-                widget::divider::horizontal::default(),
+                widget::divider::horizontal::default().width(Length::Fixed(menu_width / 2. - 16.)),
                 status_row,
-                widget::divider::horizontal::default(),
+                widget::divider::horizontal::default().width(Length::Fixed(menu_width / 2. - 16.)),
                 button_row,
             ])
-            .width(Length::Fill)
             .align_x(alignment::Horizontal::Left)
         };
 
@@ -543,6 +553,7 @@ impl cosmic::Application for App {
             prompt_opt: None,
             error_opt: None,
             time: crate::time::Time::new(),
+            window_size: HashMap::new(),
         };
 
         let task = if cfg!(feature = "logind") {
@@ -641,6 +652,11 @@ impl cosmic::Application for App {
                                 Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32 - 32.),
                             )
                         };
+                        self.window_size.insert(
+                            surface_id,
+                            Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
+                        );
+
                         self.subsurface_rects
                             .insert(output.clone(), Rectangle::new(loc, sub_size));
 
@@ -676,6 +692,7 @@ impl cosmic::Application for App {
                             Some(surface_id) => {
                                 self.surface_images.remove(&surface_id);
                                 self.surface_names.remove(&surface_id);
+                                self.window_size.remove(&surface_id);
                                 if let Some(n) = self.surface_names.remove(&surface_id) {
                                     self.text_input_ids.remove(&n);
                                 }
@@ -844,7 +861,7 @@ impl cosmic::Application for App {
                     let mut commands = Vec::new();
                     for (_output, surface_id) in self.surface_ids.iter() {
                         self.surface_names.remove(surface_id);
-
+                        self.window_size.remove(surface_id);
                         commands.push(destroy_lock_surface(*surface_id));
                     }
                     if cfg!(feature = "logind") {
@@ -971,6 +988,7 @@ impl cosmic::Application for App {
 
                         for (_output, surface_id) in self.surface_ids.iter() {
                             self.surface_names.remove(surface_id);
+                            self.window_size.remove(&surface_id);
                             commands.push(destroy_lock_surface(*surface_id));
                         }
 
