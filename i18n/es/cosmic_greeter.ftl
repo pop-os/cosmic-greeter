@@ -12,4 +12,4 @@ shutdown-timeout = El ordenador se apagará automáticamente en { $seconds ->
   [one] 1 segundo.
   *[other] {$seconds} segundos.}
 suspend = Suspender
-user = Utente
+user = Usuario
