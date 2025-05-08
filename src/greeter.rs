@@ -359,6 +359,7 @@ pub struct ActiveLayout {
 
 #[derive(Clone, Copy, Debug)]
 pub enum DialogPage {
+    Suspend(Instant),
     Restart(Instant),
     Shutdown(Instant),
 }
@@ -773,6 +774,25 @@ impl App {
 
         let popover = widget::popover(menu).modal(true);
         match self.dialog_page_opt {
+            Some(DialogPage::Suspend(instant)) => {
+                let remaining = DialogPage::remaining(instant).unwrap_or_default();
+                popover
+                    .popup(
+                        widget::dialog()
+                            .title(fl!("suspend-now"))
+                            .icon(widget::icon::from_name("system-suspend-symbolic").size(64))
+                            .body(fl!("suspend-timeout", seconds = remaining.as_secs()))
+                            .primary_action(
+                                widget::button::suggested(fl!("suspend"))
+                                    .on_press(Message::DialogConfirm),
+                            )
+                            .secondary_action(
+                                widget::button::standard(fl!("cancel"))
+                                    .on_press(Message::DialogCancel),
+                            ),
+                    )
+                    .into()
+            }
             Some(DialogPage::Restart(instant)) => {
                 let remaining = DialogPage::remaining(instant).unwrap_or_default();
                 popover
@@ -1366,6 +1386,18 @@ impl cosmic::Application for App {
                 }
             }
             Message::DialogConfirm => match self.dialog_page_opt.take() {
+                Some(DialogPage::Suspend(_)) => {
+                    #[cfg(feature = "logind")]
+                    return cosmic::task::future::<(), ()>(async move {
+                        match crate::logind::suspend().await {
+                            Ok(()) => (),
+                            Err(err) => {
+                                log::error!("failed to suspend: {:?}", err);
+                            }
+                        }
+                    })
+                    .discard();
+                }
                 Some(DialogPage::Restart(_)) => {
                     #[cfg(feature = "logind")]
                     return cosmic::task::future::<(), ()>(async move {
@@ -1408,22 +1440,12 @@ impl cosmic::Application for App {
                     self.dropdown_opt = None
                 }
             }
-            Message::Suspend => {
-                #[cfg(feature = "logind")]
-                return cosmic::task::future::<(), ()>(async move {
-                    match crate::logind::suspend().await {
-                        Ok(()) => (),
-                        Err(err) => {
-                            log::error!("failed to suspend: {:?}", err);
-                        }
-                    }
-                })
-                .discard();
-            }
-            Message::Restart | Message::Shutdown => {
+            Message::Suspend | Message::Restart | Message::Shutdown => {
                 let instant = Instant::now();
 
-                self.dialog_page_opt = Some(if matches!(message, Message::Restart) {
+                self.dialog_page_opt = Some(if matches!(message, Message::Suspend) {
+                    DialogPage::Suspend(instant)
+                } else if matches!(message, Message::Restart) {
                     DialogPage::Restart(instant)
                 } else {
                     DialogPage::Shutdown(instant)
@@ -1452,7 +1474,9 @@ impl cosmic::Application for App {
                 }
             }
             Message::Heartbeat => match self.dialog_page_opt {
-                Some(DialogPage::Restart(instant)) | Some(DialogPage::Shutdown(instant)) => {
+                Some(DialogPage::Suspend(instant))
+                | Some(DialogPage::Restart(instant)) 
+                | Some(DialogPage::Shutdown(instant)) => {
                     if DialogPage::remaining(instant).is_none() {
                         return self.update(Message::DialogConfirm);
                     }

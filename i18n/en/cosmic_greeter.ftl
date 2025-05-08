@@ -16,4 +16,10 @@ shutdown-timeout = The system will shut down automatically in
     *[other] {$seconds} seconds.
   }
 suspend = Suspend
+suspend-now = Suspend now?
+suspend-timeout = The system will suspend automatically in
+  { $seconds ->
+    [1] 1 second.
+    *[other] {$seconds} seconds.
+  }
 user = User
