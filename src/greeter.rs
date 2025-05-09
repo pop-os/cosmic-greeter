@@ -33,7 +33,7 @@ use cosmic::{
 };
 use cosmic_comp_config::CosmicCompConfig;
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
-use cosmic_greeter_daemon::{UserData, WallpaperData};
+use cosmic_greeter_daemon::{BgSource, UserData};
 use greetd_ipc::Request;
 use std::{
     collections::{HashMap, hash_map},
@@ -432,12 +432,8 @@ impl App {
             let military_time = self
                 .selected_username
                 .data_idx
-                .and_then(|i| {
-                    self.flags
-                        .user_datas
-                        .get(i)
-                        .and_then(|user| user.clock_military_time_opt)
-                })
+                .and_then(|i| self.flags.user_datas.get(i))
+                .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
             let date_time_column = self.time.date_time_widget(military_time);
 
@@ -639,11 +635,9 @@ impl App {
                                 None => {}
                             }
                             column = column.push(
-                                widget::container(widget::text::title4(
-                                    user_data.full_name_or_name(),
-                                ))
-                                .width(Length::Fill)
-                                .align_x(alignment::Horizontal::Center),
+                                widget::container(widget::text::title4(&user_data.full_name))
+                                    .width(Length::Fill)
+                                    .align_x(alignment::Horizontal::Center),
                             );
                         }
                     }
@@ -834,42 +828,46 @@ impl App {
             }
         };
 
-        if let Some(wallpapers) = &user_data.wallpapers_opt {
-            for (output, surface_id) in self.surface_ids.iter() {
-                if self.surface_images.contains_key(surface_id) {
-                    continue;
-                }
+        for (_output, surface_id) in self.surface_ids.iter() {
+            if self.surface_images.contains_key(surface_id) {
+                continue;
+            }
 
-                let output_name = match self.surface_names.get(surface_id) {
-                    Some(some) => some,
-                    None => continue,
-                };
+            let Some(output_name) = self.surface_names.get(surface_id) else {
+                continue;
+            };
 
-                log::info!("updating wallpaper for {:?}", output_name);
+            log::info!("updating wallpaper for {:?}", output_name);
 
-                for (wallpaper_output_name, wallpaper_data) in wallpapers.iter() {
-                    if wallpaper_output_name == output_name {
-                        match wallpaper_data {
-                            WallpaperData::Bytes(bytes) => {
-                                self.surface_images
-                                    .insert(*surface_id, image::Handle::from_bytes(bytes.clone()));
-
-                                //TODO: what to do about duplicates?
-                                break;
+            for (wallpaper_output_name, wallpaper_source) in user_data.bg_state.wallpapers.iter() {
+                if wallpaper_output_name == output_name {
+                    match wallpaper_source {
+                        BgSource::Path(path) => {
+                            match user_data.bg_path_data.get(path) {
+                                Some(bytes) => {
+                                    let image = widget::image::Handle::from_bytes(bytes.clone());
+                                    self.surface_images.insert(*surface_id, image);
+                                    //TODO: what to do about duplicates?
+                                }
+                                None => {
+                                    log::warn!(
+                                        "output {}: failed to find wallpaper data for source {:?}",
+                                        output_name,
+                                        path
+                                    );
+                                }
                             }
-                            WallpaperData::Color(color) => {
-                                //TODO: support color sources
-                                log::warn!(
-                                    "output {}: unsupported source {:?}",
-                                    output.id(),
-                                    color
-                                );
-                            }
+                            break;
+                        }
+                        BgSource::Color(color) => {
+                            //TODO: support color sources
+                            log::warn!("output {}: unsupported source {:?}", output_name, color);
                         }
                     }
                 }
             }
         }
+
         // From cosmic-applet-input-sources
         if let Some(keyboard_layouts) = &self.flags.layouts_opt {
             if let Some(xkb_config) = &user_data.xkb_config_opt {
@@ -964,15 +962,11 @@ impl cosmic::Application for App {
         core.window.show_minimize = false;
         core.window.use_template = false;
 
-        //TODO: use full_name_opt
+        //TODO: use full_name?
         let mut usernames: Vec<_> = flags
             .user_datas
             .iter()
-            .map(|x| {
-                let name = x.name.clone();
-                let full_name = x.full_name_opt.clone().unwrap_or_else(|| name.clone());
-                (name, full_name)
-            })
+            .map(|x| (x.name.clone(), x.full_name.clone()))
             .collect();
         usernames.sort_by(|a, b| a.1.cmp(&b.1));
 

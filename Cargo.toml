@@ -16,6 +16,7 @@ icu = { version = "1.5.0", features = [
 ] }
 chrono-tz = "0.10"
 chrono = { version = "0.4", features = ["unstable-locales"] }
+cosmic-applets-config.workspace = true
 cosmic-bg-config.workspace = true
 cosmic-comp-config.workspace = true
 cosmic-config = { workspace = true, features = ["calloop", "macro"] }
@@ -103,6 +104,9 @@ serde = "1"
 tokio = "1.39.1"
 zbus = "4"
 
+[workspace.dependencies.cosmic-applets-config]
+git = "https://github.com/pop-os/cosmic-applets"
+default-features = false
 
 [workspace.dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"

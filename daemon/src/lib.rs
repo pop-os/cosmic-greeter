@@ -1,58 +1,67 @@
-use cosmic_config::{ConfigGet, CosmicConfigEntry};
-use std::{fs, path::Path};
+use cosmic_config::CosmicConfigEntry;
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
-pub use cosmic_bg_config::{Color, Source};
+pub use cosmic_applets_config::time::TimeAppletConfig;
+pub use cosmic_bg_config::{state::State as BgState, Color, Source as BgSource};
 pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig};
 pub use cosmic_theme::Theme;
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 pub struct UserData {
     pub uid: u32,
     pub name: String,
-    pub full_name_opt: Option<String>,
+    pub full_name: String,
     pub icon_opt: Option<Vec<u8>>,
     pub theme_opt: Option<Theme>,
-    pub wallpapers_opt: Option<Vec<(String, WallpaperData)>>,
+    pub bg_state: BgState,
+    pub bg_path_data: BTreeMap<PathBuf, Vec<u8>>,
     pub xkb_config_opt: Option<XkbConfig>,
-    pub clock_military_time_opt: Option<bool>,
+    pub time_applet_config: TimeAppletConfig,
 }
 
 impl UserData {
-    pub fn full_name_or_name(&self) -> &str {
-        if let Some(full_name) = &self.full_name_opt {
-            if !full_name.is_empty() {
-                return full_name.as_str();
-            }
-        }
-        self.name.as_str()
-    }
-
-    pub fn load_wallpapers_as_user(&mut self, wallpaper_state: &cosmic_bg_config::state::State) {
-        let mut wallpaper_datas = Vec::new();
-        for (output, source) in wallpaper_state.wallpapers.iter() {
+    pub fn load_wallpapers_as_user(&mut self) {
+        //TODO: reload changed background files?
+        self.bg_path_data.retain(|path, _| {
+            self.bg_state
+                .wallpapers
+                .iter()
+                .any(|(_, source)| match source {
+                    BgSource::Path(source_path) => source_path == path,
+                    _ => false,
+                })
+        });
+        for (_, source) in self.bg_state.wallpapers.iter() {
             match source {
-                Source::Path(path) => match fs::read(&path) {
-                    Ok(bytes) => {
-                        wallpaper_datas.push((output.clone(), WallpaperData::Bytes(bytes)));
+                //TODO: do not reread duplicate paths, cache data by path?
+                BgSource::Path(path) => {
+                    if !self.bg_path_data.contains_key(path) {
+                        match fs::read(&path) {
+                            Ok(bytes) => {
+                                self.bg_path_data.insert(path.clone(), bytes);
+                            }
+                            Err(err) => {
+                                log::error!("failed to read wallpaper {:?}: {:?}", path, err);
+                            }
+                        }
                     }
-                    Err(err) => {
-                        log::error!("failed to read wallpaper {:?}: {:?}", path, err);
-                    }
-                },
-                Source::Color(color) => {
-                    wallpaper_datas.push((output.clone(), WallpaperData::Color(color.clone())));
                 }
+                // Other types not supported
+                _ => {}
             }
         }
-        self.wallpapers_opt = Some(wallpaper_datas);
     }
 
     pub fn load_config_as_user(&mut self) {
         self.icon_opt = None;
         self.theme_opt = None;
-        self.wallpapers_opt = None;
+        self.bg_state = Default::default();
         self.xkb_config_opt = None;
-        self.clock_military_time_opt = None;
+        self.time_applet_config = Default::default();
 
         //TODO: use accountsservice?
         //IMPORTANT: This file is owned by root and safe to read (it won't be a link to /etc/shadow for example)
@@ -106,25 +115,21 @@ impl UserData {
         }
 
         //TODO: fallback to background config if background state is not set?
-        let mut wallpaper_state_opt = None;
         match cosmic_bg_config::state::State::state() {
             Ok(helper) => match cosmic_bg_config::state::State::get_entry(&helper) {
                 Ok(state) => {
-                    wallpaper_state_opt = Some(state);
+                    self.bg_state = state;
                 }
                 Err((errs, state)) => {
                     log::error!("failed to load cosmic-bg state: {:?}", errs);
-                    wallpaper_state_opt = Some(state);
+                    self.bg_state = state;
                 }
             },
             Err(err) => {
                 log::error!("failed to create cosmic-bg state helper: {:?}", err);
             }
         }
-
-        if let Some(wallpaper_state) = wallpaper_state_opt {
-            self.load_wallpapers_as_user(&wallpaper_state);
-        }
+        self.load_wallpapers_as_user();
 
         match cosmic_config::Config::new("com.system76.CosmicComp", CosmicCompConfig::VERSION) {
             Ok(config_handler) => match CosmicCompConfig::get_entry(&config_handler) {
@@ -141,13 +146,15 @@ impl UserData {
             }
         };
 
-        match cosmic_config::Config::new("com.system76.CosmicAppletTime", 1) {
-            Ok(config_handler) => match config_handler.get("military_time") {
-                Ok(value) => {
-                    self.clock_military_time_opt = Some(value);
+        match cosmic_config::Config::new("com.system76.CosmicAppletTime", TimeAppletConfig::VERSION)
+        {
+            Ok(config_handler) => match TimeAppletConfig::get_entry(&config_handler) {
+                Ok(config) => {
+                    self.time_applet_config = config;
                 }
-                Err(err) => {
-                    log::error!("failed to load military time config: {:?}", err);
+                Err((errs, config)) => {
+                    log::error!("failed to load time applet config: {:?}", errs);
+                    self.time_applet_config = config;
                 }
             },
             Err(err) => {
@@ -162,25 +169,20 @@ impl UserData {
 
 impl From<pwd::Passwd> for UserData {
     fn from(user: pwd::Passwd) -> Self {
+        let mut full_name = user
+            .gecos
+            .as_ref()
+            .and_then(|gecos| gecos.split(',').next())
+            .map(|x| x.to_string())
+            .unwrap_or_default();
+        if full_name.is_empty() {
+            full_name = user.name.clone();
+        }
         Self {
             uid: user.uid,
             name: user.name.clone(),
-            full_name_opt: user
-                .gecos
-                .as_ref()
-                .and_then(|gecos| gecos.split(',').next())
-                .map(|x| x.to_string()),
-            icon_opt: None,
-            theme_opt: None,
-            wallpapers_opt: None,
-            xkb_config_opt: None,
-            clock_military_time_opt: None,
+            full_name,
+            ..Default::default()
         }
     }
-}
-
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-pub enum WallpaperData {
-    Bytes(Vec<u8>),
-    Color(Color),
 }
