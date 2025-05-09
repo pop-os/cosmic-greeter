@@ -4,6 +4,8 @@
 pub mod greeter;
 pub mod locker;
 
+mod common;
+
 mod localize;
 
 #[cfg(feature = "logind")]
