@@ -264,8 +264,11 @@ impl App {
             window_width
         };
         let left_element = {
-            // TODO how should we get user preference for military time here?
-            let military_time = false;
+            let military_time = self
+                .flags
+                .user_data
+                .clock_military_time_opt
+                .unwrap_or_default();
             let date_time_column = self.time.date_time_widget(military_time);
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
