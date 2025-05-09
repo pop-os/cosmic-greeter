@@ -90,36 +90,7 @@ fn user_data_fallback() -> Vec<UserData> {
                     _ => true,
                 }
             })
-            .map(|user| {
-                //TODO: use accountsservice
-                let icon_path = Path::new("/var/lib/AccountsService/icons").join(&user.name);
-                let icon_opt = if icon_path.is_file() {
-                    match fs::read(&icon_path) {
-                        Ok(icon_data) => Some(icon_data),
-                        Err(err) => {
-                            log::error!("failed to read {:?}: {:?}", icon_path, err);
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                UserData {
-                    uid: user.uid,
-                    name: user.name,
-                    full_name_opt: user
-                        .gecos
-                        .filter(|s| !s.is_empty())
-                        .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
-                    icon_opt,
-                    theme_opt: None,
-                    wallpapers_opt: None,
-                    xkb_config_opt: None,
-                    clock_military_time: false,
-                    // clock_show_seconds: false,
-                }
-            })
+            .map(UserData::from)
             .collect()
     }
 }
@@ -465,7 +436,7 @@ impl App {
                     self.flags
                         .user_datas
                         .get(i)
-                        .map(|user| user.clock_military_time)
+                        .and_then(|user| user.clock_military_time_opt)
                 })
                 .unwrap_or_default();
             let date_time_column = self.time.date_time_widget(military_time);
@@ -667,16 +638,13 @@ impl App {
                                 }
                                 None => {}
                             }
-                            match &user_data.full_name_opt {
-                                Some(full_name) => {
-                                    column = column.push(
-                                        widget::container(widget::text::title4(full_name))
-                                            .width(Length::Fill)
-                                            .align_x(alignment::Horizontal::Center),
-                                    );
-                                }
-                                None => {}
-                            }
+                            column = column.push(
+                                widget::container(widget::text::title4(
+                                    user_data.full_name_or_name(),
+                                ))
+                                .width(Length::Fill)
+                                .align_x(alignment::Horizontal::Center),
+                            );
                         }
                     }
                     match &self.prompt_opt {

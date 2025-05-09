@@ -22,7 +22,7 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     widget,
 };
-use cosmic_config::CosmicConfigEntry;
+use cosmic_greeter_daemon::{UserData, WallpaperData};
 use std::time::Duration;
 use std::{
     any::TypeId,
@@ -31,7 +31,7 @@ use std::{
     ffi::{CStr, CString},
     fs,
     os::fd::OwnedFd,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process,
     sync::Arc,
 };
@@ -44,47 +44,21 @@ fn lockfile_opt() -> Option<PathBuf> {
     Some(runtime_dir.join(format!("cosmic-greeter-{}.lock", session_id)))
 }
 
-pub fn main(current_user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
+pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     crate::localize::localize();
 
-    //TODO: use accountsservice
-    let icon_path = Path::new("/var/lib/AccountsService/icons").join(&current_user.name);
-    let icon_opt = if icon_path.is_file() {
-        match fs::read(&icon_path) {
-            Ok(icon_data) => Some(widget::image::Handle::from_bytes(icon_data)),
-            Err(err) => {
-                log::error!("failed to read {:?}: {:?}", icon_path, err);
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let mut user_data = UserData::from(user);
+    // We are already the user at this point
+    user_data.load_config_as_user();
 
-    let mut wallpapers = Vec::new();
-    match cosmic_bg_config::state::State::state() {
-        Ok(helper) => match cosmic_bg_config::state::State::get_entry(&helper) {
-            Ok(state) => {
-                wallpapers = state.wallpapers;
-            }
-            Err(err) => {
-                log::error!("failed to load cosmic-bg state: {:?}", err);
-            }
-        },
-        Err(err) => {
-            log::error!("failed to create cosmic-bg state helper: {:?}", err);
-        }
-    }
     let fallback_background =
         widget::image::Handle::from_bytes(include_bytes!("../res/background.jpg").as_slice());
 
     let flags = Flags {
-        current_user,
-        icon_opt,
+        user_data,
         lockfile_opt: lockfile_opt(),
-        wallpapers,
         fallback_background,
     };
 
@@ -207,10 +181,8 @@ impl pam_client::ConversationHandler for Conversation {
 
 #[derive(Clone)]
 pub struct Flags {
-    current_user: pwd::Passwd,
-    icon_opt: Option<widget::image::Handle>,
+    user_data: UserData,
     lockfile_opt: Option<PathBuf>,
-    wallpapers: Vec<(String, cosmic_bg_config::Source)>,
     fallback_background: widget::image::Handle,
 }
 
@@ -344,11 +316,12 @@ impl App {
                 .spacing(12.0)
                 .max_width(280.0);
 
-            match &self.flags.icon_opt {
+            match &self.flags.user_data.icon_opt {
                 Some(icon) => {
                     column = column.push(
                         widget::container(
-                            widget::Image::new(icon.clone())
+                            //TODO: cache image handle?
+                            widget::Image::new(widget::image::Handle::from_bytes(icon.clone()))
                                 .width(Length::Fixed(78.0))
                                 .height(Length::Fixed(78.0)),
                         )
@@ -358,23 +331,14 @@ impl App {
                 }
                 None => {}
             }
-            match self
-                .flags
-                .current_user
-                .gecos
-                .as_ref()
-                .filter(|s| !s.is_empty())
-            {
-                Some(gecos) => {
-                    let full_name = gecos.split(",").next().unwrap_or_default();
-                    column = column.push(
-                        widget::container(widget::text::title4(full_name))
-                            .width(Length::Fill)
-                            .align_x(alignment::Horizontal::Center),
-                    );
-                }
-                None => {}
-            }
+
+            column = column.push(
+                widget::container(widget::text::title4(
+                    self.flags.user_data.full_name_or_name(),
+                ))
+                .width(Length::Fill)
+                .align_x(alignment::Horizontal::Center),
+            );
 
             match &self.prompt_opt {
                 Some((prompt, secret, value_opt)) => match value_opt {
@@ -459,35 +423,26 @@ impl App {
                 continue;
             }
 
-            let output_name = match self.surface_names.get(surface_id) {
-                Some(some) => some,
-                None => continue,
+            let Some(output_name) = self.surface_names.get(surface_id) else {
+                continue;
             };
 
             log::info!("updating wallpaper for {:?}", output_name);
 
-            for (wallpaper_output_name, wallpaper_source) in self.flags.wallpapers.iter() {
+            let Some(wallpapers) = &self.flags.user_data.wallpapers_opt else {
+                continue;
+            };
+
+            for (wallpaper_output_name, wallpaper_data) in wallpapers.iter() {
                 if wallpaper_output_name == output_name {
-                    match wallpaper_source {
-                        cosmic_bg_config::Source::Path(path) => {
-                            match fs::read(path) {
-                                Ok(bytes) => {
-                                    let image = widget::image::Handle::from_bytes(bytes);
-                                    self.surface_images.insert(*surface_id, image);
-                                    //TODO: what to do about duplicates?
-                                    break;
-                                }
-                                Err(err) => {
-                                    log::warn!(
-                                        "output {}: failed to load wallpaper {:?}: {:?}",
-                                        output.id(),
-                                        path,
-                                        err
-                                    );
-                                }
-                            }
+                    match wallpaper_data {
+                        WallpaperData::Bytes(bytes) => {
+                            let image = widget::image::Handle::from_bytes(bytes.clone());
+                            self.surface_images.insert(*surface_id, image);
+                            //TODO: what to do about duplicates?
+                            break;
                         }
-                        cosmic_bg_config::Source::Color(color) => {
+                        WallpaperData::Color(color) => {
                             //TODO: support color sources
                             log::warn!("output {}: unsupported source {:?}", output.id(), color);
                         }
@@ -737,7 +692,7 @@ impl cosmic::Application for App {
                         return Task::none();
                     }
 
-                    let username = self.flags.current_user.name.clone();
+                    let username = self.flags.user_data.name.clone();
                     let (locked_task, locked_handle) = cosmic::task::stream(
                         cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
                             // Send heartbeat once a second to update time.
@@ -880,7 +835,9 @@ impl cosmic::Application for App {
                 self.value_tx_opt = Some(value_tx);
             }
             Message::BackgroundState(background_state) => {
-                self.flags.wallpapers = background_state.wallpapers;
+                self.flags
+                    .user_data
+                    .load_wallpapers_as_user(&background_state);
                 self.surface_images.clear();
                 self.update_wallpapers();
             }
