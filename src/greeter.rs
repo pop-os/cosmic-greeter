@@ -6,7 +6,6 @@ mod ipc;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
 use cosmic::iced::{Point, Size};
-use cosmic::iced_core::image;
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::surface;
 use cosmic::widget::text;
@@ -16,10 +15,7 @@ use cosmic::{
     executor,
     iced::{
         self, Background, Border, Length, Subscription, alignment,
-        event::{
-            self,
-            wayland::{Event as WaylandEvent, OutputEvent},
-        },
+        event::wayland::OutputEvent,
         futures::SinkExt,
         platform_specific::{
             runtime::wayland::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
@@ -33,7 +29,7 @@ use cosmic::{
 };
 use cosmic_comp_config::CosmicCompConfig;
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
-use cosmic_greeter_daemon::{BgSource, UserData};
+use cosmic_greeter_daemon::UserData;
 use greetd_ipc::Request;
 use std::{
     collections::{HashMap, hash_map},
@@ -49,7 +45,10 @@ use tokio::time;
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
 
-use crate::fl;
+use crate::{
+    common::{self, Common},
+    fl,
+};
 
 #[proxy(
     interface = "com.system76.CosmicGreeter",
@@ -364,6 +363,8 @@ struct NameIndexPair {
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
+    Common(common::Message),
+    OutputEvent(OutputEvent, WlOutput),
     Auth(Option<String>),
     ConfigUpdateUser,
     DialogCancel,
@@ -371,15 +372,11 @@ pub enum Message {
     DropdownToggle(Dropdown),
     Error(String),
     Exit,
-    Focus(SurfaceId),
     // Sets channel used to communicate with the greetd IPC subscription.
     GreetdChannel(tokio::sync::mpsc::Sender<Request>),
     Heartbeat,
     KeyboardLayout(usize),
     Login,
-    NetworkIcon(Option<&'static str>),
-    OutputEvent(OutputEvent, WlOutput),
-    PowerInfo(Option<(String, f64)>),
     Prompt(String, bool, Option<String>),
     Reconnect,
     Restart,
@@ -388,41 +385,39 @@ pub enum Message {
     Socket(SocketState),
     Surface(surface::Action),
     Suspend,
-    Tick,
-    Tz(chrono_tz::Tz),
     Username(String),
+}
+
+impl From<common::Message> for Message {
+    fn from(message: common::Message) -> Self {
+        Self::Common(message)
+    }
 }
 
 /// The [`App`] stores application-specific state.
 pub struct App {
-    core: Core,
+    common: Common<Message>,
     flags: Flags,
     greetd_sender: Option<tokio::sync::mpsc::Sender<greetd_ipc::Request>>,
-    surface_ids: HashMap<WlOutput, SurfaceId>,
-    active_surface_id_opt: Option<SurfaceId>,
-    surface_images: HashMap<SurfaceId, image::Handle>,
-    surface_names: HashMap<SurfaceId, String>,
-    text_input_ids: HashMap<String, widget::Id>,
-    network_icon_opt: Option<&'static str>,
-    power_info_opt: Option<(String, f64)>,
     socket_state: SocketState,
     usernames: Vec<(String, String)>,
     selected_username: NameIndexPair,
-    prompt_opt: Option<(String, bool, Option<String>)>,
     session_names: Vec<String>,
     selected_session: String,
     active_layouts: Vec<ActiveLayout>,
-    error_opt: Option<String>,
     dialog_page_opt: Option<DialogPage>,
     dropdown_opt: Option<Dropdown>,
-    window_size: HashMap<SurfaceId, Size>,
     heartbeat_handle: Option<cosmic::iced::task::Handle>,
-    time: crate::time::Time,
 }
 
 impl App {
     fn menu(&self, id: SurfaceId) -> Element<Message> {
-        let window_width = self.window_size.get(&id).map(|s| s.width).unwrap_or(800.);
+        let window_width = self
+            .common
+            .window_size
+            .get(&id)
+            .map(|s| s.width)
+            .unwrap_or(800.);
         let menu_width = if window_width > 800. {
             800.
         } else {
@@ -435,15 +430,15 @@ impl App {
                 .and_then(|i| self.flags.user_datas.get(i))
                 .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
-            let date_time_column = self.time.date_time_widget(military_time);
+            let date_time_column = self.common.time.date_time_widget(military_time);
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
 
-            if let Some(network_icon) = self.network_icon_opt {
+            if let Some(network_icon) = self.common.network_icon_opt {
                 status_row = status_row.push(widget::icon::from_name(network_icon));
             }
 
-            if let Some((power_icon, power_percent)) = &self.power_info_opt {
+            if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
                 status_row = status_row.push(iced::widget::row![
                     widget::icon::from_name(power_icon.clone()),
                     widget::text(format!("{:.0}%", power_percent)),
@@ -641,18 +636,19 @@ impl App {
                             );
                         }
                     }
-                    match &self.prompt_opt {
+                    match &self.common.prompt_opt {
                         Some((prompt, secret, value_opt)) => match value_opt {
                             Some(value) => {
                                 let text_input_id = self
+                                    .common
                                     .surface_names
                                     .get(&id)
-                                    .and_then(|id| self.text_input_ids.get(id))
+                                    .and_then(|id| self.common.text_input_ids.get(id))
                                     .cloned()
                                     .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
                                 let mut text_input = widget::secure_input(
                                     prompt.clone(),
-                                    "",
+                                    &self.common.input,
                                     Some(Message::Prompt(
                                         prompt.clone(),
                                         !*secret,
@@ -661,13 +657,14 @@ impl App {
                                     *secret,
                                 )
                                 .id(text_input_id)
-                                .manage_value(true)
+                                .on_input(|input| common::Message::Input(input).into())
                                 .on_submit(|v| Message::Auth(Some(v)));
 
                                 if let Some(text_input_id) = self
+                                    .common
                                     .surface_names
                                     .get(&id)
-                                    .and_then(|id| self.text_input_ids.get(id))
+                                    .and_then(|id| self.common.text_input_ids.get(id))
                                 {
                                     text_input = text_input.id(text_input_id.clone());
                                 }
@@ -698,7 +695,7 @@ impl App {
                 }
             }
 
-            if let Some(error) = &self.error_opt {
+            if let Some(error) = &self.common.error_opt {
                 column = column.push(widget::text(error));
             }
 
@@ -828,45 +825,7 @@ impl App {
             }
         };
 
-        for (_output, surface_id) in self.surface_ids.iter() {
-            if self.surface_images.contains_key(surface_id) {
-                continue;
-            }
-
-            let Some(output_name) = self.surface_names.get(surface_id) else {
-                continue;
-            };
-
-            log::info!("updating wallpaper for {:?}", output_name);
-
-            for (wallpaper_output_name, wallpaper_source) in user_data.bg_state.wallpapers.iter() {
-                if wallpaper_output_name == output_name {
-                    match wallpaper_source {
-                        BgSource::Path(path) => {
-                            match user_data.bg_path_data.get(path) {
-                                Some(bytes) => {
-                                    let image = widget::image::Handle::from_bytes(bytes.clone());
-                                    self.surface_images.insert(*surface_id, image);
-                                    //TODO: what to do about duplicates?
-                                }
-                                None => {
-                                    log::warn!(
-                                        "output {}: failed to find wallpaper data for source {:?}",
-                                        output_name,
-                                        path
-                                    );
-                                }
-                            }
-                            break;
-                        }
-                        BgSource::Color(color) => {
-                            //TODO: support color sources
-                            log::warn!("output {}: unsupported source {:?}", output_name, color);
-                        }
-                    }
-                }
-            }
-        }
+        self.common.update_wallpapers(&user_data);
 
         // From cosmic-applet-input-sources
         if let Some(keyboard_layouts) = &self.flags.layouts_opt {
@@ -945,22 +904,19 @@ impl cosmic::Application for App {
     const APP_ID: &'static str = "com.system76.CosmicGreeter";
 
     fn core(&self) -> &Core {
-        &self.core
+        &self.common.core
     }
 
     fn core_mut(&mut self) -> &mut Core {
-        &mut self.core
+        &mut self.common.core
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
-        core.window.show_window_menu = false;
-        core.window.show_headerbar = false;
-        // XXX must be false or define custom style to have transparent bg
-        core.window.sharp_corners = false;
-        core.window.show_maximize = false;
-        core.window.show_minimize = false;
-        core.window.use_template = false;
+    fn init(core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
+        let (mut common, common_task) = Common::init(core);
+        common.on_output_event = Some(Box::new(|output_event, output| {
+            Message::OutputEvent(output_event, output)
+        }));
 
         //TODO: use full_name?
         let mut usernames: Vec<_> = flags
@@ -994,42 +950,28 @@ impl cosmic::Application for App {
         let selected_username = NameIndexPair { username, data_idx };
 
         let app = App {
-            core,
+            common,
             flags,
             greetd_sender: None,
-            surface_ids: HashMap::new(),
-            active_surface_id_opt: None,
-            surface_images: HashMap::new(),
-            surface_names: HashMap::new(),
-            text_input_ids: HashMap::new(),
-            network_icon_opt: None,
-            power_info_opt: None,
             socket_state: SocketState::Pending,
             usernames,
             selected_username,
-            prompt_opt: None,
             session_names,
             selected_session,
             active_layouts: Vec::new(),
-            error_opt: None,
             dialog_page_opt: None,
             dropdown_opt: None,
-            window_size: HashMap::new(),
             heartbeat_handle: None,
-            time: crate::time::Time::new(),
         };
-        (
-            app,
-            Task::batch(vec![
-                crate::time::tick().map(|_| cosmic::Action::App(Message::Tick)),
-                crate::time::tz_updates().map(|tz| cosmic::Action::App(Message::Tz(tz))),
-            ]),
-        )
+        (app, common_task)
     }
 
     /// Handle application events here.
     fn update(&mut self, message: Self::Message) -> Task<Message> {
         match message {
+            Message::Common(common_message) => {
+                return self.common.update(common_message);
+            }
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
@@ -1038,7 +980,7 @@ impl cosmic::Application for App {
                         let surface_id = SurfaceId::unique();
                         let subsurface_id = SurfaceId::unique();
 
-                        match self.surface_ids.insert(output.clone(), surface_id) {
+                        match self.common.surface_ids.insert(output.clone(), surface_id) {
                             Some(old_surface_id) => {
                                 //TODO: remove old surface?
                                 log::warn!(
@@ -1059,13 +1001,17 @@ impl cosmic::Application for App {
                         match output_info_opt {
                             Some(output_info) => match output_info.name {
                                 Some(output_name) => {
-                                    self.surface_names.insert(surface_id, output_name.clone());
-                                    self.surface_names
+                                    self.common
+                                        .surface_names
+                                        .insert(surface_id, output_name.clone());
+                                    self.common
+                                        .surface_names
                                         .insert(subsurface_id, output_name.clone());
-                                    self.surface_images.remove(&surface_id);
+                                    self.common.surface_images.remove(&surface_id);
                                     let text_input_id =
                                         widget::Id::new(format!("input-{output_name}",));
-                                    self.text_input_ids
+                                    self.common
+                                        .text_input_ids
                                         .insert(output_name.clone(), text_input_id.clone());
                                 }
                                 None => {
@@ -1091,7 +1037,7 @@ impl cosmic::Application for App {
                                 Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32 - 32.),
                             )
                         };
-                        self.window_size.insert(
+                        self.common.window_size.insert(
                             surface_id,
                             Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
                         );
@@ -1139,12 +1085,12 @@ impl cosmic::Application for App {
                     }
                     OutputEvent::Removed => {
                         log::info!("output {}: removed", output.id());
-                        match self.surface_ids.remove(&output) {
+                        match self.common.surface_ids.remove(&output) {
                             Some(surface_id) => {
-                                self.surface_images.remove(&surface_id);
-                                self.window_size.remove(&surface_id);
-                                if let Some(n) = self.surface_names.remove(&surface_id) {
-                                    self.text_input_ids.remove(&n);
+                                self.common.surface_images.remove(&surface_id);
+                                self.common.window_size.remove(&surface_id);
+                                if let Some(n) = self.common.surface_names.remove(&surface_id) {
+                                    self.common.text_input_ids.remove(&n);
                                 }
                                 return destroy_layer_surface(surface_id);
                             }
@@ -1170,25 +1116,21 @@ impl cosmic::Application for App {
                     _ => {}
                 }
             }
-            Message::NetworkIcon(network_icon_opt) => {
-                self.network_icon_opt = network_icon_opt;
-            }
-            Message::PowerInfo(power_info_opt) => {
-                self.power_info_opt = power_info_opt;
-            }
             Message::Prompt(prompt, secret, value_opt) => {
                 let value_was_some = self
+                    .common
                     .prompt_opt
                     .as_ref()
                     .map_or(false, |(_, _, x)| x.is_some());
                 let value_is_some = value_opt.is_some();
-                self.prompt_opt = Some((prompt, secret, value_opt));
+                self.common.prompt_opt = Some((prompt, secret, value_opt));
                 if value_is_some && !value_was_some {
-                    if let Some(surface_id) = self.active_surface_id_opt {
+                    if let Some(surface_id) = self.common.active_surface_id_opt {
                         if let Some(text_input_id) = self
+                            .common
                             .surface_names
                             .get(&surface_id)
-                            .and_then(|id| self.text_input_ids.get(id))
+                            .and_then(|id| self.common.text_input_ids.get(id))
                         {
                             return widget::text_input::focus(text_input_id.clone());
                         }
@@ -1208,7 +1150,7 @@ impl cosmic::Application for App {
                 if username != self.selected_username.username {
                     let data_idx = Self::user_data_index(&self.flags.user_datas, &username);
                     self.selected_username = NameIndexPair { username, data_idx };
-                    self.surface_images.clear();
+                    self.common.surface_images.clear();
                     if let Some(session) = data_idx.and_then(|i| {
                         self.flags
                             .user_datas
@@ -1227,7 +1169,7 @@ impl cosmic::Application for App {
                     };
                     match &self.socket_state {
                         SocketState::Open => {
-                            self.prompt_opt = None;
+                            self.common.prompt_opt = None;
                             self.send_request(Request::CancelSession);
                         }
                         _ => {}
@@ -1299,13 +1241,14 @@ impl cosmic::Application for App {
                 }
             }
             Message::Auth(response) => {
-                self.prompt_opt = None;
-                self.error_opt = None;
+                self.common.input.clear();
+                self.common.prompt_opt = None;
+                self.common.error_opt = None;
                 self.send_request(Request::PostAuthMessageResponse { response });
             }
             Message::Login => {
-                self.prompt_opt = None;
-                self.error_opt = None;
+                self.common.prompt_opt = None;
+                self.common.error_opt = None;
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
                         self.send_request(Request::StartSession { cmd, env });
@@ -1315,7 +1258,7 @@ impl cosmic::Application for App {
                 }
             }
             Message::Error(error) => {
-                self.error_opt = Some(error);
+                self.common.error_opt = Some(error);
                 self.send_request(Request::CancelSession);
             }
             Message::Reconnect => {
@@ -1423,11 +1366,11 @@ impl cosmic::Application for App {
             },
             Message::Exit => {
                 let mut commands = Vec::new();
-                for (_output, surface_id) in self.surface_ids.drain() {
-                    self.surface_images.remove(&surface_id);
-                    self.surface_names.remove(&surface_id);
-                    if let Some(n) = self.surface_names.remove(&surface_id) {
-                        self.text_input_ids.remove(&n);
+                for (_output, surface_id) in self.common.surface_ids.drain() {
+                    self.common.surface_images.remove(&surface_id);
+                    self.common.surface_names.remove(&surface_id);
+                    if let Some(n) = self.common.surface_names.remove(&surface_id) {
+                        self.common.text_input_ids.remove(&n);
                     }
                     commands.push(destroy_layer_surface(surface_id));
                 }
@@ -1442,22 +1385,6 @@ impl cosmic::Application for App {
                     cosmic::app::Action::Surface(a),
                 ));
             }
-            Message::Focus(surface_id) => {
-                self.active_surface_id_opt = Some(surface_id);
-                if let Some(text_input_id) = self
-                    .surface_names
-                    .get(&surface_id)
-                    .and_then(|id| self.text_input_ids.get(id))
-                {
-                    return widget::text_input::focus(text_input_id.clone());
-                }
-            }
-            Message::Tick => {
-                self.time.tick();
-            }
-            Message::Tz(tz) => {
-                self.time.set_tz(tz);
-            }
         }
         Task::none()
     }
@@ -1470,6 +1397,7 @@ impl cosmic::Application for App {
     /// Creates a view after each update.
     fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
         let img = self
+            .common
             .surface_images
             .get(&surface_id)
             .unwrap_or(&self.flags.fallback_background);
@@ -1481,33 +1409,9 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        let mut subscriptions = vec![
-            event::listen_with(|event, _, id| match event {
-                iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
-                    wayland_event,
-                )) => match wayland_event {
-                    WaylandEvent::Output(output_event, output) => {
-                        Some(Message::OutputEvent(output_event, output))
-                    }
-
-                    _ => None,
-                },
-                iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(id)),
-                _ => None,
-            }),
+        Subscription::batch([
+            self.common.subscription().map(Message::from),
             ipc::subscription(),
-        ];
-
-        #[cfg(feature = "networkmanager")]
-        {
-            subscriptions.push(crate::networkmanager::subscription().map(Message::NetworkIcon));
-        }
-
-        #[cfg(feature = "upower")]
-        {
-            subscriptions.push(crate::upower::subscription().map(Message::PowerInfo));
-        }
-
-        Subscription::batch(subscriptions)
+        ])
     }
 }
