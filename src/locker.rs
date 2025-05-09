@@ -22,7 +22,8 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     widget,
 };
-use cosmic_greeter_daemon::{UserData, WallpaperData};
+use cosmic_config::CosmicConfigEntry;
+use cosmic_greeter_daemon::{BgSource, TimeAppletConfig, UserData};
 use std::time::Duration;
 use std::{
     any::TypeId,
@@ -194,6 +195,7 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
+    TimeAppletConfig(TimeAppletConfig),
     Focus(SurfaceId),
     Inhibit(Arc<OwnedFd>),
     NetworkIcon(Option<&'static str>),
@@ -264,11 +266,7 @@ impl App {
             window_width
         };
         let left_element = {
-            let military_time = self
-                .flags
-                .user_data
-                .clock_military_time_opt
-                .unwrap_or_default();
+            let military_time = self.flags.user_data.time_applet_config.military_time;
             let date_time_column = self.time.date_time_widget(military_time);
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
@@ -336,11 +334,9 @@ impl App {
             }
 
             column = column.push(
-                widget::container(widget::text::title4(
-                    self.flags.user_data.full_name_or_name(),
-                ))
-                .width(Length::Fill)
-                .align_x(alignment::Horizontal::Center),
+                widget::container(widget::text::title4(&self.flags.user_data.full_name))
+                    .width(Length::Fill)
+                    .align_x(alignment::Horizontal::Center),
             );
 
             match &self.prompt_opt {
@@ -421,7 +417,9 @@ impl App {
 
     //TODO: cache wallpapers by source?
     fn update_wallpapers(&mut self) {
-        for (output, surface_id) in self.surface_ids.iter() {
+        let user_data = &self.flags.user_data;
+
+        for (_output, surface_id) in self.surface_ids.iter() {
             if self.surface_images.contains_key(surface_id) {
                 continue;
             }
@@ -432,22 +430,29 @@ impl App {
 
             log::info!("updating wallpaper for {:?}", output_name);
 
-            let Some(wallpapers) = &self.flags.user_data.wallpapers_opt else {
-                continue;
-            };
-
-            for (wallpaper_output_name, wallpaper_data) in wallpapers.iter() {
+            for (wallpaper_output_name, wallpaper_source) in user_data.bg_state.wallpapers.iter() {
                 if wallpaper_output_name == output_name {
-                    match wallpaper_data {
-                        WallpaperData::Bytes(bytes) => {
-                            let image = widget::image::Handle::from_bytes(bytes.clone());
-                            self.surface_images.insert(*surface_id, image);
-                            //TODO: what to do about duplicates?
+                    match wallpaper_source {
+                        BgSource::Path(path) => {
+                            match user_data.bg_path_data.get(path) {
+                                Some(bytes) => {
+                                    let image = widget::image::Handle::from_bytes(bytes.clone());
+                                    self.surface_images.insert(*surface_id, image);
+                                    //TODO: what to do about duplicates?
+                                }
+                                None => {
+                                    log::warn!(
+                                        "output {}: failed to find wallpaper data for source {:?}",
+                                        output_name,
+                                        path
+                                    );
+                                }
+                            }
                             break;
                         }
-                        WallpaperData::Color(color) => {
+                        BgSource::Color(color) => {
                             //TODO: support color sources
-                            log::warn!("output {}: unsupported source {:?}", output.id(), color);
+                            log::warn!("output {}: unsupported source {:?}", output_name, color);
                         }
                     }
                 }
@@ -837,12 +842,15 @@ impl cosmic::Application for App {
             Message::Channel(value_tx) => {
                 self.value_tx_opt = Some(value_tx);
             }
-            Message::BackgroundState(background_state) => {
-                self.flags
-                    .user_data
-                    .load_wallpapers_as_user(&background_state);
+            Message::BackgroundState(bg_state) => {
+                eprintln!("{:#?}", bg_state);
+                self.flags.user_data.bg_state = bg_state;
+                self.flags.user_data.load_wallpapers_as_user();
                 self.surface_images.clear();
                 self.update_wallpapers();
+            }
+            Message::TimeAppletConfig(config) => {
+                self.flags.user_data.time_applet_config = config;
             }
             Message::Inhibit(inhibit) => {
                 self.inhibit_opt = Some(inhibit);
@@ -1028,6 +1036,21 @@ impl cosmic::Application for App {
                     log::info!("errors loading background state: {:?}", res.errors);
                 }
                 Message::BackgroundState(res.config)
+            }),
+        );
+
+        struct TimeAppletSubscription;
+        subscriptions.push(
+            cosmic_config::config_subscription(
+                TypeId::of::<TimeAppletSubscription>(),
+                "com.system76.CosmicAppletTime".into(),
+                TimeAppletConfig::VERSION,
+            )
+            .map(|res| {
+                if !res.errors.is_empty() {
+                    log::info!("errors loading background state: {:?}", res.errors);
+                }
+                Message::TimeAppletConfig(res.config)
             }),
         );
 
