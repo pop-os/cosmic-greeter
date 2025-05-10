@@ -9,7 +9,7 @@ use cosmic::surface;
 use cosmic::{
     Element, executor,
     iced::{
-        self, Length, Subscription, alignment,
+        self, Background, Border, Length, Subscription, alignment,
         event::wayland::{OutputEvent, SessionLockEvent},
         futures::{self, SinkExt},
         platform_specific::shell::wayland::commands::session_lock::{
@@ -17,7 +17,7 @@ use cosmic::{
         },
     },
     iced_runtime::core::window::Id as SurfaceId,
-    widget,
+    theme, widget,
 };
 use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{TimeAppletConfig, UserData};
@@ -35,7 +35,10 @@ use std::{
 use tokio::{sync::mpsc, task};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 
-use crate::common::{self, Common};
+use crate::{
+    common::{self, Common},
+    fl,
+};
 
 fn lockfile_opt() -> Option<PathBuf> {
     let runtime_dir = dirs::runtime_dir()?;
@@ -52,13 +55,9 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     // We are already the user at this point
     user_data.load_config_as_user();
 
-    let fallback_background =
-        widget::image::Handle::from_bytes(include_bytes!("../res/background.jpg").as_slice());
-
     let flags = Flags {
         user_data,
         lockfile_opt: lockfile_opt(),
-        fallback_background,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -103,11 +102,9 @@ impl Conversation {
 
         futures::executor::block_on(async {
             self.msg_tx
-                .send(cosmic::Action::App(Message::Prompt(
-                    prompt.to_string(),
-                    secret,
-                    Some(String::new()),
-                )))
+                .send(cosmic::Action::App(
+                    common::Message::Prompt(prompt.to_string(), secret, Some(String::new())).into(),
+                ))
                 .await
         })
         .map_err(|err| {
@@ -134,11 +131,9 @@ impl Conversation {
 
         futures::executor::block_on(async {
             self.msg_tx
-                .send(cosmic::Action::App(Message::Prompt(
-                    prompt.to_string(),
-                    false,
-                    None,
-                )))
+                .send(cosmic::Action::App(
+                    common::Message::Prompt(prompt.to_string(), false, None).into(),
+                ))
                 .await
         })
         .map_err(|err| {
@@ -182,7 +177,12 @@ impl pam_client::ConversationHandler for Conversation {
 pub struct Flags {
     user_data: UserData,
     lockfile_opt: Option<PathBuf>,
-    fallback_background: widget::image::Handle,
+}
+
+///TODO: this is custom code that should be better handled by libcosmic
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Dropdown {
+    Keyboard,
 }
 
 /// Messages that are used specifically by our [`App`].
@@ -194,12 +194,13 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Channel(mpsc::Sender<String>),
     BackgroundState(cosmic_bg_config::state::State),
-    TimeAppletConfig(TimeAppletConfig),
+    DropdownToggle(Dropdown),
+    KeyboardLayout(usize),
     Inhibit(Arc<OwnedFd>),
-    Prompt(String, bool, Option<String>),
     Submit(String),
     Surface(surface::Action),
     Suspend,
+    TimeAppletConfig(TimeAppletConfig),
     Error(String),
     Lock,
     Unlock,
@@ -236,6 +237,7 @@ pub struct App {
     common: Common<Message>,
     flags: Flags,
     state: State,
+    dropdown_opt: Option<Dropdown>,
     inhibit_opt: Option<Arc<OwnedFd>>,
     value_tx_opt: Option<mpsc::Sender<String>>,
 }
@@ -270,22 +272,88 @@ impl App {
                 ]);
             }
 
+            //TODO: move code for custom dropdowns to libcosmic
+            let menu_checklist = |label, value, message| {
+                Element::from(
+                    widget::menu::menu_button(vec![
+                        if value {
+                            widget::icon::from_name("object-select-symbolic")
+                                .size(16)
+                                .icon()
+                                .width(Length::Fixed(16.0))
+                                .into()
+                        } else {
+                            widget::Space::with_width(Length::Fixed(17.0)).into()
+                        },
+                        widget::Space::with_width(Length::Fixed(8.0)).into(),
+                        widget::text(label)
+                            .align_x(iced::alignment::Horizontal::Left)
+                            .into(),
+                    ])
+                    .on_press(message),
+                )
+            };
+            let dropdown_menu = |items| {
+                widget::container(widget::column::with_children(items))
+                    .padding(1)
+                    //TODO: move style to libcosmic
+                    .class(theme::Container::custom(|theme| {
+                        let cosmic = theme.cosmic();
+                        let component = &cosmic.background.component;
+                        widget::container::Style {
+                            icon_color: Some(component.on.into()),
+                            text_color: Some(component.on.into()),
+                            background: Some(Background::Color(component.base.into())),
+                            border: Border {
+                                radius: 8.0.into(),
+                                width: 1.0,
+                                color: component.divider.into(),
+                            },
+                            ..Default::default()
+                        }
+                    }))
+                    .width(Length::Fixed(240.0))
+            };
+
+            let mut input_button = widget::popover(
+                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
+                    .padding(12.0)
+                    .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
+            )
+            .position(widget::popover::Position::Bottom);
+            if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
+                let mut items = Vec::with_capacity(self.common.active_layouts.len());
+                for (i, layout) in self.common.active_layouts.iter().enumerate() {
+                    items.push(menu_checklist(
+                        &layout.description,
+                        i == 0,
+                        Message::KeyboardLayout(i),
+                    ));
+                }
+                input_button = input_button.popup(dropdown_menu(items));
+            }
+
             //TODO: implement these buttons
             let button_row = iced::widget::row![
+                /*TODO: greeter accessibility options
                 widget::button::custom(widget::icon::from_name(
                     "applications-accessibility-symbolic"
                 ))
                 .padding(12.0)
                 .on_press(Message::None),
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::None),
-                widget::button::custom(widget::icon::from_name("system-users-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::None),
-                widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::Suspend),
+                */
+                widget::tooltip(
+                    input_button,
+                    widget::text(fl!("keyboard-layout")),
+                    widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Suspend),
+                    widget::text(fl!("suspend")),
+                    widget::tooltip::Position::Top
+                ),
             ]
             .padding([16.0, 0.0, 0.0, 0.0])
             .spacing(8.0);
@@ -340,16 +408,21 @@ impl App {
 
                         let mut text_input = widget::secure_input(
                             prompt.clone(),
-                            &self.common.input,
-                            Some(Message::Prompt(
-                                prompt.clone(),
-                                !*secret,
-                                Some(value.clone()),
-                            )),
+                            value.as_str(),
+                            Some(
+                                common::Message::Prompt(
+                                    prompt.clone(),
+                                    !*secret,
+                                    Some(value.clone()),
+                                )
+                                .into(),
+                            ),
                             *secret,
                         )
                         .id(text_input_id)
-                        .on_input(|input| common::Message::Input(input).into())
+                        .on_input(|input| {
+                            common::Message::Prompt(prompt.clone(), *secret, Some(input)).into()
+                        })
                         .on_submit(Message::Submit);
 
                         if *secret {
@@ -434,6 +507,7 @@ impl cosmic::Application for App {
             Message::OutputEvent(output_event, output)
         }));
         common.on_session_lock_event = Some(Box::new(|evt| Message::SessionLockEvent(evt)));
+        common.update_user_data(&flags.user_data);
 
         let already_locked = match flags.lockfile_opt {
             Some(ref lockfile) => lockfile.exists(),
@@ -444,6 +518,7 @@ impl cosmic::Application for App {
             common,
             flags,
             state: State::Unlocked,
+            dropdown_opt: None,
             inhibit_opt: None,
             value_tx_opt: None,
         };
@@ -783,31 +858,28 @@ impl cosmic::Application for App {
                 self.common.surface_images.clear();
                 self.common.update_wallpapers(&self.flags.user_data);
             }
-            Message::TimeAppletConfig(config) => {
-                self.flags.user_data.time_applet_config = config;
+            Message::DropdownToggle(dropdown) => {
+                if self.dropdown_opt == Some(dropdown) {
+                    self.dropdown_opt = None;
+                } else {
+                    self.dropdown_opt = Some(dropdown);
+                }
             }
             Message::Inhibit(inhibit) => {
                 self.inhibit_opt = Some(inhibit);
             }
-            Message::Prompt(prompt, secret, value_opt) => {
-                let prompt_was_none = self.common.prompt_opt.is_none();
-                self.common.prompt_opt = Some((prompt, secret, value_opt));
-                if prompt_was_none {
-                    if let Some(surface_id) = self.common.active_surface_id_opt {
-                        if let Some(text_input_id) = self
-                            .common
-                            .surface_names
-                            .get(&surface_id)
-                            .and_then(|id| self.common.text_input_ids.get(id))
-                        {
-                            log::info!("focus surface found id {:?}", text_input_id);
-                            return widget::text_input::focus(text_input_id.clone());
-                        }
-                    }
+            Message::KeyboardLayout(layout_i) => {
+                if layout_i < self.common.active_layouts.len() {
+                    self.common.active_layouts.swap(0, layout_i);
+                    self.common.set_xkb_config(&self.flags.user_data);
+                }
+                if self.dropdown_opt == Some(Dropdown::Keyboard) {
+                    self.dropdown_opt = None
                 }
             }
             Message::Submit(value) => {
-                self.common.input.clear();
+                self.common.prompt_opt = None;
+                self.common.error_opt = None;
                 match self.value_tx_opt.take() {
                     Some(value_tx) => {
                         // Clear errors
@@ -827,6 +899,9 @@ impl cosmic::Application for App {
                         log::error!("failed to suspend: {:?}", err);
                         cosmic::task::message(cosmic::Action::App(Message::Error(err.to_string())))
                     });
+            }
+            Message::TimeAppletConfig(config) => {
+                self.flags.user_data.time_applet_config = config;
             }
             Message::Error(error) => {
                 self.common.error_opt = Some(error);
@@ -914,7 +989,7 @@ impl cosmic::Application for App {
             .common
             .surface_images
             .get(&surface_id)
-            .unwrap_or(&self.flags.fallback_background);
+            .unwrap_or(&self.common.fallback_background);
         widget::image(img)
             .content_fit(iced::ContentFit::Cover)
             .width(Length::Fill)

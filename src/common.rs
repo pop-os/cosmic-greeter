@@ -12,15 +12,26 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     widget,
 };
-use cosmic_greeter_daemon::{BgSource, UserData};
-use std::collections::HashMap;
+use cosmic_config::{ConfigSet, CosmicConfigEntry};
+use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
+use std::{collections::HashMap, sync::Arc};
 use wayland_client::protocol::wl_output::WlOutput;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ActiveLayout {
+    pub layout: String,
+    pub description: String,
+    pub variant: String,
+}
+
 pub struct Common<M> {
+    pub active_layouts: Vec<ActiveLayout>,
     pub active_surface_id_opt: Option<SurfaceId>,
+    pub comp_config_handler: Option<cosmic_config::Config>,
     pub core: Core,
     pub error_opt: Option<String>,
-    pub input: String,
+    pub fallback_background: widget::image::Handle,
+    pub layouts_opt: Option<Arc<xkb_data::KeyboardLayouts>>,
     pub network_icon_opt: Option<&'static str>,
     pub on_output_event: Option<Box<dyn Fn(OutputEvent, WlOutput) -> M>>,
     pub on_session_lock_event: Option<Box<dyn Fn(SessionLockEvent) -> M>>,
@@ -39,11 +50,11 @@ pub struct Common<M> {
 #[derive(Clone, Debug)]
 pub enum Message {
     Focus(SurfaceId),
-    Input(String),
     Key(Modifiers, Key, Option<SmolStr>),
     NetworkIcon(Option<&'static str>),
     OutputEvent(OutputEvent, WlOutput),
     PowerInfo(Option<(String, f64)>),
+    Prompt(String, bool, Option<String>),
     SessionLockEvent(SessionLockEvent),
     Tick,
     Tz(chrono_tz::Tz),
@@ -59,11 +70,35 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         core.window.show_minimize = false;
         core.window.use_template = false;
 
+        let comp_config_handler = match cosmic_config::Config::new(
+            "com.system76.CosmicComp",
+            CosmicCompConfig::VERSION,
+        ) {
+            Ok(config_handler) => Some(config_handler),
+            Err(err) => {
+                log::error!("failed to create cosmic-comp config handler: {}", err);
+                None
+            }
+        };
+
+        let layouts_opt = match xkb_data::all_keyboard_layouts() {
+            Ok(ok) => Some(Arc::new(ok)),
+            Err(err) => {
+                log::warn!("failed to load keyboard layouts: {}", err);
+                None
+            }
+        };
+
         let app = Self {
+            active_layouts: Vec::new(),
             active_surface_id_opt: None,
+            comp_config_handler,
             core,
             error_opt: None,
-            input: String::new(),
+            fallback_background: widget::image::Handle::from_bytes(
+                include_bytes!("../res/background.jpg").as_slice(),
+            ),
+            layouts_opt,
             network_icon_opt: None,
             on_output_event: None,
             on_session_lock_event: None,
@@ -85,6 +120,27 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 crate::time::tz_updates().map(|tz| cosmic::Action::App(Message::Tz(tz).into())),
             ]),
         )
+    }
+
+    pub fn set_xkb_config(&self, user_data: &UserData) {
+        if let Some(mut xkb_config) = user_data.xkb_config_opt.clone() {
+            xkb_config.layout = String::new();
+            xkb_config.variant = String::new();
+            for (i, layout) in self.active_layouts.iter().enumerate() {
+                if i > 0 {
+                    xkb_config.layout.push(',');
+                    xkb_config.variant.push(',');
+                }
+                xkb_config.layout.push_str(&layout.layout);
+                xkb_config.variant.push_str(&layout.variant);
+            }
+            if let Some(comp_config_handler) = &self.comp_config_handler {
+                match comp_config_handler.set("xkb_config", xkb_config) {
+                    Ok(()) => log::info!("updated cosmic-comp xkb_config"),
+                    Err(err) => log::error!("failed to update cosmic-comp xkb_config: {}", err),
+                }
+            }
+        }
     }
 
     pub fn update_wallpapers(&mut self, user_data: &UserData) {
@@ -129,6 +185,55 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         }
     }
 
+    pub fn update_user_data(&mut self, user_data: &UserData) {
+        self.update_wallpapers(user_data);
+
+        // From cosmic-applet-input-sources
+        if let Some(keyboard_layouts) = &self.layouts_opt {
+            if let Some(xkb_config) = &user_data.xkb_config_opt {
+                self.active_layouts.clear();
+                let config_layouts = xkb_config.layout.split_terminator(',');
+                let config_variants = xkb_config
+                    .variant
+                    .split_terminator(',')
+                    .chain(std::iter::repeat(""));
+                'outer: for (config_layout, config_variant) in config_layouts.zip(config_variants) {
+                    for xkb_layout in keyboard_layouts.layouts() {
+                        if config_layout != xkb_layout.name() {
+                            continue;
+                        }
+                        if config_variant.is_empty() {
+                            let active_layout = ActiveLayout {
+                                description: xkb_layout.description().to_owned(),
+                                layout: config_layout.to_owned(),
+                                variant: config_variant.to_owned(),
+                            };
+                            self.active_layouts.push(active_layout);
+                            continue 'outer;
+                        }
+
+                        let Some(xkb_variants) = xkb_layout.variants() else {
+                            continue;
+                        };
+                        for xkb_variant in xkb_variants {
+                            if config_variant != xkb_variant.name() {
+                                continue;
+                            }
+                            let active_layout = ActiveLayout {
+                                description: xkb_variant.description().to_owned(),
+                                layout: config_layout.to_owned(),
+                                variant: config_variant.to_owned(),
+                            };
+                            self.active_layouts.push(active_layout);
+                            continue 'outer;
+                        }
+                    }
+                }
+                log::info!("{:?}", self.active_layouts);
+            }
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<M> {
         match message {
             Message::Focus(surface_id) => {
@@ -141,9 +246,6 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                     return widget::text_input::focus(text_input_id.clone());
                 }
             }
-            Message::Input(input) => {
-                self.input = input;
-            }
             Message::Key(modifiers, key, text) => {
                 // Uncaptured keys with only shift modifiers go to the password box
                 if !modifiers.logo()
@@ -152,7 +254,9 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                     && matches!(key, Key::Character(_))
                 {
                     if let Some(text) = text {
-                        self.input.push_str(&text);
+                        if let Some((_, _, Some(value))) = &mut self.prompt_opt {
+                            value.push_str(&text);
+                        }
                     }
 
                     if let Some(surface_id) = self.active_surface_id_opt {
@@ -176,6 +280,22 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             }
             Message::PowerInfo(power_info_opt) => {
                 self.power_info_opt = power_info_opt;
+            }
+            Message::Prompt(prompt, secret, value_opt) => {
+                let prompt_was_none = self.prompt_opt.is_none();
+                self.prompt_opt = Some((prompt, secret, value_opt));
+                if prompt_was_none {
+                    if let Some(surface_id) = self.active_surface_id_opt {
+                        if let Some(text_input_id) = self
+                            .surface_names
+                            .get(&surface_id)
+                            .and_then(|id| self.text_input_ids.get(id))
+                        {
+                            log::info!("focus surface found id {:?}", text_input_id);
+                            return widget::text_input::focus(text_input_id.clone());
+                        }
+                    }
+                }
             }
             Message::SessionLockEvent(lock_event) => {
                 if let Some(on_session_lock_event) = &self.on_session_lock_event {
