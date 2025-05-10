@@ -10,6 +10,8 @@ use std::time::Duration;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
+use crate::common;
+
 pub fn subscription() -> Subscription<Message> {
     struct GreetdSubscription;
     Subscription::run_with_id(
@@ -53,27 +55,36 @@ pub fn subscription() -> Subscription<Message> {
                                 } => match auth_message_type {
                                     greetd_ipc::AuthMessageType::Secret => {
                                         _ = sender
-                                            .send(Message::Prompt(
-                                                auth_message,
-                                                true,
-                                                Some(String::new()),
-                                            ))
+                                            .send(
+                                                common::Message::Prompt(
+                                                    auth_message,
+                                                    true,
+                                                    Some(String::new()),
+                                                )
+                                                .into(),
+                                            )
                                             .await;
                                     }
                                     greetd_ipc::AuthMessageType::Visible => {
                                         _ = sender
-                                            .send(Message::Prompt(
-                                                auth_message,
-                                                false,
-                                                Some(String::new()),
-                                            ))
+                                            .send(
+                                                common::Message::Prompt(
+                                                    auth_message,
+                                                    false,
+                                                    Some(String::new()),
+                                                )
+                                                .into(),
+                                            )
                                             .await;
                                     }
                                     //TODO: treat error type differently?
                                     greetd_ipc::AuthMessageType::Info
                                     | greetd_ipc::AuthMessageType::Error => {
                                         _ = sender
-                                            .send(Message::Prompt(auth_message, false, None))
+                                            .send(
+                                                common::Message::Prompt(auth_message, false, None)
+                                                    .into(),
+                                            )
                                             .await;
                                     }
                                 },
