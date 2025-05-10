@@ -1,8 +1,8 @@
 // Copyright 2023 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-use cosmic_greeter::{greeter, locker};
 use clap_lex::RawArgs;
+use cosmic_greeter::{greeter, locker};
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -52,4 +52,3 @@ Options:
   -v, --version  Show the version of cosmic-greeter"#
     );
 }
-
