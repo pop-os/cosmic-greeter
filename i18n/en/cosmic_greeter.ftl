@@ -1,4 +1,5 @@
 cancel = Cancel
+caps-lock = Caps lock is active.
 keyboard-layout = Keyboard layout
 restart = Restart
 restart-now = Restart now?
