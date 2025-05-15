@@ -430,6 +430,10 @@ impl App {
                         }
 
                         column = column.push(text_input);
+
+                        if self.common.caps_lock {
+                            column = column.push(widget::text(fl!("caps-lock")));
+                        }
                     }
                     None => {
                         column = column.push(widget::text(prompt));

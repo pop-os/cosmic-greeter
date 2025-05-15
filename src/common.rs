@@ -27,6 +27,7 @@ pub struct ActiveLayout {
 pub struct Common<M> {
     pub active_layouts: Vec<ActiveLayout>,
     pub active_surface_id_opt: Option<SurfaceId>,
+    pub caps_lock: bool,
     pub comp_config_handler: Option<cosmic_config::Config>,
     pub core: Core,
     pub error_opt: Option<String>,
@@ -49,6 +50,7 @@ pub struct Common<M> {
 
 #[derive(Clone, Debug)]
 pub enum Message {
+    CapsLock(bool),
     Focus(SurfaceId),
     Key(Modifiers, Key, Option<SmolStr>),
     NetworkIcon(Option<&'static str>),
@@ -92,6 +94,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         let app = Self {
             active_layouts: Vec::new(),
             active_surface_id_opt: None,
+            caps_lock: false,
             comp_config_handler,
             core,
             error_opt: None,
@@ -236,6 +239,9 @@ impl<M: From<Message> + Send + 'static> Common<M> {
 
     pub fn update(&mut self, message: Message) -> Task<M> {
         match message {
+            Message::CapsLock(caps_lock) => {
+                self.caps_lock = caps_lock;
+            }
             Message::Focus(surface_id) => {
                 self.active_surface_id_opt = Some(surface_id);
                 if let Some(text_input_id) = self
@@ -325,6 +331,9 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 event::Status::Ignored => Some(Message::Key(modifiers, key, text)),
                 event::Status::Captured => None,
             },
+            iced::Event::Keyboard(KeyEvent::ModifiersChanged(modifiers)) => {
+                Some(Message::CapsLock(modifiers.contains(Modifiers::CAPS_LOCK)))
+            }
             iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
                 wayland_event,
             )) => match wayland_event {
