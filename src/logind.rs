@@ -9,7 +9,7 @@ use logind_zbus::{
 use std::{any::TypeId, error::Error, os::fd::OwnedFd, sync::Arc, time::Duration};
 use zbus::Connection;
 
-use crate::locker::Message;
+use crate::{common, locker::Message};
 
 pub async fn power_off() -> zbus::Result<()> {
     let connection = Connection::system().await?;
@@ -99,6 +99,8 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Message>) -> Result<(), Box<dyn E
                                 if inhibit_opt.is_none() {
                                     inhibit_opt = Some(inhibit(&manager).await?);
                                 }
+                                // Immediately update time when resuming from sleep.
+                                msg_tx.send(Message::Common(common::Message::Tick)).await?;
                             }
                         },
                         Err(err) => {
