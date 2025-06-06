@@ -1,4 +1,5 @@
 cancel = Anuluj
+caps-lock = Caps lock jest aktywny.
 keyboard-layout = Układ klawiatury
 restart = Uruchom ponownie
 restart-now = Uruchomić ponownie?
