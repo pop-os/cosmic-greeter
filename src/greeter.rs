@@ -57,11 +57,13 @@ static USERNAME_ID: LazyLock<iced::id::Id> = LazyLock::new(|| iced::id::Id::new(
     default_service = "com.system76.CosmicGreeter",
     default_path = "/com/system76/CosmicGreeter"
 )]
-trait Greeter {
+pub trait Greeter {
+    async fn initial_setup_start(&mut self) -> Result<(), zbus::Error>;
+
     async fn get_user_data(&self) -> Result<String, zbus::Error>;
 }
 
-async fn user_data_dbus() -> Result<Vec<UserData>, Box<dyn Error>> {
+pub async fn user_data_dbus() -> Result<Vec<UserData>, Box<dyn Error>> {
     let connection = Connection::system().await?;
 
     // `dbus_proxy` macro creates `MyGreaterProxy` based on `Notifications` trait.
@@ -72,7 +74,7 @@ async fn user_data_dbus() -> Result<Vec<UserData>, Box<dyn Error>> {
     Ok(user_datas)
 }
 
-fn user_data_fallback() -> Vec<UserData> {
+pub fn user_data_fallback() -> Vec<UserData> {
     // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
     /* unsafe */
     {
@@ -932,6 +934,7 @@ impl cosmic::Application for App {
             heartbeat_handle: None,
             entering_name: false,
         };
+
         (app, common_task)
     }
 

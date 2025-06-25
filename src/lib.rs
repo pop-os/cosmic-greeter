@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod greeter;
+pub mod initial_session;
 pub mod locker;
 
 mod common;
