@@ -8,13 +8,13 @@ use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity
 use cosmic::iced::{Point, Size};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::surface;
-use cosmic::widget::text;
+use cosmic::widget::{menu, text};
 use cosmic::{
     Element,
     cosmic_config::{self, ConfigSet},
     executor,
     iced::{
-        self, Background, Border, Length, Subscription, alignment,
+        self, Length, Subscription, alignment,
         event::wayland::OutputEvent,
         futures::SinkExt,
         platform_specific::{
@@ -345,12 +345,13 @@ pub enum Message {
     Login,
     Reconnect,
     Restart,
-    Session(String),
+    Session(usize),
     Shutdown,
     Socket(SocketState),
     Surface(surface::Action),
     Suspend,
     Username(String),
+    User(usize),
 }
 
 impl From<common::Message> for Message {
@@ -409,150 +410,149 @@ impl App {
                 ]);
             }
 
-            //TODO: move code for custom dropdowns to libcosmic
-            let menu_checklist = |label, value, message| {
+            // let dropdown_menu = |items| {
+            //     widget::container(widget::column::with_children(items))
+            //         .padding(1)
+            //         //TODO: move style to libcosmic
+            //         .class(theme::Container::custom(|theme| {
+            //             let cosmic = theme.cosmic();
+            //             let component = &cosmic.background.component;
+            //             widget::container::Style {
+            //                 icon_color: Some(component.on.into()),
+            //                 text_color: Some(component.on.into()),
+            //                 background: Some(Background::Color(component.base.into())),
+            //                 border: Border {
+            //                     radius: 8.0.into(),
+            //                     width: 1.0,
+            //                     color: component.divider.into(),
+            //                 },
+            //                 ..Default::default()
+            //             }
+            //         }))
+            //         .width(Length::Fixed(240.0))
+            // };
+
+            let input_menu = (!self.common.active_layouts.is_empty()).then(|| {
+                let input_menu_items = self
+                    .common
+                    .active_layouts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, layout)| {
+                        menu::Item::Button(
+                            layout.description.clone(),
+                            None,
+                            ContextMenuAction::KeyboardLayout(i),
+                        )
+                    })
+                    .collect();
+
                 Element::from(
-                    widget::menu::menu_button(vec![
-                        if value {
-                            widget::icon::from_name("object-select-symbolic")
-                                .size(16)
-                                .icon()
-                                .width(Length::Fixed(16.0))
-                                .into()
-                        } else {
-                            widget::Space::with_width(Length::Fixed(17.0)).into()
-                        },
-                        widget::Space::with_width(Length::Fixed(8.0)).into(),
-                        widget::text(label)
-                            .align_x(iced::alignment::Horizontal::Left)
-                            .into(),
-                    ])
-                    .on_press(message),
+                    widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
+                        Element::from(
+                            widget::button::custom(widget::icon::from_name(
+                                "input-keyboard-symbolic",
+                            ))
+                            .padding(12.0)
+                            .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
+                        ),
+                        menu::items(&HashMap::new(), input_menu_items),
+                    )])
+                    .on_surface_action(Message::Surface)
+                    // XXX Force overlay instead of popup
+                    .window_id(SurfaceId::NONE),
                 )
-            };
-            let dropdown_menu = |items| {
-                widget::container(widget::column::with_children(items))
-                    .padding(1)
-                    //TODO: move style to libcosmic
-                    .class(theme::Container::custom(|theme| {
-                        let cosmic = theme.cosmic();
-                        let component = &cosmic.background.component;
-                        widget::container::Style {
-                            icon_color: Some(component.on.into()),
-                            text_color: Some(component.on.into()),
-                            background: Some(Background::Color(component.base.into())),
-                            border: Border {
-                                radius: 8.0.into(),
-                                width: 1.0,
-                                color: component.divider.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }))
-                    .width(Length::Fixed(240.0))
-            };
+            });
 
-            let mut input_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
-            )
-            .position(widget::popover::Position::Bottom);
-            if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
-                let mut items = Vec::with_capacity(self.common.active_layouts.len());
-                for (i, layout) in self.common.active_layouts.iter().enumerate() {
-                    items.push(menu_checklist(
-                        &layout.description,
-                        i == 0,
-                        Message::KeyboardLayout(i),
-                    ));
-                }
-                input_button = input_button.popup(dropdown_menu(items));
-            }
-
-            let mut user_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("system-users-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::DropdownToggle(Dropdown::User)),
-            )
-            .position(widget::popover::Position::Bottom);
-            if matches!(self.dropdown_opt, Some(Dropdown::User)) {
-                let mut items = Vec::with_capacity(self.usernames.len());
-                for (name, full_name) in self.usernames.iter() {
-                    items.push(menu_checklist(
-                        full_name,
-                        name == &self.selected_username.username,
-                        Message::Username(name.clone()),
-                    ));
-                }
-                user_button = user_button.popup(dropdown_menu(items));
-            }
-
-            let mut session_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("application-menu-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::DropdownToggle(Dropdown::Session)),
-            )
-            .position(widget::popover::Position::Bottom);
-            if matches!(self.dropdown_opt, Some(Dropdown::Session)) {
-                let mut items = Vec::with_capacity(self.session_names.len());
-                for session_name in self.session_names.iter() {
-                    items.push(menu_checklist(
-                        session_name,
-                        session_name == &self.selected_session,
-                        Message::Session(session_name.clone()),
-                    ));
-                }
-                session_button = session_button.popup(dropdown_menu(items));
-            }
-
-            let button_row = iced::widget::row![
-                /*TODO: greeter accessibility options
-                widget::button(widget::icon::from_name(
-                    "applications-accessibility-symbolic"
-                ))
-                .padding(12.0)
-                .on_press(Message::None),
-                */
-                widget::tooltip(
-                    input_button,
-                    text(fl!("keyboard-layout")),
-                    widget::tooltip::Position::Top
+            let user_menu = self
+                .usernames
+                .iter()
+                .enumerate()
+                .map(|(i, (_, full_name))| {
+                    menu::Item::Button(full_name.clone(), None, ContextMenuAction::User(i))
+                })
+                .collect();
+            let user_menu = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
+                Element::from(
+                    widget::button::custom(widget::icon::from_name("system-users-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::DropdownToggle(Dropdown::User)),
                 ),
-                widget::tooltip(
-                    user_button,
+                menu::items(&HashMap::new(), user_menu),
+            )])
+            .on_surface_action(Message::Surface)
+            // XXX Force overlay instead of popup
+            .window_id(SurfaceId::NONE);
+
+            let session_menu = self
+                .session_names
+                .iter()
+                .enumerate()
+                .map(|(i, session_name)| {
+                    menu::Item::Button(session_name.clone(), None, ContextMenuAction::Session(i))
+                })
+                .collect();
+            let session_menu = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
+                Element::from(
+                    widget::button::custom(widget::icon::from_name("application-menu-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::DropdownToggle(Dropdown::Session)),
+                ),
+                menu::items(&HashMap::new(), session_menu),
+            )])
+            .on_surface_action(Message::Surface)
+            // XXX Force overlay instead of popup
+            .window_id(SurfaceId::NONE);
+
+            let mut button_row = iced::widget::Row::new();
+            /*TODO: greeter accessibility options
+            widget::button(widget::icon::from_name(
+                "applications-accessibility-symbolic"
+            ))
+            .padding(12.0)
+            .on_press(Message::None),
+            */
+            button_row = button_row
+                .push_maybe(input_menu.map(|input_menu| {
+                    widget::tooltip(
+                        input_menu,
+                        text(fl!("keyboard-layout")),
+                        widget::tooltip::Position::Top,
+                    )
+                }))
+                .push(widget::tooltip(
+                    user_menu,
                     text(fl!("user")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    session_button,
+                    widget::tooltip::Position::Top,
+                ))
+                .push(widget::tooltip(
+                    session_menu,
                     text(fl!("session")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
+                    widget::tooltip::Position::Top,
+                ))
+                .push(widget::tooltip(
                     widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
                         .padding(12.0)
                         .on_press(Message::Suspend),
                     text(fl!("suspend")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
+                    widget::tooltip::Position::Top,
+                ))
+                .push(widget::tooltip(
                     widget::button::custom(widget::icon::from_name("system-reboot-symbolic"))
                         .padding(12.0)
                         .on_press(Message::Restart),
                     text(fl!("restart")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
+                    widget::tooltip::Position::Top,
+                ))
+                .push(widget::tooltip(
                     widget::button::custom(widget::icon::from_name("system-shutdown-symbolic"))
                         .padding(12.0)
                         .on_press(Message::Shutdown),
                     text(fl!("shutdown")),
-                    widget::tooltip::Position::Top
-                )
-            ]
-            .padding([16.0, 0.0, 0.0, 0.0])
-            .spacing(8.0);
+                    widget::tooltip::Position::Top,
+                ))
+                .padding([16.0, 0.0, 0.0, 0.0])
+                .spacing(8.0);
 
             widget::container(iced::widget::column![
                 date_time_column,
@@ -1030,11 +1030,56 @@ impl cosmic::Application for App {
                 }
             }
             Message::Session(selected_session) => {
-                self.selected_session = selected_session;
+                let Some(session_name) = self
+                    .session_names
+                    .get(selected_session)
+                    .cloned()
+                    .or_else(|| self.session_names.first().cloned())
+                else {
+                    return Task::none();
+                };
+                self.selected_session = session_name;
                 if self.dropdown_opt == Some(Dropdown::Session) {
                     self.dropdown_opt = None;
                 }
             }
+            Message::User(index) => {
+                if self.dropdown_opt == Some(Dropdown::User) {
+                    self.dropdown_opt = None;
+                }
+                let Some(username) = self.usernames.get(index).map(|u| u.0.to_string()) else {
+                    return Task::none();
+                };
+                if username != self.selected_username.username {
+                    let data_idx = Self::user_data_index(&self.flags.user_datas, &username);
+                    self.selected_username = NameIndexPair { username, data_idx };
+                    self.common.surface_images.clear();
+                    if let Some(session) = data_idx.and_then(|i| {
+                        self.flags
+                            .user_datas
+                            .get(i)
+                            .and_then(|UserData { uid, .. }| {
+                                NonZeroU32::new(*uid).and_then(|uid| {
+                                    self.flags
+                                        .greeter_config
+                                        .users
+                                        .get(&uid)
+                                        .and_then(|conf| conf.last_session.as_deref())
+                                })
+                            })
+                    }) {
+                        session.clone_into(&mut self.selected_session);
+                    };
+                    match &self.socket_state {
+                        SocketState::Open => {
+                            self.common.prompt_opt = None;
+                            self.send_request(Request::CancelSession);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             Message::Username(username) => {
                 if self.dropdown_opt == Some(Dropdown::User) {
                     self.dropdown_opt = None;
@@ -1304,5 +1349,23 @@ impl cosmic::Application for App {
             self.common.subscription().map(Message::from),
             ipc::subscription(),
         ])
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContextMenuAction {
+    User(usize),
+    Session(usize),
+    KeyboardLayout(usize),
+}
+
+impl menu::Action for ContextMenuAction {
+    type Message = Message;
+    fn message(&self) -> Self::Message {
+        match self {
+            ContextMenuAction::User(index) => Message::User(*index),
+            ContextMenuAction::Session(index) => Message::Session(*index),
+            ContextMenuAction::KeyboardLayout(index) => Message::KeyboardLayout(*index),
+        }
     }
 }
