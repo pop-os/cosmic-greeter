@@ -7,7 +7,7 @@ use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
 use cosmic::iced::{Point, Size};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::surface;
+use cosmic::theme::menu_bar;
 use cosmic::widget::{menu, text};
 use cosmic::{
     Element,
@@ -27,6 +27,7 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     theme, widget,
 };
+use cosmic::{Theme, surface};
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
 use greetd_ipc::Request;
@@ -410,28 +411,6 @@ impl App {
                 ]);
             }
 
-            // let dropdown_menu = |items| {
-            //     widget::container(widget::column::with_children(items))
-            //         .padding(1)
-            //         //TODO: move style to libcosmic
-            //         .class(theme::Container::custom(|theme| {
-            //             let cosmic = theme.cosmic();
-            //             let component = &cosmic.background.component;
-            //             widget::container::Style {
-            //                 icon_color: Some(component.on.into()),
-            //                 text_color: Some(component.on.into()),
-            //                 background: Some(Background::Color(component.base.into())),
-            //                 border: Border {
-            //                     radius: 8.0.into(),
-            //                     width: 1.0,
-            //                     color: component.divider.into(),
-            //                 },
-            //                 ..Default::default()
-            //             }
-            //         }))
-            //         .width(Length::Fixed(240.0))
-            // };
-
             let input_menu = (!self.common.active_layouts.is_empty()).then(|| {
                 let input_menu_items = self
                     .common
@@ -439,9 +418,16 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(i, layout)| {
-                        menu::Item::Button(
+                        let selected = self
+                            .common
+                            .active_layouts
+                            .first()
+                            .is_some_and(|l| layout == l);
+
+                        menu::Item::CheckBox(
                             layout.description.clone(),
                             None,
+                            selected,
                             ContextMenuAction::KeyboardLayout(i),
                         )
                     })
@@ -458,6 +444,10 @@ impl App {
                         ),
                         menu::items(&HashMap::new(), input_menu_items),
                     )])
+                    .item_width(menu::ItemWidth::Static(240))
+                    .style(menu_bar::MenuBarStyle::from(
+                        menu_style as fn(&Theme) -> menu_bar::Appearance,
+                    ))
                     .on_surface_action(Message::Surface)
                     // XXX Force overlay instead of popup
                     .window_id(SurfaceId::NONE),
@@ -468,8 +458,14 @@ impl App {
                 .usernames
                 .iter()
                 .enumerate()
-                .map(|(i, (_, full_name))| {
-                    menu::Item::Button(full_name.clone(), None, ContextMenuAction::User(i))
+                .map(|(i, (name, full_name))| {
+                    let selected = self.selected_username.username == *name;
+                    menu::Item::CheckBox(
+                        full_name.clone(),
+                        None,
+                        selected,
+                        ContextMenuAction::User(i),
+                    )
                 })
                 .collect();
             let user_menu = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
@@ -480,6 +476,10 @@ impl App {
                 ),
                 menu::items(&HashMap::new(), user_menu),
             )])
+            .item_width(menu::ItemWidth::Static(240))
+            .style(menu_bar::MenuBarStyle::from(
+                menu_style as fn(&Theme) -> menu_bar::Appearance,
+            ))
             .on_surface_action(Message::Surface)
             // XXX Force overlay instead of popup
             .window_id(SurfaceId::NONE);
@@ -489,7 +489,13 @@ impl App {
                 .iter()
                 .enumerate()
                 .map(|(i, session_name)| {
-                    menu::Item::Button(session_name.clone(), None, ContextMenuAction::Session(i))
+                    let selected = self.selected_session == *session_name;
+                    menu::Item::CheckBox(
+                        session_name.clone(),
+                        None,
+                        selected,
+                        ContextMenuAction::Session(i),
+                    )
                 })
                 .collect();
             let session_menu = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
@@ -500,6 +506,10 @@ impl App {
                 ),
                 menu::items(&HashMap::new(), session_menu),
             )])
+            .item_width(menu::ItemWidth::Static(240))
+            .style(menu_bar::MenuBarStyle::from(
+                menu_style as fn(&Theme) -> menu_bar::Appearance,
+            ))
             .on_surface_action(Message::Surface)
             // XXX Force overlay instead of popup
             .window_id(SurfaceId::NONE);
@@ -1368,4 +1378,21 @@ impl menu::Action for ContextMenuAction {
             ContextMenuAction::KeyboardLayout(index) => Message::KeyboardLayout(*index),
         }
     }
+}
+
+fn menu_style(theme: &Theme) -> menu_bar::Appearance {
+    let cosmic = theme.cosmic();
+
+    let default_style = menu_bar::MenuBarStyle::Default;
+    let mut default_appearance = menu_bar::StyleSheet::appearance(theme, &default_style);
+
+    let component = &cosmic.background.component;
+
+    default_appearance.background = component.base.into();
+    default_appearance.border_color = component.divider.into();
+    default_appearance.border_width = 1.0.into();
+    // default_appearance.bar_border_radius = [8., 8., 8., 8.];
+    default_appearance.menu_border_radius = [8., 8., 8., 8.];
+
+    default_appearance
 }
