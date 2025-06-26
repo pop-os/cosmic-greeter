@@ -30,6 +30,7 @@ use cosmic::{
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
 use greetd_ipc::Request;
+use std::sync::LazyLock;
 use std::{
     collections::{HashMap, hash_map},
     error::Error,
@@ -48,6 +49,8 @@ use crate::{
     common::{self, Common},
     fl,
 };
+
+static USERNAME_ID: LazyLock<iced::id::Id> = LazyLock::new(|| iced::id::Id::new("username-id"));
 
 #[proxy(
     interface = "com.system76.CosmicGreeter",
@@ -351,6 +354,7 @@ pub enum Message {
     Surface(surface::Action),
     Suspend,
     Username(String),
+    EnterUser(bool, String),
 }
 
 impl From<common::Message> for Message {
@@ -372,10 +376,12 @@ pub struct App {
     dialog_page_opt: Option<DialogPage>,
     dropdown_opt: Option<Dropdown>,
     heartbeat_handle: Option<cosmic::iced::task::Handle>,
+    entering_name: bool,
 }
 
 impl App {
     fn menu(&self, id: SurfaceId) -> Element<Message> {
+        const DEFAULT_MENU_ITEM_HEIGHT: f32 = 36.;
         let window_width = self
             .common
             .window_size
@@ -430,8 +436,20 @@ impl App {
                     .on_press(message),
                 )
             };
-            let dropdown_menu = |items| {
-                widget::container(widget::column::with_children(items))
+            let dropdown_menu = |items: Vec<_>| {
+                let item_cnt = items.len();
+
+                let items = widget::column::with_children(items);
+                let items = if item_cnt > 7 {
+                    Element::from(
+                        widget::scrollable(items)
+                            .height(Length::Fixed(DEFAULT_MENU_ITEM_HEIGHT * 7.)),
+                    )
+                } else {
+                    Element::from(items)
+                };
+
+                widget::container(items)
                     .padding(1)
                     //TODO: move style to libcosmic
                     .class(theme::Container::custom(|theme| {
@@ -485,7 +503,29 @@ impl App {
                         Message::Username(name.clone()),
                     ));
                 }
-                user_button = user_button.popup(dropdown_menu(items));
+                let item_cnt = items.len();
+                let menu_button = widget::menu::menu_button(vec![
+                    Element::from(widget::Space::with_width(Length::Fixed(25.0))),
+                    widget::text(fl!("enter-user"))
+                        .align_x(iced::alignment::Horizontal::Left)
+                        .into(),
+                ])
+                .on_press(Message::EnterUser(true, String::new()))
+                .into();
+                let items = if item_cnt >= 6 {
+                    dropdown_menu(vec![
+                        widget::scrollable(widget::column::with_children(items))
+                            .height(Length::Fixed(DEFAULT_MENU_ITEM_HEIGHT * 6.))
+                            .into(),
+                        widget::divider::horizontal::light().into(),
+                        menu_button,
+                    ])
+                } else {
+                    items.push(menu_button);
+                    dropdown_menu(items)
+                };
+
+                user_button = user_button.popup(items);
             }
 
             let mut session_button = widget::popover(
@@ -575,7 +615,8 @@ impl App {
                 }
                 SocketState::Open => {
                     for user_data in &self.flags.user_datas {
-                        if user_data.name == self.selected_username.username {
+                        if !self.entering_name && user_data.name == self.selected_username.username
+                        {
                             match &user_data.icon_opt {
                                 Some(icon) => {
                                     column = column.push(
@@ -599,6 +640,17 @@ impl App {
                                     .align_x(alignment::Horizontal::Center),
                             );
                         }
+                    }
+                    if self.entering_name {
+                        column = column.push(
+                            widget::text_input(
+                                fl!("type-username"),
+                                self.selected_username.username.as_str(),
+                            )
+                            .id(USERNAME_ID.clone())
+                            .on_input(|input| Message::EnterUser(false, input))
+                            .on_submit(|v| Message::Username(v)),
+                        )
                     }
                     match &self.common.prompt_opt {
                         Some((prompt, secret, value_opt)) => match value_opt {
@@ -875,6 +927,7 @@ impl cosmic::Application for App {
             dialog_page_opt: None,
             dropdown_opt: None,
             heartbeat_handle: None,
+            entering_name: false,
         };
         (app, common_task)
     }
@@ -1035,11 +1088,22 @@ impl cosmic::Application for App {
                     self.dropdown_opt = None;
                 }
             }
+            Message::EnterUser(focus_input, username) => {
+                self.entering_name = true;
+                self.selected_username = NameIndexPair {
+                    data_idx: Self::user_data_index(&self.flags.user_datas, &username),
+                    username,
+                };
+                if focus_input {
+                    return widget::text_input::focus(USERNAME_ID.clone());
+                }
+            }
             Message::Username(username) => {
                 if self.dropdown_opt == Some(Dropdown::User) {
                     self.dropdown_opt = None;
                 }
-                if username != self.selected_username.username {
+                if self.entering_name || username != self.selected_username.username {
+                    self.entering_name = false;
                     let data_idx = Self::user_data_index(&self.flags.user_datas, &username);
                     self.selected_username = NameIndexPair { username, data_idx };
                     self.common.surface_images.clear();

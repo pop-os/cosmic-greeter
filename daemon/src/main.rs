@@ -1,6 +1,6 @@
 use cosmic_greeter_daemon::UserData;
 use std::{env, error::Error, future::pending, io, path::Path};
-use zbus::{ConnectionBuilder, DBusError};
+use zbus::{connection::Builder, DBusError};
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
 // callback is executed with the permissions of the specified user id. A good test is to see if
@@ -101,7 +101,7 @@ impl GreeterProxy {
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
-    let _conn = ConnectionBuilder::system()?
+    let _conn = Builder::system()?
         .name("com.system76.CosmicGreeter")?
         .serve_at("/com/system76/CosmicGreeter", GreeterProxy)?
         .build()
