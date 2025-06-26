@@ -36,7 +36,7 @@ use tokio::{sync::mpsc, task};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 
 use crate::{
-    common::{self, Common},
+    common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT},
     fl,
 };
 
@@ -293,8 +293,20 @@ impl App {
                     .on_press(message),
                 )
             };
-            let dropdown_menu = |items| {
-                widget::container(widget::column::with_children(items))
+            let dropdown_menu = |items: Vec<_>| {
+                let item_cnt = items.len();
+
+                let items = widget::column::with_children(items);
+                let items = if item_cnt > 7 {
+                    Element::from(
+                        widget::scrollable(items)
+                            .height(Length::Fixed(DEFAULT_MENU_ITEM_HEIGHT * 7.)),
+                    )
+                } else {
+                    Element::from(items)
+                };
+
+                widget::container(items)
                     .padding(1)
                     //TODO: move style to libcosmic
                     .class(theme::Container::custom(|theme| {

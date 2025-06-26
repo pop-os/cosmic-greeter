@@ -17,6 +17,8 @@ use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
 use std::{collections::HashMap, sync::Arc};
 use wayland_client::protocol::wl_output::WlOutput;
 
+pub const DEFAULT_MENU_ITEM_HEIGHT: f32 = 36.;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ActiveLayout {
     pub layout: String,
