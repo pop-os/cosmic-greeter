@@ -1088,6 +1088,9 @@ impl cosmic::Application for App {
                 }
             }
             Message::EnterUser(focus_input, username) => {
+                if self.dropdown_opt == Some(Dropdown::User) {
+                    self.dropdown_opt = None;
+                }
                 self.entering_name = true;
                 self.selected_username = NameIndexPair {
                     data_idx: Self::user_data_index(&self.flags.user_datas, &username),
