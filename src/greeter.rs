@@ -46,7 +46,7 @@ use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
 
 use crate::{
-    common::{self, Common},
+    common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT},
     fl,
 };
 
@@ -381,7 +381,6 @@ pub struct App {
 
 impl App {
     fn menu(&self, id: SurfaceId) -> Element<Message> {
-        const DEFAULT_MENU_ITEM_HEIGHT: f32 = 36.;
         let window_width = self
             .common
             .window_size
