@@ -891,11 +891,22 @@ impl cosmic::Application for App {
             .collect();
         usernames.sort_by(|a, b| a.1.cmp(&b.1));
 
-        //TODO: use last selected user
-        let (username, uid) = flags
-            .user_datas
-            .first()
-            .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+        let last_user = flags.greeter_config.last_user.as_ref();
+
+        let (username, uid) = last_user
+            .and_then(|last_user| {
+                flags
+                    .user_datas
+                    .iter()
+                    .find(|d| d.uid == last_user.get())
+                    .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+            })
+            .or_else(|| {
+                flags
+                    .user_datas
+                    .first()
+                    .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+            })
             .unwrap_or_default();
 
         let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
@@ -1158,6 +1169,14 @@ impl cosmic::Application for App {
                 };
 
                 let uid = *user_entry.key();
+                self.flags.greeter_config.last_user = Some(uid);
+                if let Err(err) = handler.set("last_user", &self.flags.greeter_config.last_user) {
+                    log::error!(
+                        "Failed to set {:?} as last user: {:?}",
+                        self.flags.greeter_config.last_user,
+                        err
+                    );
+                }
                 match user_entry {
                     hash_map::Entry::Vacant(entry) => {
                         let last_session = Some(self.selected_session.clone());

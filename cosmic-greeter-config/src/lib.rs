@@ -17,6 +17,7 @@ pub const CONFIG_VERSION: u64 = 1;
 pub struct Config {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub users: HashMap<NonZeroU32, user::UserState>,
+    pub last_user: Option<NonZeroU32>,
 }
 
 impl Config {
