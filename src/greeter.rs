@@ -114,7 +114,6 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
     // Sort user data by uid
     user_datas.sort_by(|a, b| a.uid.cmp(&b.uid));
-
     let (mut greeter_config, greeter_config_handler) = CosmicGreeterConfig::load();
     // Filter out users that were removed from the system since the last time we loaded config
     greeter_config.users.retain(|uid, _| {
@@ -846,12 +845,6 @@ impl App {
             None => Task::none(),
         }
     }
-
-    fn user_data_index(user_datas: &[UserData], username: &str) -> Option<usize> {
-        user_datas
-            .binary_search_by(|probe| probe.name.as_str().cmp(username))
-            .ok()
-    }
 }
 
 /// Implement [`cosmic::Application`] to integrate with COSMIC.
@@ -1104,7 +1097,11 @@ impl cosmic::Application for App {
                 }
                 self.entering_name = true;
                 self.selected_username = NameIndexPair {
-                    data_idx: Self::user_data_index(&self.flags.user_datas, &username),
+                    data_idx: self
+                        .flags
+                        .user_datas
+                        .iter()
+                        .position(|d| d.name == username),
                     username,
                 };
                 if focus_input {
@@ -1117,7 +1114,11 @@ impl cosmic::Application for App {
                 }
                 if self.entering_name || username != self.selected_username.username {
                     self.entering_name = false;
-                    let data_idx = Self::user_data_index(&self.flags.user_datas, &username);
+                    let data_idx = self
+                        .flags
+                        .user_datas
+                        .iter()
+                        .position(|d| d.name == username);
                     self.selected_username = NameIndexPair { username, data_idx };
                     self.common.surface_images.clear();
                     if let Some(session) = data_idx.and_then(|i| {
@@ -1155,7 +1156,11 @@ impl cosmic::Application for App {
                                 .map(|uid| self.flags.greeter_config.users.entry(uid))
                         })
                 }) else {
-                    log::error!("Couldn't find user: {:?}", self.selected_username.username);
+                    log::error!(
+                        "Couldn't find user: {:?} {:?}",
+                        self.selected_username.username,
+                        self.selected_username.data_idx,
+                    );
                     return Task::none();
                 };
 
