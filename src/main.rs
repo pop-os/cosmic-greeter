@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use clap_lex::RawArgs;
-use cosmic_greeter::{greeter, locker};
+use cosmic_greeter::{greeter, initial_session, locker};
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     match pwd::Passwd::current_user() {
         Some(current_user) => match current_user.name.as_str() {
             "cosmic-greeter" => greeter::main(),
+            "cosmic-initial-setup" => initial_session::main(),
             _ => locker::main(current_user),
         },
         _ => Err("failed to determine current user".into()),

@@ -1,6 +1,8 @@
 use cosmic_greeter_daemon::UserData;
-use std::{env, error::Error, future::pending, io, path::Path};
+use std::{env, error::Error, future::pending, io, path::Path, process::Command};
 use zbus::{connection::Builder, DBusError};
+
+const INITIAL_SETUP_HOME: &str = "/run/cosmic-initial-setup/";
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
 // callback is executed with the permissions of the specified user id. A good test is to see if
@@ -46,6 +48,44 @@ struct GreeterProxy;
 
 #[zbus::interface(name = "com.system76.CosmicGreeter")]
 impl GreeterProxy {
+    async fn initial_setup_start(&mut self) -> Result<(), GreeterError> {
+        let home_dir = Path::new(INITIAL_SETUP_HOME);
+
+        if let Err(why) = std::fs::create_dir_all(&home_dir.join(".local/share")) {
+            eprintln!("failed to create local share dir: {why:?}");
+        }
+
+        if let Err(why) = std::fs::create_dir_all(&home_dir.join(".local/state")) {
+            eprintln!("failed to create local share dir: {why:?}");
+        }
+
+        _ = Command::new("chown")
+            .args(&["-R", "cosmic-initial-setup:nogroup", INITIAL_SETUP_HOME])
+            .status();
+
+        _ = Command::new("chsh")
+            .args(&["-s", "/bin/bash", "cosmic-initial-setup"])
+            .status();
+
+        Ok(())
+    }
+
+    async fn initial_setup_end(&mut self, new_user: String) -> Result<(), GreeterError> {
+        let home_dir = ["/home/", &new_user].concat();
+        _ = Command::new("rm").args(&["-rf", &home_dir]).status();
+        _ = Command::new("chown")
+            .args(&[
+                "-R",
+                &[&new_user, ":", &new_user].concat(),
+                INITIAL_SETUP_HOME,
+            ])
+            .status();
+        _ = Command::new("mv")
+            .args(&[INITIAL_SETUP_HOME, &home_dir])
+            .status();
+        Ok(())
+    }
+
     fn get_user_data(&mut self) -> Result<String, GreeterError> {
         // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
         // To prevent issues, this should only be called once in the entire process space at a time
