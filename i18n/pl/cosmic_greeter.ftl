@@ -1,5 +1,7 @@
 cancel = Anuluj
 caps-lock = Caps lock jest aktywny.
+enter-user = Ręcznie wprowadź nazwę użytkownika…
+type-username = Użytkownik:
 keyboard-layout = Układ klawiatury
 restart = Uruchom ponownie
 restart-now = Uruchomić ponownie?
