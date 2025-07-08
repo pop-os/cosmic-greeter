@@ -800,8 +800,8 @@ impl cosmic::Application for App {
 
                     // Allow suspend
                     self.inhibit_opt = None;
-                    // Create lock surfaces
 
+                    // Create lock surfaces
                     for (output, surface_id) in self.common.surface_ids.iter() {
                         commands.push(get_lock_surface(*surface_id, output.clone()));
 
