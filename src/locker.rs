@@ -881,9 +881,14 @@ impl cosmic::Application for App {
                     self.dropdown_opt = Some(dropdown);
                 }
             }
-            Message::Inhibit(inhibit) => {
-                self.inhibit_opt = Some(inhibit);
-            }
+            Message::Inhibit(inhibit) => match self.state {
+                State::Locked { .. } => {
+                    log::info!("no need to inhibit sleep when already locked");
+                }
+                _ => {
+                    self.inhibit_opt = Some(inhibit);
+                }
+            },
             Message::KeyboardLayout(layout_i) => {
                 if layout_i < self.common.active_layouts.len() {
                     self.common.active_layouts.swap(0, layout_i);
