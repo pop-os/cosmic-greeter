@@ -16,6 +16,7 @@ icu = { version = "1.5.0", features = [
 ] }
 chrono-tz = "0.10"
 chrono = { version = "0.4", features = ["unstable-locales"] }
+cosmic-applets-config.workspace = true
 cosmic-bg-config.workspace = true
 cosmic-comp-config.workspace = true
 cosmic-config = { workspace = true, features = ["calloop", "macro"] }
@@ -44,13 +45,13 @@ xdg = "2.5.2"
 tokio = { workspace = true, features = ["full"] }
 wayland-client = "0.31.8"
 # For network status using networkmanager feature
-cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", rev = "badfc6a", optional = true }
+cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # For logind integration using logind feature
-logind-zbus = { version = "4", optional = true }
+logind-zbus = { version = "5", optional = true }
 # Fix zbus compilation by manually adding nix with user feature
 nix = { workspace = true, optional = true }
 # For power status with upower feature
-upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", rev = "badfc6a", optional = true }
+upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # Required for some features
 zbus = { workspace = true, optional = true }
 # CLI arguments
@@ -101,8 +102,11 @@ pwd = "1.4.0"
 ron = "0.10.1"
 serde = "1"
 tokio = "1.39.1"
-zbus = "4"
+zbus = "5"
 
+[workspace.dependencies.cosmic-applets-config]
+git = "https://github.com/pop-os/cosmic-applets"
+default-features = false
 
 [workspace.dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"
@@ -128,9 +132,6 @@ git = "https://github.com/pop-os/libcosmic"
 default-features = false
 
 # [patch.'https://github.com/pop-os/libcosmic']
-# libcosmic = { git = "https://github.com/pop-os/libcosmic//", branch = "drop-menu-tree-changes" }
-# cosmic-config = { git = "https://github.com/pop-os/libcosmic//", branch = "drop-menu-tree-changes" }
-# cosmic-theme = { git = "https://github.com/pop-os/libcosmic//", branch = "drop-menu-tree-changes" }
 # libcosmic = { path = "../libcosmic" }
 # cosmic-config = { path = "../libcosmic/cosmic-config" }
 # cosmic-theme = { path = "../libcosmic/cosmic-theme" }
