@@ -82,7 +82,7 @@ uninstall:
 
 # Vendor dependencies locally
 vendor:
-    #!/usr/bin/env bash
+    #!/usr/bin/env sh
     mkdir -p .cargo
     cargo vendor --sync Cargo.toml | head -n -1 > .cargo/config.toml
     echo 'directory = "vendor"' >> .cargo/config.toml

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Debian gdm package pre-removal script
 # Copyright 2001 Branden Robinson.
 # Licensed under the GNU General Public License, version 2.  See the file

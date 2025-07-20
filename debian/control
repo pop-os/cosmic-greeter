@@ -21,7 +21,7 @@ Architecture: amd64 arm64
 Pre-Depends: greetd,
 Depends:
     adduser,
-    bash,
+    dash,
     cosmic-comp,
     cosmic-greeter-daemon,
     dbus,
