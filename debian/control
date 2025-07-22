@@ -23,6 +23,8 @@ Depends:
     adduser,
     cosmic-comp,
     cosmic-greeter-daemon,
+    cosmic-initial-setup,
+    cosmic-session,
     dbus,
     ${misc:Depends},
     ${shlibs:Depends}
