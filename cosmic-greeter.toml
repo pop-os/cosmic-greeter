@@ -7,3 +7,7 @@ service = "cosmic-greeter"
 [default_session]
 command = "cosmic-comp systemd-cat -t cosmic-greeter cosmic-greeter"
 user = "cosmic-greeter"
+
+[initial_session]
+command = "cosmic-greeter"
+user = "cosmic-initial-setup"
