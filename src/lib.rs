@@ -4,6 +4,8 @@
 pub mod greeter;
 pub mod locker;
 
+mod wayland;
+
 mod common;
 
 mod localize;
@@ -16,5 +18,7 @@ mod networkmanager;
 
 #[cfg(feature = "upower")]
 mod upower;
+
+mod state;
 
 mod time;

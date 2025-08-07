@@ -3,6 +3,8 @@
 
 mod ipc;
 
+use crate::wayland::{self, WaylandUpdate};
+use cctk::sctk::reexports::calloop;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
 use cosmic::iced::{Point, Size};
@@ -29,6 +31,10 @@ use cosmic::{
 };
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
+use cosmic_settings_subscriptions::{
+    accessibility::{self, DBusRequest, DBusUpdate},
+    cosmic_a11y_manager::{AccessibilityEvent, AccessibilityRequest, ColorFilter},
+};
 use greetd_ipc::Request;
 use std::sync::LazyLock;
 use std::{
@@ -41,7 +47,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::time;
+use tokio::{sync::mpsc::UnboundedSender, time};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
 
@@ -316,6 +322,7 @@ impl DialogPage {
 ///TODO: this is custom code that should be better handled by libcosmic
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dropdown {
+    Accessibility,
     Keyboard,
     User,
     Session,
@@ -332,6 +339,7 @@ struct NameIndexPair {
 #[derive(Clone, Debug)]
 pub enum Message {
     Common(common::Message),
+    DBusUpdate(DBusUpdate),
     OutputEvent(OutputEvent, WlOutput),
     Auth(Option<String>),
     ConfigUpdateUser,
@@ -354,6 +362,11 @@ pub enum Message {
     Suspend,
     Username(String),
     EnterUser(bool, String),
+    ScreenReader(bool),
+    Magnifier(bool),
+    HighContrast(bool),
+    InvertColors(bool),
+    WaylandUpdate(WaylandUpdate),
 }
 
 impl From<common::Message> for Message {
@@ -376,6 +389,23 @@ pub struct App {
     dropdown_opt: Option<Dropdown>,
     heartbeat_handle: Option<cosmic::iced::task::Handle>,
     entering_name: bool,
+
+    accessibility: Accessibility,
+}
+
+#[derive(Default)]
+struct Accessibility {
+    pub dbus_sender: Option<UnboundedSender<DBusRequest>>,
+    pub wayland_sender: Option<calloop::channel::Sender<AccessibilityRequest>>,
+    pub wayland_protocol_version: Option<u32>,
+
+    pub state: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState,
+    pub helper: Option<cosmic::cosmic_config::Config>,
+
+    pub screen_reader: bool,
+    pub magnifier: bool,
+    pub high_contrast: bool,
+    pub invert_colors: bool,
 }
 
 impl App {
@@ -414,7 +444,11 @@ impl App {
             }
 
             //TODO: move code for custom dropdowns to libcosmic
-            let menu_checklist = |label, value, message| {
+            fn menu_checklist<'a>(
+                label: impl Into<std::borrow::Cow<'a, str>> + 'a,
+                value: bool,
+                message: Message,
+            ) -> Element<'a, Message> {
                 Element::from(
                     widget::menu::menu_button(vec![
                         if value {
@@ -433,7 +467,7 @@ impl App {
                     ])
                     .on_press(message),
                 )
-            };
+            }
             let dropdown_menu = |items: Vec<_>| {
                 let item_cnt = items.len();
 
@@ -544,14 +578,49 @@ impl App {
                 session_button = session_button.popup(dropdown_menu(items));
             }
 
-            let button_row = iced::widget::row![
-                /*TODO: greeter accessibility options
-                widget::button(widget::icon::from_name(
-                    "applications-accessibility-symbolic"
+            // Accessibility menu as a popup dialog
+            let mut accessibility_dropdown = widget::popover(
+                widget::button::custom(widget::icon::from_name(
+                    "applications-accessibility-symbolic",
                 ))
                 .padding(12.0)
-                .on_press(Message::None),
-                */
+                .on_press(Message::DropdownToggle(Dropdown::Accessibility)), // We'll use Dropdown::Keyboard as a dummy, since we don't have a dedicated Dropdown for accessibility
+            )
+            .position(widget::popover::Position::Bottom);
+
+            if matches!(self.dropdown_opt, Some(Dropdown::Accessibility)) {
+                let mut items = Vec::new();
+                items.push(menu_checklist(
+                    fl!("accessibility", "screen-reader"),
+                    self.accessibility.screen_reader,
+                    Message::ScreenReader(!self.accessibility.screen_reader),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "magnifier"),
+                    self.accessibility.magnifier,
+                    Message::Magnifier(!self.accessibility.magnifier),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "high-contrast"),
+                    self.accessibility.high_contrast,
+                    Message::HighContrast(!self.accessibility.high_contrast),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "invert-colors"),
+                    self.accessibility.invert_colors,
+                    Message::InvertColors(!self.accessibility.invert_colors),
+                ));
+                accessibility_dropdown = accessibility_dropdown.popup(dropdown_menu(items));
+            }
+
+            let accessibility_button = accessibility_dropdown;
+
+            let button_row = iced::widget::row![
+                widget::tooltip(
+                    accessibility_button,
+                    text(fl!("accessibility")),
+                    widget::tooltip::Position::Top
+                ),
                 widget::tooltip(
                     input_button,
                     text(fl!("keyboard-layout")),
@@ -871,6 +940,10 @@ impl cosmic::Application for App {
 
     /// Creates the application, and optionally emits command on initialize.
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
+        // init state that is communicated to cosmic session
+        if let Err(err) = crate::state::init() {
+            log::error!("{err:?}");
+        }
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
@@ -917,6 +990,9 @@ impl cosmic::Application for App {
             .unwrap_or_default();
         let data_idx = Some(0);
         let selected_username = NameIndexPair { username, data_idx };
+        let mut accessibility = Accessibility::default();
+        accessibility.helper =
+            cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config().ok();
 
         let app = App {
             common,
@@ -931,6 +1007,7 @@ impl cosmic::Application for App {
             dropdown_opt: None,
             heartbeat_handle: None,
             entering_name: false,
+            accessibility,
         };
         (app, common_task)
     }
@@ -941,6 +1018,20 @@ impl cosmic::Application for App {
             Message::Common(common_message) => {
                 return self.common.update(common_message);
             }
+            Message::DBusUpdate(update) => match update {
+                DBusUpdate::Error(err) => {
+                    log::error!("{err}");
+                    let _ = self.accessibility.dbus_sender.take();
+                    self.accessibility.screen_reader = false;
+                }
+                DBusUpdate::Status(enabled) => {
+                    self.accessibility.screen_reader = enabled;
+                }
+                DBusUpdate::Init(enabled, tx) => {
+                    self.accessibility.screen_reader = enabled;
+                    self.accessibility.dbus_sender = Some(tx);
+                }
+            },
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
@@ -1366,6 +1457,60 @@ impl cosmic::Application for App {
                     cosmic::app::Action::Surface(a),
                 ));
             }
+            Message::ScreenReader(enabled) => {
+                if let Some(tx) = &self.accessibility.dbus_sender.as_ref() {
+                    self.accessibility.screen_reader = enabled;
+                    let _ = tx.send(DBusRequest::Status(enabled));
+                } else {
+                    self.accessibility.screen_reader = false;
+                }
+            }
+            Message::Magnifier(enabled) => {
+                if let Some(tx) = &self.accessibility.wayland_sender {
+                    self.accessibility.magnifier = enabled;
+                    let _ = tx.send(AccessibilityRequest::Magnifier(enabled));
+                } else {
+                    self.accessibility.magnifier = false;
+                }
+            }
+            Message::HighContrast(enabled) => {
+                self.accessibility.high_contrast = enabled;
+            }
+            Message::InvertColors(enabled) => {
+                if let Some(tx) = &self.accessibility.wayland_sender {
+                    self.accessibility.invert_colors = enabled;
+                    let _ = tx.send(AccessibilityRequest::ScreenFilter {
+                        inverted: enabled,
+                        filter: None,
+                    });
+                } else {
+                    self.accessibility.invert_colors = false;
+                }
+            }
+            Message::WaylandUpdate(update) => match update {
+                WaylandUpdate::Errored => {
+                    let _ = self.accessibility.wayland_sender.take();
+                    self.accessibility.wayland_protocol_version = None;
+                    self.accessibility.magnifier = false;
+                    self.accessibility.invert_colors = false;
+                }
+                WaylandUpdate::State(AccessibilityEvent::Bound(ver)) => {
+                    self.accessibility.wayland_protocol_version = Some(ver);
+                }
+                WaylandUpdate::State(AccessibilityEvent::Magnifier(enabled)) => {
+                    self.accessibility.magnifier = enabled;
+                }
+                WaylandUpdate::State(AccessibilityEvent::ScreenFilter { inverted, .. }) => {
+                    self.accessibility.invert_colors = inverted;
+                }
+                WaylandUpdate::State(AccessibilityEvent::Closed) => {
+                    self.accessibility.wayland_sender = None;
+                    self.accessibility.wayland_protocol_version = None;
+                }
+                WaylandUpdate::Started(tx) => {
+                    self.accessibility.wayland_sender = Some(tx);
+                }
+            },
         }
         Task::none()
     }
@@ -1393,6 +1538,8 @@ impl cosmic::Application for App {
         Subscription::batch([
             self.common.subscription().map(Message::from),
             ipc::subscription(),
+            wayland::a11y_subscription().map(Message::WaylandUpdate),
+            accessibility::subscription().map(Message::DBusUpdate),
         ])
     }
 }
