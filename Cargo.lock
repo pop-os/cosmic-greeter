@@ -1308,6 +1308,7 @@ name = "cosmic-settings-daemon-config"
 version = "0.1.0"
 dependencies = [
  "cosmic-config",
+ "cosmic-theme",
  "ron 0.8.1",
  "serde",
 ]

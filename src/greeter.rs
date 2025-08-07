@@ -9,7 +9,6 @@ use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
 use cosmic::iced::{Point, Size};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::surface;
 use cosmic::widget::text;
 use cosmic::{
     Element,
@@ -29,11 +28,13 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     theme, widget,
 };
+use cosmic::{cosmic_theme::{self, CosmicPalette}, surface};
+use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
-use cosmic_settings_subscriptions::{
-    accessibility::{self, DBusRequest, DBusUpdate},
-    cosmic_a11y_manager::{AccessibilityEvent, AccessibilityRequest, ColorFilter},
+use cosmic_settings_daemon_config::greeter::GreeterAccessibilityState;
+use cosmic_settings_subscriptions::cosmic_a11y_manager::{
+    AccessibilityEvent, AccessibilityRequest,
 };
 use greetd_ipc::Request;
 use std::sync::LazyLock;
@@ -47,7 +48,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::mpsc::UnboundedSender, time};
+use tokio::process::Child;
+use tokio::time;
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
 
@@ -339,7 +341,6 @@ struct NameIndexPair {
 #[derive(Clone, Debug)]
 pub enum Message {
     Common(common::Message),
-    DBusUpdate(DBusUpdate),
     OutputEvent(OutputEvent, WlOutput),
     Auth(Option<String>),
     ConfigUpdateUser,
@@ -354,6 +355,7 @@ pub enum Message {
     KeyboardLayout(usize),
     Login,
     Reconnect,
+    Reload(cosmic::Theme),
     Restart,
     Session(String),
     Shutdown,
@@ -389,20 +391,20 @@ pub struct App {
     dropdown_opt: Option<Dropdown>,
     heartbeat_handle: Option<cosmic::iced::task::Handle>,
     entering_name: bool,
+    theme_builder: cosmic_theme::ThemeBuilder,
 
     accessibility: Accessibility,
 }
 
 #[derive(Default)]
 struct Accessibility {
-    pub dbus_sender: Option<UnboundedSender<DBusRequest>>,
     pub wayland_sender: Option<calloop::channel::Sender<AccessibilityRequest>>,
     pub wayland_protocol_version: Option<u32>,
 
     pub state: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState,
     pub helper: Option<cosmic::cosmic_config::Config>,
 
-    pub screen_reader: bool,
+    pub screen_reader: Option<Child>,
     pub magnifier: bool,
     pub high_contrast: bool,
     pub invert_colors: bool,
@@ -592,8 +594,8 @@ impl App {
                 let mut items = Vec::new();
                 items.push(menu_checklist(
                     fl!("accessibility", "screen-reader"),
-                    self.accessibility.screen_reader,
-                    Message::ScreenReader(!self.accessibility.screen_reader),
+                    self.accessibility.screen_reader.is_some(),
+                    Message::ScreenReader(!self.accessibility.screen_reader.is_some()),
                 ));
                 items.push(menu_checklist(
                     fl!("accessibility", "magnifier"),
@@ -907,8 +909,13 @@ impl App {
         // Ensure that user's xkb config is used
         self.common.set_xkb_config(&user_data);
 
+        if let Some(builder) = &user_data.theme_builder_opt {
+            self.theme_builder = builder.clone();
+        }
+
         match &user_data.theme_opt {
             Some(theme) => {
+                self.accessibility.high_contrast = theme.is_high_contrast;
                 cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
             }
             None => Task::none(),
@@ -940,10 +947,6 @@ impl cosmic::Application for App {
 
     /// Creates the application, and optionally emits command on initialize.
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
-        // init state that is communicated to cosmic session
-        if let Err(err) = crate::state::init() {
-            log::error!("{err:?}");
-        }
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
@@ -993,6 +996,10 @@ impl cosmic::Application for App {
         let mut accessibility = Accessibility::default();
         accessibility.helper =
             cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config().ok();
+        // Reset the state so that only new changes are applied.
+        if let Some(helper) = accessibility.helper.as_ref() {
+            _ = GreeterAccessibilityState::write_entry(&Default::default(), helper);
+        }
 
         let app = App {
             common,
@@ -1008,6 +1015,7 @@ impl cosmic::Application for App {
             heartbeat_handle: None,
             entering_name: false,
             accessibility,
+            theme_builder: Default::default(),
         };
         (app, common_task)
     }
@@ -1018,20 +1026,7 @@ impl cosmic::Application for App {
             Message::Common(common_message) => {
                 return self.common.update(common_message);
             }
-            Message::DBusUpdate(update) => match update {
-                DBusUpdate::Error(err) => {
-                    log::error!("{err}");
-                    let _ = self.accessibility.dbus_sender.take();
-                    self.accessibility.screen_reader = false;
-                }
-                DBusUpdate::Status(enabled) => {
-                    self.accessibility.screen_reader = enabled;
-                }
-                DBusUpdate::Init(enabled, tx) => {
-                    self.accessibility.screen_reader = enabled;
-                    self.accessibility.dbus_sender = Some(tx);
-                }
-            },
+
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
@@ -1175,6 +1170,12 @@ impl cosmic::Application for App {
                     }
                     _ => {}
                 }
+            }
+            Message::Reload(new) => {
+
+                return cosmic::command::set_theme(
+                    new.clone(),
+                );
             }
             Message::Session(selected_session) => {
                 self.selected_session = selected_session;
@@ -1458,23 +1459,78 @@ impl cosmic::Application for App {
                 ));
             }
             Message::ScreenReader(enabled) => {
-                if let Some(tx) = &self.accessibility.dbus_sender.as_ref() {
-                    self.accessibility.screen_reader = enabled;
-                    let _ = tx.send(DBusRequest::Status(enabled));
+                if enabled
+                    && self
+                        .accessibility
+                        .screen_reader
+                        .as_mut()
+                        .is_none_or(|c| c.try_wait().is_ok())
+                {
+                    self.accessibility.screen_reader =
+                        tokio::process::Command::new("/usr/bin/orca").spawn().ok();
                 } else {
-                    self.accessibility.screen_reader = false;
+                    if let Some(mut c) = self.accessibility.screen_reader.take() {
+                        return cosmic::task::future::<(), ()>(async move {
+                            if let Err(err) = c.kill().await {
+                                log::error!("Failed to stop screen reader: {err:?}");
+                            }
+                        })
+                        .discard();
+                    }
+                }
+
+                if let Some(helper) = self.accessibility.helper.as_ref() {
+                    _ = self
+                        .accessibility
+                        .state
+                        .set_screen_reader(&helper, Some(enabled));
                 }
             }
             Message::Magnifier(enabled) => {
                 if let Some(tx) = &self.accessibility.wayland_sender {
                     self.accessibility.magnifier = enabled;
                     let _ = tx.send(AccessibilityRequest::Magnifier(enabled));
+                    if let Some(helper) = self.accessibility.helper.as_ref() {
+                        _ = self
+                            .accessibility
+                            .state
+                            .set_magnifier(&helper, Some(enabled));
+                    }
                 } else {
                     self.accessibility.magnifier = false;
                 }
             }
             Message::HighContrast(enabled) => {
                 self.accessibility.high_contrast = enabled;
+
+                if let Some(helper) = self.accessibility.helper.as_ref() {
+                    _ = self
+                        .accessibility
+                        .state
+                        .set_high_contrast(&helper, Some(enabled));
+                }
+                let builder = self.theme_builder.clone();
+
+                return cosmic::task::future::<_, _>(async move {
+                    let builder = builder.clone();
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    std::thread::spawn(move || {
+                        match apply_hc_theme(builder, enabled) {
+                            Ok(t) => {
+                            _ = tx.send(Some(t));
+                            }
+                            Err(err) => {
+                                log::error!("{err:?}");
+                                _ = tx.send(None);
+                            }
+                        }
+                    });
+                    if let Ok(Some(theme)) = rx.await {
+                        cosmic::Action::App(Message::Reload(cosmic::Theme::custom(std::sync::Arc::new(theme))))
+                    } else {
+                        cosmic::Action::None
+                    }
+                });
             }
             Message::InvertColors(enabled) => {
                 if let Some(tx) = &self.accessibility.wayland_sender {
@@ -1483,6 +1539,12 @@ impl cosmic::Application for App {
                         inverted: enabled,
                         filter: None,
                     });
+                    if let Some(helper) = self.accessibility.helper.as_ref() {
+                        _ = self
+                            .accessibility
+                            .state
+                            .set_invert_colors(&helper, Some(enabled));
+                    }
                 } else {
                     self.accessibility.invert_colors = false;
                 }
@@ -1539,7 +1601,28 @@ impl cosmic::Application for App {
             self.common.subscription().map(Message::from),
             ipc::subscription(),
             wayland::a11y_subscription().map(Message::WaylandUpdate),
-            accessibility::subscription().map(Message::DBusUpdate),
         ])
     }
+}
+
+
+pub fn apply_hc_theme(builder: cosmic_theme::ThemeBuilder, enabled: bool) -> Result<cosmic_theme::Theme, cosmic_config::Error> {
+    let is_dark = builder.palette.is_dark();
+    let mut builder = builder.clone();
+
+    builder.palette = if is_dark {
+        if enabled {
+            CosmicPalette::HighContrastDark(builder.palette.inner())
+        } else {
+            CosmicPalette::Dark(builder.palette.inner())
+        }
+    } else if enabled {
+        CosmicPalette::HighContrastLight(builder.palette.inner())
+    } else {
+        CosmicPalette::Light(builder.palette.inner())
+    };
+
+    let new_theme = builder.build();
+
+    Ok(new_theme)
 }
