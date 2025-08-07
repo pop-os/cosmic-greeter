@@ -1306,6 +1306,7 @@ dependencies = [
 [[package]]
 name = "cosmic-settings-daemon-config"
 version = "0.1.0"
+source = "git+https://github.com/pop-os/cosmic-settings-daemon?branch=greeter#44ae8813ee2cef186a8817377f529801199972c4"
 dependencies = [
  "cosmic-config",
  "cosmic-theme",
