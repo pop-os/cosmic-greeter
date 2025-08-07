@@ -19,6 +19,4 @@ mod networkmanager;
 #[cfg(feature = "upower")]
 mod upower;
 
-mod state;
-
 mod time;
