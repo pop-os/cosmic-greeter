@@ -8,7 +8,7 @@ use std::{
 pub use cosmic_applets_config::time::TimeAppletConfig;
 pub use cosmic_bg_config::{state::State as BgState, Color, Source as BgSource};
 pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig};
-pub use cosmic_theme::Theme;
+pub use cosmic_theme::{Theme, ThemeBuilder};
 
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 pub struct UserData {
@@ -17,6 +17,7 @@ pub struct UserData {
     pub full_name: String,
     pub icon_opt: Option<Vec<u8>>,
     pub theme_opt: Option<Theme>,
+    pub theme_builder_opt: Option<ThemeBuilder>,
     pub bg_state: BgState,
     pub bg_path_data: BTreeMap<PathBuf, Vec<u8>>,
     pub xkb_config_opt: Option<XkbConfig>,
@@ -59,6 +60,7 @@ impl UserData {
     pub fn load_config_as_user(&mut self) {
         self.icon_opt = None;
         self.theme_opt = None;
+        self.theme_builder_opt = None;
         self.bg_state = Default::default();
         self.xkb_config_opt = None;
         self.time_applet_config = Default::default();
@@ -111,6 +113,28 @@ impl UserData {
             },
             Err(err) => {
                 log::error!("failed to create cosmic-theme config helper: {:?}", err);
+            }
+        }
+
+        match if is_dark {
+            cosmic_theme::ThemeBuilder::dark_config()
+        } else {
+            cosmic_theme::ThemeBuilder::light_config()
+        } {
+            Ok(helper) => match cosmic_theme::ThemeBuilder::get_entry(&helper) {
+                Ok(theme) => {
+                    self.theme_builder_opt = Some(theme);
+                }
+                Err((errs, theme)) => {
+                    log::error!("failed to load cosmic-theme builder config: {:?}", errs);
+                    self.theme_builder_opt = Some(theme);
+                }
+            },
+            Err(err) => {
+                log::error!(
+                    "failed to create cosmic-theme builder config helper: {:?}",
+                    err
+                );
             }
         }
 

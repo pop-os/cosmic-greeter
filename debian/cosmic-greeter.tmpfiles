@@ -1,2 +1,3 @@
 # Home directory of cosmic-greeter
 d	/var/lib/cosmic-greeter	0750	cosmic-greeter	cosmic-greeter
+d	/run/cosmic-greeter	    0755	cosmic-greeter	cosmic-greeter	-

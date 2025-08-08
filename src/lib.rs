@@ -4,6 +4,8 @@
 pub mod greeter;
 pub mod locker;
 
+mod wayland;
+
 mod common;
 
 mod localize;

@@ -3,11 +3,12 @@
 
 mod ipc;
 
+use crate::wayland::{self, WaylandUpdate};
+use cctk::sctk::reexports::calloop;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
 use cosmic::iced::{Point, Size};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::surface;
 use cosmic::widget::text;
 use cosmic::{
     Element,
@@ -27,8 +28,14 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     theme, widget,
 };
+use cosmic::{cosmic_theme::{self, CosmicPalette}, surface};
+use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
+use cosmic_settings_daemon_config::greeter::GreeterAccessibilityState;
+use cosmic_settings_subscriptions::cosmic_a11y_manager::{
+    AccessibilityEvent, AccessibilityRequest,
+};
 use greetd_ipc::Request;
 use std::sync::LazyLock;
 use std::{
@@ -41,6 +48,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::process::Child;
 use tokio::time;
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
@@ -316,6 +324,7 @@ impl DialogPage {
 ///TODO: this is custom code that should be better handled by libcosmic
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dropdown {
+    Accessibility,
     Keyboard,
     User,
     Session,
@@ -346,6 +355,7 @@ pub enum Message {
     KeyboardLayout(usize),
     Login,
     Reconnect,
+    Reload(cosmic::Theme),
     Restart,
     Session(String),
     Shutdown,
@@ -354,6 +364,11 @@ pub enum Message {
     Suspend,
     Username(String),
     EnterUser(bool, String),
+    ScreenReader(bool),
+    Magnifier(bool),
+    HighContrast(bool),
+    InvertColors(bool),
+    WaylandUpdate(WaylandUpdate),
 }
 
 impl From<common::Message> for Message {
@@ -376,6 +391,23 @@ pub struct App {
     dropdown_opt: Option<Dropdown>,
     heartbeat_handle: Option<cosmic::iced::task::Handle>,
     entering_name: bool,
+    theme_builder: cosmic_theme::ThemeBuilder,
+
+    accessibility: Accessibility,
+}
+
+#[derive(Default)]
+struct Accessibility {
+    pub wayland_sender: Option<calloop::channel::Sender<AccessibilityRequest>>,
+    pub wayland_protocol_version: Option<u32>,
+
+    pub state: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState,
+    pub helper: Option<cosmic::cosmic_config::Config>,
+
+    pub screen_reader: Option<Child>,
+    pub magnifier: bool,
+    pub high_contrast: bool,
+    pub invert_colors: bool,
 }
 
 impl App {
@@ -414,7 +446,11 @@ impl App {
             }
 
             //TODO: move code for custom dropdowns to libcosmic
-            let menu_checklist = |label, value, message| {
+            fn menu_checklist<'a>(
+                label: impl Into<std::borrow::Cow<'a, str>> + 'a,
+                value: bool,
+                message: Message,
+            ) -> Element<'a, Message> {
                 Element::from(
                     widget::menu::menu_button(vec![
                         if value {
@@ -433,7 +469,7 @@ impl App {
                     ])
                     .on_press(message),
                 )
-            };
+            }
             let dropdown_menu = |items: Vec<_>| {
                 let item_cnt = items.len();
 
@@ -544,14 +580,49 @@ impl App {
                 session_button = session_button.popup(dropdown_menu(items));
             }
 
-            let button_row = iced::widget::row![
-                /*TODO: greeter accessibility options
-                widget::button(widget::icon::from_name(
-                    "applications-accessibility-symbolic"
+            // Accessibility menu as a popup dialog
+            let mut accessibility_dropdown = widget::popover(
+                widget::button::custom(widget::icon::from_name(
+                    "applications-accessibility-symbolic",
                 ))
                 .padding(12.0)
-                .on_press(Message::None),
-                */
+                .on_press(Message::DropdownToggle(Dropdown::Accessibility)), // We'll use Dropdown::Keyboard as a dummy, since we don't have a dedicated Dropdown for accessibility
+            )
+            .position(widget::popover::Position::Bottom);
+
+            if matches!(self.dropdown_opt, Some(Dropdown::Accessibility)) {
+                let mut items = Vec::new();
+                items.push(menu_checklist(
+                    fl!("accessibility", "screen-reader"),
+                    self.accessibility.screen_reader.is_some(),
+                    Message::ScreenReader(!self.accessibility.screen_reader.is_some()),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "magnifier"),
+                    self.accessibility.magnifier,
+                    Message::Magnifier(!self.accessibility.magnifier),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "high-contrast"),
+                    self.accessibility.high_contrast,
+                    Message::HighContrast(!self.accessibility.high_contrast),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "invert-colors"),
+                    self.accessibility.invert_colors,
+                    Message::InvertColors(!self.accessibility.invert_colors),
+                ));
+                accessibility_dropdown = accessibility_dropdown.popup(dropdown_menu(items));
+            }
+
+            let accessibility_button = accessibility_dropdown;
+
+            let button_row = iced::widget::row![
+                widget::tooltip(
+                    accessibility_button,
+                    text(fl!("accessibility")),
+                    widget::tooltip::Position::Top
+                ),
                 widget::tooltip(
                     input_button,
                     text(fl!("keyboard-layout")),
@@ -838,8 +909,13 @@ impl App {
         // Ensure that user's xkb config is used
         self.common.set_xkb_config(&user_data);
 
+        if let Some(builder) = &user_data.theme_builder_opt {
+            self.theme_builder = builder.clone();
+        }
+
         match &user_data.theme_opt {
             Some(theme) => {
+                self.accessibility.high_contrast = theme.is_high_contrast;
                 cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
             }
             None => Task::none(),
@@ -917,6 +993,13 @@ impl cosmic::Application for App {
             .unwrap_or_default();
         let data_idx = Some(0);
         let selected_username = NameIndexPair { username, data_idx };
+        let mut accessibility = Accessibility::default();
+        accessibility.helper =
+            cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config().ok();
+        // Reset the state so that only new changes are applied.
+        if let Some(helper) = accessibility.helper.as_ref() {
+            _ = GreeterAccessibilityState::write_entry(&Default::default(), helper);
+        }
 
         let app = App {
             common,
@@ -931,6 +1014,8 @@ impl cosmic::Application for App {
             dropdown_opt: None,
             heartbeat_handle: None,
             entering_name: false,
+            accessibility,
+            theme_builder: Default::default(),
         };
         (app, common_task)
     }
@@ -941,6 +1026,7 @@ impl cosmic::Application for App {
             Message::Common(common_message) => {
                 return self.common.update(common_message);
             }
+
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
@@ -1084,6 +1170,12 @@ impl cosmic::Application for App {
                     }
                     _ => {}
                 }
+            }
+            Message::Reload(new) => {
+
+                return cosmic::command::set_theme(
+                    new.clone(),
+                );
             }
             Message::Session(selected_session) => {
                 self.selected_session = selected_session;
@@ -1366,6 +1458,121 @@ impl cosmic::Application for App {
                     cosmic::app::Action::Surface(a),
                 ));
             }
+            Message::ScreenReader(enabled) => {
+                if enabled
+                    && self
+                        .accessibility
+                        .screen_reader
+                        .as_mut()
+                        .is_none_or(|c| c.try_wait().is_ok())
+                {
+                    self.accessibility.screen_reader =
+                        tokio::process::Command::new("/usr/bin/orca").spawn().ok();
+                } else {
+                    if let Some(mut c) = self.accessibility.screen_reader.take() {
+                        return cosmic::task::future::<(), ()>(async move {
+                            if let Err(err) = c.kill().await {
+                                log::error!("Failed to stop screen reader: {err:?}");
+                            }
+                        })
+                        .discard();
+                    }
+                }
+
+                if let Some(helper) = self.accessibility.helper.as_ref() {
+                    _ = self
+                        .accessibility
+                        .state
+                        .set_screen_reader(&helper, Some(enabled));
+                }
+            }
+            Message::Magnifier(enabled) => {
+                if let Some(tx) = &self.accessibility.wayland_sender {
+                    self.accessibility.magnifier = enabled;
+                    let _ = tx.send(AccessibilityRequest::Magnifier(enabled));
+                    if let Some(helper) = self.accessibility.helper.as_ref() {
+                        _ = self
+                            .accessibility
+                            .state
+                            .set_magnifier(&helper, Some(enabled));
+                    }
+                } else {
+                    self.accessibility.magnifier = false;
+                }
+            }
+            Message::HighContrast(enabled) => {
+                self.accessibility.high_contrast = enabled;
+
+                if let Some(helper) = self.accessibility.helper.as_ref() {
+                    _ = self
+                        .accessibility
+                        .state
+                        .set_high_contrast(&helper, Some(enabled));
+                }
+                let builder = self.theme_builder.clone();
+
+                return cosmic::task::future::<_, _>(async move {
+                    let builder = builder.clone();
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    std::thread::spawn(move || {
+                        match apply_hc_theme(builder, enabled) {
+                            Ok(t) => {
+                            _ = tx.send(Some(t));
+                            }
+                            Err(err) => {
+                                log::error!("{err:?}");
+                                _ = tx.send(None);
+                            }
+                        }
+                    });
+                    if let Ok(Some(theme)) = rx.await {
+                        cosmic::Action::App(Message::Reload(cosmic::Theme::custom(std::sync::Arc::new(theme))))
+                    } else {
+                        cosmic::Action::None
+                    }
+                });
+            }
+            Message::InvertColors(enabled) => {
+                if let Some(tx) = &self.accessibility.wayland_sender {
+                    self.accessibility.invert_colors = enabled;
+                    let _ = tx.send(AccessibilityRequest::ScreenFilter {
+                        inverted: enabled,
+                        filter: None,
+                    });
+                    if let Some(helper) = self.accessibility.helper.as_ref() {
+                        _ = self
+                            .accessibility
+                            .state
+                            .set_invert_colors(&helper, Some(enabled));
+                    }
+                } else {
+                    self.accessibility.invert_colors = false;
+                }
+            }
+            Message::WaylandUpdate(update) => match update {
+                WaylandUpdate::Errored => {
+                    let _ = self.accessibility.wayland_sender.take();
+                    self.accessibility.wayland_protocol_version = None;
+                    self.accessibility.magnifier = false;
+                    self.accessibility.invert_colors = false;
+                }
+                WaylandUpdate::State(AccessibilityEvent::Bound(ver)) => {
+                    self.accessibility.wayland_protocol_version = Some(ver);
+                }
+                WaylandUpdate::State(AccessibilityEvent::Magnifier(enabled)) => {
+                    self.accessibility.magnifier = enabled;
+                }
+                WaylandUpdate::State(AccessibilityEvent::ScreenFilter { inverted, .. }) => {
+                    self.accessibility.invert_colors = inverted;
+                }
+                WaylandUpdate::State(AccessibilityEvent::Closed) => {
+                    self.accessibility.wayland_sender = None;
+                    self.accessibility.wayland_protocol_version = None;
+                }
+                WaylandUpdate::Started(tx) => {
+                    self.accessibility.wayland_sender = Some(tx);
+                }
+            },
         }
         Task::none()
     }
@@ -1393,6 +1600,29 @@ impl cosmic::Application for App {
         Subscription::batch([
             self.common.subscription().map(Message::from),
             ipc::subscription(),
+            wayland::a11y_subscription().map(Message::WaylandUpdate),
         ])
     }
+}
+
+
+pub fn apply_hc_theme(builder: cosmic_theme::ThemeBuilder, enabled: bool) -> Result<cosmic_theme::Theme, cosmic_config::Error> {
+    let is_dark = builder.palette.is_dark();
+    let mut builder = builder.clone();
+
+    builder.palette = if is_dark {
+        if enabled {
+            CosmicPalette::HighContrastDark(builder.palette.inner())
+        } else {
+            CosmicPalette::Dark(builder.palette.inner())
+        }
+    } else if enabled {
+        CosmicPalette::HighContrastLight(builder.palette.inner())
+    } else {
+        CosmicPalette::Light(builder.palette.inner())
+    };
+
+    let new_theme = builder.build();
+
+    Ok(new_theme)
 }
