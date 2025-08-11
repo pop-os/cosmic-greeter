@@ -28,11 +28,12 @@ use cosmic::{
     iced_runtime::core::window::Id as SurfaceId,
     theme, widget,
 };
-use cosmic::{cosmic_theme::{self, CosmicPalette}, surface};
-use cosmic_config::CosmicConfigEntry;
+use cosmic::{
+    cosmic_theme::{self, CosmicPalette},
+    surface,
+};
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
-use cosmic_settings_daemon_config::greeter::GreeterAccessibilityState;
 use cosmic_settings_subscriptions::cosmic_a11y_manager::{
     AccessibilityEvent, AccessibilityRequest,
 };
@@ -913,13 +914,17 @@ impl App {
             self.theme_builder = builder.clone();
         }
 
-        match &user_data.theme_opt {
-            Some(theme) => {
-                self.accessibility.high_contrast = theme.is_high_contrast;
-                cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
-            }
-            None => Task::none(),
+        let mut tasks = Vec::new();
+        self.accessibility.magnifier = user_data.accessibility_zoom.start_on_login;
+
+        if let Some(theme) = &user_data.theme_opt {
+            self.accessibility.high_contrast = theme.is_high_contrast;
+            tasks.push(cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(
+                theme.clone(),
+            ))));
         }
+
+        Task::batch(tasks)
     }
 }
 
@@ -996,10 +1001,6 @@ impl cosmic::Application for App {
         let mut accessibility = Accessibility::default();
         accessibility.helper =
             cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config().ok();
-        // Reset the state so that only new changes are applied.
-        if let Some(helper) = accessibility.helper.as_ref() {
-            _ = GreeterAccessibilityState::write_entry(&Default::default(), helper);
-        }
 
         let app = App {
             common,
@@ -1172,10 +1173,7 @@ impl cosmic::Application for App {
                 }
             }
             Message::Reload(new) => {
-
-                return cosmic::command::set_theme(
-                    new.clone(),
-                );
+                return cosmic::command::set_theme(new.clone());
             }
             Message::Session(selected_session) => {
                 self.selected_session = selected_session;
@@ -1514,19 +1512,19 @@ impl cosmic::Application for App {
                 return cosmic::task::future::<_, _>(async move {
                     let builder = builder.clone();
                     let (tx, rx) = tokio::sync::oneshot::channel();
-                    std::thread::spawn(move || {
-                        match apply_hc_theme(builder, enabled) {
-                            Ok(t) => {
+                    std::thread::spawn(move || match apply_hc_theme(builder, enabled) {
+                        Ok(t) => {
                             _ = tx.send(Some(t));
-                            }
-                            Err(err) => {
-                                log::error!("{err:?}");
-                                _ = tx.send(None);
-                            }
+                        }
+                        Err(err) => {
+                            log::error!("{err:?}");
+                            _ = tx.send(None);
                         }
                     });
                     if let Ok(Some(theme)) = rx.await {
-                        cosmic::Action::App(Message::Reload(cosmic::Theme::custom(std::sync::Arc::new(theme))))
+                        cosmic::Action::App(Message::Reload(cosmic::Theme::custom(
+                            std::sync::Arc::new(theme),
+                        )))
                     } else {
                         cosmic::Action::None
                     }
@@ -1570,6 +1568,14 @@ impl cosmic::Application for App {
                     self.accessibility.wayland_protocol_version = None;
                 }
                 WaylandUpdate::Started(tx) => {
+                    let _ = tx.send(AccessibilityRequest::ScreenFilter {
+                        inverted: self.accessibility.invert_colors,
+                        filter: None,
+                    });
+                    let _ = tx.send(AccessibilityRequest::Magnifier(
+                        self.accessibility.magnifier,
+                    ));
+
                     self.accessibility.wayland_sender = Some(tx);
                 }
             },
@@ -1605,8 +1611,10 @@ impl cosmic::Application for App {
     }
 }
 
-
-pub fn apply_hc_theme(builder: cosmic_theme::ThemeBuilder, enabled: bool) -> Result<cosmic_theme::Theme, cosmic_config::Error> {
+pub fn apply_hc_theme(
+    builder: cosmic_theme::ThemeBuilder,
+    enabled: bool,
+) -> Result<cosmic_theme::Theme, cosmic_config::Error> {
     let is_dark = builder.palette.is_dark();
     let mut builder = builder.clone();
 

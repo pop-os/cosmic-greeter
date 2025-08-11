@@ -7,7 +7,7 @@ use std::{
 
 pub use cosmic_applets_config::time::TimeAppletConfig;
 pub use cosmic_bg_config::{state::State as BgState, Color, Source as BgSource};
-pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig};
+pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig, ZoomConfig};
 pub use cosmic_theme::{Theme, ThemeBuilder};
 
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -22,6 +22,7 @@ pub struct UserData {
     pub bg_path_data: BTreeMap<PathBuf, Vec<u8>>,
     pub xkb_config_opt: Option<XkbConfig>,
     pub time_applet_config: TimeAppletConfig,
+    pub accessibility_zoom: ZoomConfig,
 }
 
 impl UserData {
@@ -156,15 +157,19 @@ impl UserData {
         self.load_wallpapers_as_user();
 
         match cosmic_config::Config::new("com.system76.CosmicComp", CosmicCompConfig::VERSION) {
-            Ok(config_handler) => match CosmicCompConfig::get_entry(&config_handler) {
-                Ok(config) => {
-                    self.xkb_config_opt = Some(config.xkb_config);
-                }
-                Err((errs, config)) => {
-                    log::error!("errors loading cosmic-comp config: {:?}", errs);
-                    self.xkb_config_opt = Some(config.xkb_config);
-                }
-            },
+            Ok(config_handler) => {
+                match CosmicCompConfig::get_entry(&config_handler) {
+                    Ok(config) => {
+                        self.xkb_config_opt = Some(config.xkb_config);
+                        self.accessibility_zoom = config.accessibility_zoom;
+                    }
+                    Err((errs, config)) => {
+                        log::error!("errors loading cosmic-comp config: {:?}", errs);
+                        self.xkb_config_opt = Some(config.xkb_config);
+                        self.accessibility_zoom = config.accessibility_zoom;
+                    }
+                };
+            }
             Err(err) => {
                 log::error!("failed to create cosmic-comp config handler: {}", err);
             }
