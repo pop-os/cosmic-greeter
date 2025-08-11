@@ -48,7 +48,7 @@ cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settin
     "accessibility",
     "cosmic_a11y_manager",
 ] }
-cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, branch = "greeter", features = [
+cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
     "greeter",
 ] }
 cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit", rev = "178eb0b" }
