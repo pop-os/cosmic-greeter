@@ -1187,6 +1187,7 @@ dependencies = [
  "dirs 6.0.0",
  "env_logger",
  "freedesktop_entry_parser",
+ "futures-channel",
  "futures-util",
  "greetd_ipc",
  "i18n-embed",
