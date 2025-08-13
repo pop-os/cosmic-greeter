@@ -16,4 +16,10 @@ shutdown-timeout = El ordenador se apagará automáticamente en
     *[other] {$seconds} segundos.
   }
 suspend = Suspender
+suspend-now = ¿Suspender ahora?
+suspend-timeout = El ordenador se suspenderá automáticamente en
+  { $seconds ->
+    [1] 1 segundo.
+    *[other] {$seconds} segundos.
+  }
 user = Usuario
