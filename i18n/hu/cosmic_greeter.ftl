@@ -1,5 +1,12 @@
+accessibility = Akadálymentesség
+    .screen-reader = Képernyőolvasó
+    .magnifier = Nagyító
+    .high-contrast = Kontrasztos megjelenítés
+    .invert-colors = Színek invertálása
 cancel = Mégse
 caps-lock = A Caps Lock be van kapcsolva.
+enter-user = Név megadása kézzel...
+type-username = Felhasználónév:
 keyboard-layout = Billentyűzetkiosztás
 restart = Újraindítás
 restart-now = Újraindítás most?
