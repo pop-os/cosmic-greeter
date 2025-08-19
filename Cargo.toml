@@ -130,8 +130,9 @@ git = "https://github.com/pop-os/cosmic-bg"
 default-features = false
 
 [workspace.dependencies.cosmic-comp-config]
-# git = "https://github.com/pop-os/cosmic-comp"
-path = "../cosmic-comp/cosmic-comp-config"
+git = "https://github.com/pop-os/cosmic-comp"
+branch = "refactor-config"
+# path = "../cosmic-comp/cosmic-comp-config"
 default-features = false
 features = ["output"]
 
