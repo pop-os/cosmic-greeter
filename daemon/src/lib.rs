@@ -1,3 +1,4 @@
+use cosmic_comp_config::output::{self, OutputsConfig};
 use cosmic_config::CosmicConfigEntry;
 use std::{
     collections::BTreeMap,
@@ -23,6 +24,7 @@ pub struct UserData {
     pub xkb_config_opt: Option<XkbConfig>,
     pub time_applet_config: TimeAppletConfig,
     pub accessibility_zoom: ZoomConfig,
+    pub outputs: Option<OutputsConfig>,
 }
 
 impl UserData {
@@ -174,6 +176,12 @@ impl UserData {
                 log::error!("failed to create cosmic-comp config handler: {}", err);
             }
         };
+
+        let xdg = xdg::BaseDirectories::new();
+        self.outputs = xdg.get_state_home().map(|mut s| {
+            s.push("cosmic-comp/outputs.ron");
+            output::load_outputs(Some(&s))
+        });
 
         match cosmic_config::Config::new("com.system76.CosmicAppletTime", TimeAppletConfig::VERSION)
         {
