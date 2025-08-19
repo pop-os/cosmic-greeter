@@ -17,7 +17,7 @@ use cosmic::{
     iced::{
         self, Background, Border, Length, Subscription, alignment,
         event::wayland::OutputEvent,
-        futures::SinkExt,
+        futures::{self, SinkExt},
         platform_specific::{
             runtime::wayland::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
             shell::wayland::commands::layer_surface::{
@@ -32,8 +32,12 @@ use cosmic::{
     cosmic_theme::{self, CosmicPalette},
     surface,
 };
+use cosmic_comp_config::output::{OutputConfig, OutputInfo, OutputState};
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
+use cosmic_randr_shell::{
+    AdaptiveSyncAvailability, AdaptiveSyncState, List, Output, OutputKey, Transform,
+};
 use cosmic_settings_subscriptions::cosmic_a11y_manager::{
     AccessibilityEvent, AccessibilityRequest,
 };
@@ -50,6 +54,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::process::Child;
+use tokio::sync::oneshot;
 use tokio::time;
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
@@ -352,6 +357,11 @@ pub enum Message {
     Exit,
     // Sets channel used to communicate with the greetd IPC subscription.
     GreetdChannel(tokio::sync::mpsc::Sender<Request>),
+    /// Refreshes display outputs.
+    RandrUpdate {
+        /// Available outputs from cosmic-randr.
+        randr: Arc<Result<List, cosmic_randr_shell::Error>>,
+    },
     Heartbeat,
     KeyboardLayout(usize),
     Login,
@@ -394,7 +404,21 @@ pub struct App {
     entering_name: bool,
     theme_builder: cosmic_theme::ThemeBuilder,
 
+    randr_list: Option<cosmic_randr_shell::List>,
+
     accessibility: Accessibility,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Randr {
+    Mirror(OutputKey),
+    Position(i32, i32),
+    RefreshRate(u32),
+    VariableRefreshRate(AdaptiveSyncState),
+    Resolution(u32, u32),
+    Scale(u32),
+    Transform(Transform),
+    Toggle(bool),
 }
 
 #[derive(Default)]
@@ -412,6 +436,260 @@ struct Accessibility {
 }
 
 impl App {
+    /// Applies a display configuration via `cosmic-randr`.
+    fn exec_randr(&self, output: Output, user_config: OutputConfig) -> Task<Message> {
+        let Some(current_mode) = output.current else {
+            log::warn!("Current output mode missing...");
+            return Task::none();
+        };
+        let Some(current_mode) = self
+            .randr_list
+            .as_ref()
+            .and_then(|l| l.modes.get(current_mode))
+        else {
+            log::warn!("Mode key does not exist...");
+            return Task::none();
+        };
+        let Some(list) = self.randr_list.as_ref() else {
+            return Task::none();
+        };
+
+        let mut tasks = Vec::new();
+        let name = &*output.name;
+
+        // Mirror
+        let cur_state = if output.enabled {
+            output
+                .mirroring
+                .map(|n| OutputState::Mirroring(n))
+                .unwrap_or(OutputState::Enabled)
+        } else {
+            OutputState::Disabled
+        };
+        // Enable/Disable or Mirror
+        if user_config.enabled != cur_state {
+            match user_config.enabled {
+                OutputState::Enabled => {
+                    let mut task = tokio::process::Command::new("cosmic-randr");
+                    task.arg("enable").arg(name);
+                    tasks.push(
+                        cosmic::task::future::<(), ()>(async move {
+                            log::debug!("executing {task:?}");
+                            let status = task.status().await;
+                            if let Err(err) = status {
+                                log::error!("Randr error: {err:?}");
+                            }
+                        })
+                        .discard(),
+                    );
+                }
+                OutputState::Disabled => {
+                    let mut task = tokio::process::Command::new("cosmic-randr");
+                    task.arg("disable").arg(name);
+                    tasks.push(
+                        cosmic::task::future::<(), ()>(async move {
+                            log::debug!("executing {task:?}");
+                            let status = task.status().await;
+                            if let Err(err) = status {
+                                log::error!("Randr error: {err:?}");
+                            }
+                        })
+                        .discard(),
+                    );
+                }
+                OutputState::Mirroring(ref mirror_name) => {
+                    let mut task = tokio::process::Command::new("cosmic-randr");
+                    task.arg("mirror").arg(&output.name).arg(mirror_name);
+                    tasks.push(
+                        cosmic::task::future::<(), ()>(async move {
+                            log::debug!("executing {task:?}");
+                            let status = task.status().await;
+                            if let Err(err) = status {
+                                log::error!("Randr error: {err:?}");
+                            }
+                        })
+                        .discard(),
+                    );
+                }
+            }
+        }
+
+        // Position
+        if (user_config.position.0 as i32, user_config.position.1 as i32) != output.position {
+            let (x, y) = user_config.position;
+            let mut task = tokio::process::Command::new("cosmic-randr");
+            task.arg("mode")
+                .arg("--pos-x")
+                .arg(itoa::Buffer::new().format(x))
+                .arg("--pos-y")
+                .arg(itoa::Buffer::new().format(y))
+                .arg(name)
+                .arg(itoa::Buffer::new().format(current_mode.size.0))
+                .arg(itoa::Buffer::new().format(current_mode.size.1));
+            tasks.push(
+                cosmic::task::future::<(), ()>(async move {
+                    log::debug!("executing {task:?}");
+                    let status = task.status().await;
+                    if let Err(err) = status {
+                        log::error!("Randr error: {err:?}");
+                    }
+                })
+                .discard(),
+            );
+        }
+
+        // RefreshRate
+        if user_config.mode.1 != Some(current_mode.refresh_rate) {
+            let rate = current_mode.refresh_rate;
+            let mut task = tokio::process::Command::new("cosmic-randr");
+            task.arg("mode")
+                .arg("--refresh")
+                .arg(format!("{}.{:03}", rate / 1000, rate % 1000))
+                .arg(name)
+                .arg(itoa::Buffer::new().format(current_mode.size.0))
+                .arg(itoa::Buffer::new().format(current_mode.size.1));
+            tasks.push(
+                cosmic::task::future::<(), ()>(async move {
+                    log::debug!("executing {task:?}");
+                    let status = task.status().await;
+                    if let Err(err) = status {
+                        log::error!("Randr error: {err:?}");
+                    }
+                })
+                .discard(),
+            );
+        }
+
+        let configured_vrr = match user_config.vrr {
+            cosmic_comp_config::output::AdaptiveSync::Enabled => {
+                cosmic_randr_shell::AdaptiveSyncState::Auto
+            }
+            cosmic_comp_config::output::AdaptiveSync::Disabled => {
+                cosmic_randr_shell::AdaptiveSyncState::Disabled
+            }
+            cosmic_comp_config::output::AdaptiveSync::Force => {
+                cosmic_randr_shell::AdaptiveSyncState::Always
+            }
+        };
+        // VariableRefreshRate
+        if Some(configured_vrr) != output.adaptive_sync {
+            let mode = configured_vrr;
+            let mut task = tokio::process::Command::new("cosmic-randr");
+            task.arg("mode")
+                .arg("--adaptive-sync")
+                .arg(format!("{}", mode))
+                .arg(name)
+                .arg(itoa::Buffer::new().format(current_mode.size.0))
+                .arg(itoa::Buffer::new().format(current_mode.size.1));
+            tasks.push(
+                cosmic::task::future::<(), ()>(async move {
+                    log::debug!("executing {task:?}");
+                    let status = task.status().await;
+                    if let Err(err) = status {
+                        log::error!("Randr error: {err:?}");
+                    }
+                })
+                .discard(),
+            );
+        }
+
+        // Resolution
+        if (user_config.mode.0.0 as u32, user_config.mode.0.1 as u32) != current_mode.size {
+            let (width, height) = user_config.mode.0;
+            let mut task = tokio::process::Command::new("cosmic-randr");
+            task.arg("mode")
+                .arg(name)
+                .arg(itoa::Buffer::new().format(width))
+                .arg(itoa::Buffer::new().format(height));
+            tasks.push(
+                cosmic::task::future::<(), ()>(async move {
+                    log::debug!("executing {task:?}");
+                    let status = task.status().await;
+                    if let Err(err) = status {
+                        log::error!("Randr error: {err:?}");
+                    }
+                })
+                .discard(),
+            );
+        }
+
+        // Scale
+        if user_config.scale != user_config.scale {
+            let scale = user_config.scale;
+            let rate = current_mode.refresh_rate;
+            let mut task = tokio::process::Command::new("cosmic-randr");
+            task.arg("mode")
+                .arg("--scale")
+                .arg(format!("{:02}", scale / 100.))
+                .arg("--refresh")
+                .arg(format!("{}.{:03}", rate / 1000, rate % 1000))
+                .arg(name)
+                .arg(itoa::Buffer::new().format(current_mode.size.0))
+                .arg(itoa::Buffer::new().format(current_mode.size.1));
+            tasks.push(
+                cosmic::task::future::<(), ()>(async move {
+                    log::debug!("executing {task:?}");
+                    let status = task.status().await;
+                    if let Err(err) = status {
+                        log::error!("Randr error: {err:?}");
+                    }
+                })
+                .discard(),
+            );
+        }
+
+        // Transform
+
+        let configured_transform = match user_config.transform {
+            cosmic_comp_config::output::TransformDef::Normal => {
+                cosmic_randr_shell::Transform::Normal
+            }
+            cosmic_comp_config::output::TransformDef::_90 => {
+                cosmic_randr_shell::Transform::Rotate90
+            }
+            cosmic_comp_config::output::TransformDef::_180 => {
+                cosmic_randr_shell::Transform::Rotate180
+            }
+            cosmic_comp_config::output::TransformDef::_270 => {
+                cosmic_randr_shell::Transform::Rotate270
+            }
+            cosmic_comp_config::output::TransformDef::Flipped => {
+                cosmic_randr_shell::Transform::Flipped
+            }
+            cosmic_comp_config::output::TransformDef::Flipped90 => {
+                cosmic_randr_shell::Transform::Flipped90
+            }
+            cosmic_comp_config::output::TransformDef::Flipped180 => {
+                cosmic_randr_shell::Transform::Flipped180
+            }
+            cosmic_comp_config::output::TransformDef::Flipped270 => {
+                cosmic_randr_shell::Transform::Flipped270
+            }
+        };
+        if Some(configured_transform) != output.transform {
+            let transform = configured_transform;
+            let mut task = tokio::process::Command::new("cosmic-randr");
+            task.arg("mode")
+                .arg("--transform")
+                .arg(&*format!("{transform}"))
+                .arg(name)
+                .arg(itoa::Buffer::new().format(current_mode.size.0))
+                .arg(itoa::Buffer::new().format(current_mode.size.1));
+            tasks.push(
+                cosmic::task::future::<(), ()>(async move {
+                    log::debug!("executing {task:?}");
+                    let status = task.status().await;
+                    if let Err(err) = status {
+                        log::error!("Randr error: {err:?}");
+                    }
+                })
+                .discard(),
+            );
+        }
+
+        Task::batch(tasks)
+    }
+
     fn menu(&self, id: SurfaceId) -> Element<Message> {
         let window_width = self
             .common
@@ -587,7 +865,7 @@ impl App {
                     "applications-accessibility-symbolic",
                 ))
                 .padding(12.0)
-                .on_press(Message::DropdownToggle(Dropdown::Accessibility)), // We'll use Dropdown::Keyboard as a dummy, since we don't have a dedicated Dropdown for accessibility
+                .on_press(Message::DropdownToggle(Dropdown::Accessibility)),
             )
             .position(widget::popover::Position::Bottom);
 
@@ -916,7 +1194,13 @@ impl App {
 
         let mut tasks = Vec::new();
         self.accessibility.magnifier = user_data.accessibility_zoom.start_on_login;
-
+        self.randr_list = None;
+        tasks.push(cosmic::Task::future(async {
+            let randr_fut = cosmic_randr_shell::list().await;
+            cosmic::action::app(Message::RandrUpdate {
+                randr: Arc::new(randr_fut),
+            })
+        }));
         if let Some(theme) = &user_data.theme_opt {
             self.accessibility.high_contrast = theme.is_high_contrast;
             tasks.push(cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(
@@ -952,10 +1236,12 @@ impl cosmic::Application for App {
 
     /// Creates the application, and optionally emits command on initialize.
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
+        let mut tasks = Vec::new();
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
         }));
+        tasks.push(common_task);
 
         //TODO: use full_name?
         let mut usernames: Vec<_> = flags
@@ -1017,8 +1303,9 @@ impl cosmic::Application for App {
             entering_name: false,
             accessibility,
             theme_builder: Default::default(),
+            randr_list: None,
         };
-        (app, common_task)
+        (app, Task::batch(tasks))
     }
 
     /// Handle application events here.
@@ -1027,7 +1314,6 @@ impl cosmic::Application for App {
             Message::Common(common_message) => {
                 return self.common.update(common_message);
             }
-
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
@@ -1577,6 +1863,56 @@ impl cosmic::Application for App {
                     ));
 
                     self.accessibility.wayland_sender = Some(tx);
+                }
+            },
+            Message::RandrUpdate { randr } => match randr.as_ref() {
+                Ok(outputs) => {
+                    let mut tasks = Vec::new();
+                    self.randr_list = Some(outputs.clone());
+
+                    let mut output_pairs: Vec<(Output, OutputInfo, OutputConfig)> = Vec::new();
+
+                    let Some(cur_user_output_state) = self
+                        .selected_username
+                        .data_idx
+                        .and_then(|i| self.flags.user_datas.get(i))
+                        .and_then(|user_data| user_data.outputs.as_ref())
+                    else {
+                        return Task::none();
+                    };
+                    'outer: for (i, (configured_info, output_configs)) in
+                        cur_user_output_state.config.iter().enumerate()
+                    {
+                        if configured_info.len() != outputs.outputs.len() {
+                            continue;
+                        }
+
+                        let mut matching_outputs = Vec::new();
+                        for o in outputs.outputs.values() {
+                            if let Some(pos) = configured_info.iter().position(|configured| {
+                                configured.connector == o.name
+                                    && configured.make == o.make.clone().unwrap_or_default()
+                                    && configured.model == o.model
+                            }) {
+                                matching_outputs.push((
+                                    o.clone(),
+                                    configured_info[pos].clone(),
+                                    output_configs[pos].clone(),
+                                ));
+                            } else {
+                                continue 'outer;
+                            }
+                        }
+                        output_pairs = matching_outputs;
+                    }
+                    for (randr_o, _info, user_config) in output_pairs {
+                        tasks.push(self.exec_randr(randr_o, user_config))
+                    }
+
+                    return Task::batch(tasks);
+                }
+                Err(err) => {
+                    log::error!("Randr error: {err}");
                 }
             },
         }
