@@ -1897,8 +1897,8 @@ impl cosmic::Application for App {
                             }) {
                                 matching_outputs.push((
                                     o.clone(),
-                                    configured_info[i].clone(),
-                                    output_configs[i].clone(),
+                                    configured_info[pos].clone(),
+                                    output_configs[pos].clone(),
                                 ));
                             } else {
                                 continue 'outer;
