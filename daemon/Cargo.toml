@@ -21,3 +21,4 @@ serde.workspace = true
 zbus.workspace = true
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
+xdg = "3.0.0"
