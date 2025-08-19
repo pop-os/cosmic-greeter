@@ -1880,7 +1880,6 @@ impl cosmic::Application for App {
                     else {
                         return Task::none();
                     };
-                    // TODO we need to figure out how to pick the correct state from the list
                     'outer: for (i, (configured_info, output_configs)) in
                         cur_user_output_state.config.iter().enumerate()
                     {
