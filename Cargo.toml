@@ -77,9 +77,11 @@ i18n-embed-fl = "0.7"
 rust-embed = "8"
 futures-util = "0.3.30"
 timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
-cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false }
 tachyonix = "0.3.1"
 itoa = "1.0.15"
+cosmic-randr-shell = { workspace = true }
+kdl.workspace = true
+
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
@@ -120,6 +122,9 @@ ron = "0.10.1"
 serde = "1"
 tokio = "1.39.1"
 zbus = "5"
+kdl = "6"
+cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false, branch = "kdl-command" }
+# cosmic-randr-shell = { path = "../cosmic-randr/shell", default-features = false }
 
 [workspace.dependencies.cosmic-applets-config]
 git = "https://github.com/pop-os/cosmic-applets"
@@ -134,7 +139,7 @@ git = "https://github.com/pop-os/cosmic-comp"
 branch = "refactor-config"
 # path = "../cosmic-comp/cosmic-comp-config"
 default-features = false
-features = ["output"]
+features = ["output", "randr"]
 
 [workspace.dependencies.cosmic-greeter-config]
 path = "cosmic-greeter-config"
