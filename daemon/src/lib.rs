@@ -184,8 +184,10 @@ impl UserData {
             .map(|mut s| {
                 s.push("cosmic-comp/outputs.ron");
                 let lists = randr::load_outputs(Some(&s));
-                let lists: Vec<String> = lists.into_iter().map(|l| KdlDocument::from(l).to_string()).collect();
-                todo!()
+                lists
+                    .into_iter()
+                    .map(|l| KdlDocument::from(l).to_string())
+                    .collect()
             })
             .unwrap_or_default();
 
