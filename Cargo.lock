@@ -1100,9 +1100,10 @@ dependencies = [
 [[package]]
 name = "cosmic-comp-config"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/cosmic-comp?branch=refactor-config#f59af1685b38b8cc339e542ffab3b3cf82ac00b6"
+source = "git+https://github.com/pop-os/cosmic-comp?branch=refactor-config#eee0aba3a3a376740e8409e7ff20fa6ea35ef276"
 dependencies = [
  "cosmic-config",
+ "cosmic-randr-shell",
  "input",
  "ron 0.9.0",
  "serde",
@@ -1112,7 +1113,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#6e7a6343981df7d86f7ab01fe102d0b69d8e3bed"
+source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
 dependencies = [
  "atomicwrites",
  "calloop 0.14.3",
@@ -1135,7 +1136,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config-derive"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#6e7a6343981df7d86f7ab01fe102d0b69d8e3bed"
+source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -1206,6 +1207,7 @@ dependencies = [
  "i18n-embed-fl",
  "icu",
  "itoa",
+ "kdl",
  "libcosmic",
  "log",
  "logind-zbus",
@@ -1243,8 +1245,10 @@ dependencies = [
  "cosmic-bg-config",
  "cosmic-comp-config",
  "cosmic-config",
+ "cosmic-randr-shell",
  "cosmic-theme",
  "env_logger",
+ "kdl",
  "libc",
  "log",
  "nix 0.29.0",
@@ -1273,7 +1277,7 @@ dependencies = [
 [[package]]
 name = "cosmic-randr-shell"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/cosmic-randr#f2cf6dfe9af22c005018b1aa952347dcc1d80b1c"
+source = "git+https://github.com/pop-os/cosmic-randr?branch=kdl-command#12c8c07fedd30572ed123d4463589d33474a0239"
 dependencies = [
  "kdl",
  "slotmap",
@@ -2681,7 +2685,7 @@ dependencies = [
 [[package]]
 name = "iced_accessibility"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#6e7a6343981df7d86f7ab01fe102d0b69d8e3bed"
+source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2690,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#6e7a6343981df7d86f7ab01fe102d0b69d8e3bed"
+source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
 dependencies = [
  "bitflags 2.9.2",
  "bytes",
@@ -2715,7 +2719,7 @@ dependencies = [
 [[package]]
 name = "iced_futures"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#6e7a6343981df7d86f7ab01fe102d0b69d8e3bed"
+source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
 dependencies = [
  "futures",
  "iced_core",
