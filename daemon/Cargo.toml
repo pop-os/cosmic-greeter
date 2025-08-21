@@ -19,5 +19,9 @@ pwd.workspace = true
 ron.workspace = true
 serde.workspace = true
 zbus.workspace = true
+cosmic-randr-shell.workspace = true
+kdl.workspace = true
+
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
+xdg = "3.0.0"

@@ -34,10 +34,13 @@ use cosmic::{
 };
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
+use cosmic_randr_shell::{AdaptiveSyncState, KdlParseWithError, List, OutputKey, Transform};
 use cosmic_settings_subscriptions::cosmic_a11y_manager::{
     AccessibilityEvent, AccessibilityRequest,
 };
 use greetd_ipc::Request;
+use kdl::KdlDocument;
+use std::process::Stdio;
 use std::sync::LazyLock;
 use std::{
     collections::{HashMap, hash_map},
@@ -50,6 +53,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::process::Child;
+use tokio::sync::oneshot;
 use tokio::time;
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
@@ -352,6 +356,11 @@ pub enum Message {
     Exit,
     // Sets channel used to communicate with the greetd IPC subscription.
     GreetdChannel(tokio::sync::mpsc::Sender<Request>),
+    /// Refreshes display outputs.
+    RandrUpdate {
+        /// Available outputs from cosmic-randr.
+        randr: Arc<Result<List, cosmic_randr_shell::Error>>,
+    },
     Heartbeat,
     KeyboardLayout(usize),
     Login,
@@ -394,7 +403,21 @@ pub struct App {
     entering_name: bool,
     theme_builder: cosmic_theme::ThemeBuilder,
 
+    randr_list: Option<cosmic_randr_shell::List>,
+
     accessibility: Accessibility,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Randr {
+    Mirror(OutputKey),
+    Position(i32, i32),
+    RefreshRate(u32),
+    VariableRefreshRate(AdaptiveSyncState),
+    Resolution(u32, u32),
+    Scale(u32),
+    Transform(Transform),
+    Toggle(bool),
 }
 
 #[derive(Default)]
@@ -412,6 +435,37 @@ struct Accessibility {
 }
 
 impl App {
+    /// Applies a display configuration via `cosmic-randr`.
+    fn exec_randr(&self, user_config: cosmic_randr_shell::List) -> Task<Message> {
+        let mut task = tokio::process::Command::new("cosmic-randr");
+        task.arg("kdl");
+
+        cosmic::task::future::<(), ()>(async move {
+            task.stdin(Stdio::piped());
+            let Ok(mut p) = task.spawn() else {
+                return;
+            };
+
+            let kdl_doc = kdl::KdlDocument::from(user_config).to_string();
+            use tokio::io::AsyncWriteExt;
+
+            if let Some(mut stdin) = p.stdin.take() {
+                if let Err(err) = stdin.write_all(kdl_doc.as_bytes()).await {
+                    log::error!("Failed to write KDL to stdin: {err:?}");
+                }
+                if let Err(err) = stdin.flush().await {
+                    log::error!("Failed to flush stdin: {err:?}");
+                }
+            }
+            log::debug!("executing {task:?}");
+            let status = p.wait().await;
+            if let Err(err) = status {
+                log::error!("Randr error: {err:?}");
+            }
+        })
+        .discard()
+    }
+
     fn menu(&self, id: SurfaceId) -> Element<Message> {
         let window_width = self
             .common
@@ -587,7 +641,7 @@ impl App {
                     "applications-accessibility-symbolic",
                 ))
                 .padding(12.0)
-                .on_press(Message::DropdownToggle(Dropdown::Accessibility)), // We'll use Dropdown::Keyboard as a dummy, since we don't have a dedicated Dropdown for accessibility
+                .on_press(Message::DropdownToggle(Dropdown::Accessibility)),
             )
             .position(widget::popover::Position::Bottom);
 
@@ -916,7 +970,13 @@ impl App {
 
         let mut tasks = Vec::new();
         self.accessibility.magnifier = user_data.accessibility_zoom.start_on_login;
-
+        self.randr_list = None;
+        tasks.push(cosmic::Task::future(async {
+            let randr_fut = cosmic_randr_shell::list().await;
+            cosmic::action::app(Message::RandrUpdate {
+                randr: Arc::new(randr_fut),
+            })
+        }));
         if let Some(theme) = &user_data.theme_opt {
             self.accessibility.high_contrast = theme.is_high_contrast;
             tasks.push(cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(
@@ -952,10 +1012,12 @@ impl cosmic::Application for App {
 
     /// Creates the application, and optionally emits command on initialize.
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
+        let mut tasks = Vec::new();
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
         }));
+        tasks.push(common_task);
 
         //TODO: use full_name?
         let mut usernames: Vec<_> = flags
@@ -1017,8 +1079,9 @@ impl cosmic::Application for App {
             entering_name: false,
             accessibility,
             theme_builder: Default::default(),
+            randr_list: None,
         };
-        (app, common_task)
+        (app, Task::batch(tasks))
     }
 
     /// Handle application events here.
@@ -1027,7 +1090,6 @@ impl cosmic::Application for App {
             Message::Common(common_message) => {
                 return self.common.update(common_message);
             }
-
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
@@ -1577,6 +1639,72 @@ impl cosmic::Application for App {
                     ));
 
                     self.accessibility.wayland_sender = Some(tx);
+                }
+            },
+            Message::RandrUpdate { randr } => match randr.as_ref() {
+                Ok(outputs) => {
+                    let mut tasks = Vec::new();
+                    self.randr_list = Some(outputs.clone());
+
+                    let mut list: Option<List> = None;
+
+                    let Some(cur_user_output_state) = self
+                        .selected_username
+                        .data_idx
+                        .and_then(|i| self.flags.user_datas.get(i))
+                        .map(|user_data| &user_data.kdl_output_lists)
+                    else {
+                        return Task::none();
+                    };
+                    'outer: for configured_list in cur_user_output_state
+                        .iter()
+                        .filter_map(|s| match KdlDocument::parse(s) {
+                            Ok(doc) => Some(doc),
+                            Err(err) => {
+                                log::warn!("Invalid output KDL {err:?}");
+                                None
+                            }
+                        })
+                        .map(|kdl| match List::try_from(kdl) {
+                            Ok(list) => list,
+                            Err(KdlParseWithError { list, errors }) => {
+                                for err in errors {
+                                    log::warn!("KDL output error: {err:?}");
+                                }
+                                list
+                            }
+                        })
+                    {
+                        if configured_list.outputs.len() != outputs.outputs.len() {
+                            continue;
+                        }
+
+                        for o in outputs.outputs.values() {
+                            if configured_list.outputs.values().all(|configured| {
+                                configured.name != o.name
+                                    || configured.make != o.make
+                                    || configured.model != o.model
+                            }) {
+                                continue 'outer;
+                            }
+                        }
+                        if list
+                            .as_ref()
+                            .is_none_or(|old| old.outputs.len() < configured_list.outputs.len())
+                        {
+                            list = Some(configured_list);
+                        }
+                    }
+                    if let Some(list) = list {
+                        tasks.push(self.exec_randr(list))
+                    } else {
+                        log::warn!("Failed to apply user display config");
+                    }
+
+                    return Task::batch(tasks);
+                }
+                Err(err) => {
+                    log::error!("Randr error: {err}");
                 }
             },
         }

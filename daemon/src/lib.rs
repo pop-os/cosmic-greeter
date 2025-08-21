@@ -1,4 +1,6 @@
+use cosmic_comp_config::output::randr;
 use cosmic_config::CosmicConfigEntry;
+use kdl::KdlDocument;
 use std::{
     collections::BTreeMap,
     fs,
@@ -23,6 +25,7 @@ pub struct UserData {
     pub xkb_config_opt: Option<XkbConfig>,
     pub time_applet_config: TimeAppletConfig,
     pub accessibility_zoom: ZoomConfig,
+    pub kdl_output_lists: Vec<String>,
 }
 
 impl UserData {
@@ -174,6 +177,19 @@ impl UserData {
                 log::error!("failed to create cosmic-comp config handler: {}", err);
             }
         };
+
+        let xdg = xdg::BaseDirectories::new();
+        self.kdl_output_lists = xdg
+            .get_state_home()
+            .map(|mut s| {
+                s.push("cosmic-comp/outputs.ron");
+                let lists = randr::load_outputs(Some(&s));
+                lists
+                    .into_iter()
+                    .map(|l| KdlDocument::from(l).to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         match cosmic_config::Config::new("com.system76.CosmicAppletTime", TimeAppletConfig::VERSION)
         {

@@ -77,6 +77,11 @@ i18n-embed-fl = "0.7"
 rust-embed = "8"
 futures-util = "0.3.30"
 timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
+tachyonix = "0.3.1"
+itoa = "1.0.15"
+cosmic-randr-shell = { workspace = true }
+kdl.workspace = true
+
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
@@ -88,6 +93,7 @@ logind = ["logind-zbus", "zbus"]
 networkmanager = ["cosmic-dbus-networkmanager", "zbus"]
 upower = ["upower_dbus", "zbus"]
 zbus = ["dep:zbus", "nix"]
+
 
 [profile.dev.package.tiny-skia]
 opt-level = 2
@@ -108,6 +114,7 @@ rust-version = "1.85.0"
 [workspace.dependencies]
 env_logger = "0.10.2"
 log = "0.4.22"
+
 # Fix zbus compilation by manually adding nix with user feature
 nix = { version = "0.29", features = ["user"] }
 pwd = "1.4.0"
@@ -115,6 +122,9 @@ ron = "0.10.1"
 serde = "1"
 tokio = "1.39.1"
 zbus = "5"
+kdl = "6"
+cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false, branch = "kdl-command" }
+# cosmic-randr-shell = { path = "../cosmic-randr/shell", default-features = false }
 
 [workspace.dependencies.cosmic-applets-config]
 git = "https://github.com/pop-os/cosmic-applets"
@@ -126,7 +136,10 @@ default-features = false
 
 [workspace.dependencies.cosmic-comp-config]
 git = "https://github.com/pop-os/cosmic-comp"
+branch = "refactor-config"
+# path = "../cosmic-comp/cosmic-comp-config"
 default-features = false
+features = ["output", "randr"]
 
 [workspace.dependencies.cosmic-greeter-config]
 path = "cosmic-greeter-config"
