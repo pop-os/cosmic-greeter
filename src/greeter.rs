@@ -1680,7 +1680,7 @@ impl cosmic::Application for App {
                         }
 
                         for o in outputs.outputs.values() {
-                            if configured_list.outputs.values().any(|configured| {
+                            if configured_list.outputs.values().all(|configured| {
                                 configured.name != o.name
                                     || configured.make != o.make
                                     || configured.model != o.model
