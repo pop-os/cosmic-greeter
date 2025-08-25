@@ -1113,7 +1113,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "atomicwrites",
  "calloop 0.14.3",
@@ -1136,7 +1136,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config-derive"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "quote",
  "syn 2.0.106",
@@ -1366,7 +1366,7 @@ dependencies = [
 [[package]]
 name = "cosmic-theme"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "almost",
  "cosmic-config",
@@ -1844,7 +1844,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2667,7 +2667,7 @@ dependencies = [
 [[package]]
 name = "iced"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "dnd",
  "iced_accessibility",
@@ -2685,7 +2685,7 @@ dependencies = [
 [[package]]
 name = "iced_accessibility"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2694,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "bitflags 2.9.2",
  "bytes",
@@ -2719,7 +2719,7 @@ dependencies = [
 [[package]]
 name = "iced_futures"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "futures",
  "iced_core",
@@ -2745,7 +2745,7 @@ dependencies = [
 [[package]]
 name = "iced_graphics"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "bitflags 2.9.2",
  "bytemuck",
@@ -2767,7 +2767,7 @@ dependencies = [
 [[package]]
 name = "iced_renderer"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "iced_graphics",
  "iced_tiny_skia",
@@ -2779,7 +2779,7 @@ dependencies = [
 [[package]]
 name = "iced_runtime"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "bytes",
  "cosmic-client-toolkit",
@@ -2795,7 +2795,7 @@ dependencies = [
 [[package]]
 name = "iced_tiny_skia"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -2811,7 +2811,7 @@ dependencies = [
 [[package]]
 name = "iced_wgpu"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "as-raw-xcb-connection",
  "bitflags 2.9.2",
@@ -2842,7 +2842,7 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "cosmic-client-toolkit",
  "dnd",
@@ -2862,7 +2862,7 @@ dependencies = [
 [[package]]
 name = "iced_winit"
 version = "0.14.0-dev"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "cosmic-client-toolkit",
  "dnd",
@@ -3553,7 +3553,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi 0.5.2",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3737,7 +3737,7 @@ checksum = "6a82ae493e598baaea5209805c49bbf2ea7de956d50d7da0da1164f9c6d28543"
 [[package]]
 name = "libcosmic"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#29f38f83a38b550ae0de2b130fde9f2c36341fab"
+source = "git+https://github.com/pop-os/libcosmic#66a2632e2ee72a1e3a9888cd5638821f6af2f861"
 dependencies = [
  "apply",
  "ashpd",
@@ -5581,7 +5581,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5594,7 +5594,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6134,7 +6134,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.8",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7088,7 +7088,7 @@ version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0978bf7171b3d90bac376700cb56d606feb40f251a475a5d6634613564460b22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
