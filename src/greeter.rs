@@ -7,7 +7,8 @@ use crate::wayland::{self, WaylandUpdate};
 use cctk::sctk::reexports::calloop;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
-use cosmic::iced::{Point, Size};
+use cosmic::iced::event::listen_with;
+use cosmic::iced::{Point, Size, window};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::widget::text;
 use cosmic::{
@@ -23,6 +24,7 @@ use cosmic::{
             shell::wayland::commands::layer_surface::{
                 Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, get_layer_surface,
             },
+            shell::wayland::commands::subsurface::reposition_subsurface,
         },
     },
     iced_runtime::core::window::Id as SurfaceId,
@@ -53,7 +55,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::process::Child;
-use tokio::sync::oneshot;
 use tokio::time;
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
@@ -366,6 +367,7 @@ pub enum Message {
     Login,
     Reconnect,
     Reload(cosmic::Theme),
+    RepositionMenu(window::Id, Size),
     Restart,
     Session(String),
     Shutdown,
@@ -402,6 +404,7 @@ pub struct App {
     heartbeat_handle: Option<cosmic::iced::task::Handle>,
     entering_name: bool,
     theme_builder: cosmic_theme::ThemeBuilder,
+    surface_id_pairs: Vec<(window::Id, window::Id)>,
 
     randr_list: Option<cosmic_randr_shell::List>,
 
@@ -1080,6 +1083,7 @@ impl cosmic::Application for App {
             accessibility,
             theme_builder: Default::default(),
             randr_list: None,
+            surface_id_pairs: Vec::new(),
         };
         (app, Task::batch(tasks))
     }
@@ -1097,6 +1101,8 @@ impl cosmic::Application for App {
 
                         let surface_id = SurfaceId::unique();
                         let subsurface_id = SurfaceId::unique();
+                        self.surface_id_pairs
+                            .push((surface_id.clone(), subsurface_id.clone()));
 
                         match self.common.surface_ids.insert(output.clone(), surface_id) {
                             Some(old_surface_id) => {
@@ -1295,6 +1301,11 @@ impl cosmic::Application for App {
                             self.send_request(Request::CancelSession);
                         }
                         _ => {}
+                    }
+                    if let Some(randr_list) = self.randr_list.as_ref() {
+                        return self.update(Message::RandrUpdate {
+                            randr: Arc::new(Ok(randr_list.clone())),
+                        });
                     }
                 }
             }
@@ -1707,6 +1718,22 @@ impl cosmic::Application for App {
                     log::error!("Randr error: {err}");
                 }
             },
+            Message::RepositionMenu(id, size) => {
+                let Some(subsurface_id) = self
+                    .surface_id_pairs
+                    .iter()
+                    .find_map(|(p, s)| (*p == id).then_some(s))
+                else {
+                    log::error!("Failed to find subsurface menu id");
+                    return Task::none();
+                };
+                let loc = if size.width > 800. {
+                    Point::new(size.width / 2. - 400., 32.)
+                } else {
+                    Point::new(0., 32.)
+                };
+                return reposition_subsurface(*subsurface_id, loc.x as i32, loc.y as i32);
+            }
         }
         Task::none()
     }
@@ -1735,6 +1762,13 @@ impl cosmic::Application for App {
             self.common.subscription().map(Message::from),
             ipc::subscription(),
             wayland::a11y_subscription().map(Message::WaylandUpdate),
+            listen_with(|event, _status, id| match event {
+                iced::Event::Window(window::Event::Resized(size))
+                | iced::Event::Window(window::Event::Opened { size, .. }) => {
+                    Some(Message::RepositionMenu(id, size))
+                }
+                _ => None,
+            }),
         ])
     }
 }
