@@ -23,6 +23,7 @@ Depends:
     adduser,
     cosmic-comp,
     cosmic-greeter-daemon,
+    cosmic-randr,
     dbus,
     ${misc:Depends},
     ${shlibs:Depends}
