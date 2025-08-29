@@ -1,4 +1,6 @@
+use cosmic_comp_config::output::randr;
 use cosmic_config::CosmicConfigEntry;
+use kdl::KdlDocument;
 use std::{
     collections::BTreeMap,
     fs,
@@ -7,8 +9,8 @@ use std::{
 
 pub use cosmic_applets_config::time::TimeAppletConfig;
 pub use cosmic_bg_config::{state::State as BgState, Color, Source as BgSource};
-pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig};
-pub use cosmic_theme::Theme;
+pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig, ZoomConfig};
+pub use cosmic_theme::{Theme, ThemeBuilder};
 
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 pub struct UserData {
@@ -17,10 +19,13 @@ pub struct UserData {
     pub full_name: String,
     pub icon_opt: Option<Vec<u8>>,
     pub theme_opt: Option<Theme>,
+    pub theme_builder_opt: Option<ThemeBuilder>,
     pub bg_state: BgState,
     pub bg_path_data: BTreeMap<PathBuf, Vec<u8>>,
     pub xkb_config_opt: Option<XkbConfig>,
     pub time_applet_config: TimeAppletConfig,
+    pub accessibility_zoom: ZoomConfig,
+    pub kdl_output_lists: Vec<String>,
 }
 
 impl UserData {
@@ -59,6 +64,7 @@ impl UserData {
     pub fn load_config_as_user(&mut self) {
         self.icon_opt = None;
         self.theme_opt = None;
+        self.theme_builder_opt = None;
         self.bg_state = Default::default();
         self.xkb_config_opt = None;
         self.time_applet_config = Default::default();
@@ -114,6 +120,28 @@ impl UserData {
             }
         }
 
+        match if is_dark {
+            cosmic_theme::ThemeBuilder::dark_config()
+        } else {
+            cosmic_theme::ThemeBuilder::light_config()
+        } {
+            Ok(helper) => match cosmic_theme::ThemeBuilder::get_entry(&helper) {
+                Ok(theme) => {
+                    self.theme_builder_opt = Some(theme);
+                }
+                Err((errs, theme)) => {
+                    log::error!("failed to load cosmic-theme builder config: {:?}", errs);
+                    self.theme_builder_opt = Some(theme);
+                }
+            },
+            Err(err) => {
+                log::error!(
+                    "failed to create cosmic-theme builder config helper: {:?}",
+                    err
+                );
+            }
+        }
+
         //TODO: fallback to background config if background state is not set?
         match cosmic_bg_config::state::State::state() {
             Ok(helper) => match cosmic_bg_config::state::State::get_entry(&helper) {
@@ -132,19 +160,36 @@ impl UserData {
         self.load_wallpapers_as_user();
 
         match cosmic_config::Config::new("com.system76.CosmicComp", CosmicCompConfig::VERSION) {
-            Ok(config_handler) => match CosmicCompConfig::get_entry(&config_handler) {
-                Ok(config) => {
-                    self.xkb_config_opt = Some(config.xkb_config);
-                }
-                Err((errs, config)) => {
-                    log::error!("errors loading cosmic-comp config: {:?}", errs);
-                    self.xkb_config_opt = Some(config.xkb_config);
-                }
-            },
+            Ok(config_handler) => {
+                match CosmicCompConfig::get_entry(&config_handler) {
+                    Ok(config) => {
+                        self.xkb_config_opt = Some(config.xkb_config);
+                        self.accessibility_zoom = config.accessibility_zoom;
+                    }
+                    Err((errs, config)) => {
+                        log::error!("errors loading cosmic-comp config: {:?}", errs);
+                        self.xkb_config_opt = Some(config.xkb_config);
+                        self.accessibility_zoom = config.accessibility_zoom;
+                    }
+                };
+            }
             Err(err) => {
                 log::error!("failed to create cosmic-comp config handler: {}", err);
             }
         };
+
+        let xdg = xdg::BaseDirectories::new();
+        self.kdl_output_lists = xdg
+            .get_state_home()
+            .map(|mut s| {
+                s.push("cosmic-comp/outputs.ron");
+                let lists = randr::load_outputs(Some(&s));
+                lists
+                    .into_iter()
+                    .map(|l| KdlDocument::from(l).to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         match cosmic_config::Config::new("com.system76.CosmicAppletTime", TimeAppletConfig::VERSION)
         {

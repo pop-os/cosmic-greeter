@@ -44,6 +44,18 @@ xdg = "2.5.2"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
 wayland-client = "0.31.8"
+cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
+    "accessibility",
+    "cosmic_a11y_manager",
+] }
+cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
+    "greeter",
+] }
+cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit", rev = "178eb0b" }
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = [
+    "client",
+], rev = "1425bd4" }
+
 # For network status using networkmanager feature
 cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # For logind integration using logind feature
@@ -65,6 +77,9 @@ i18n-embed-fl = "0.7"
 rust-embed = "8"
 futures-util = "0.3.30"
 timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
+cosmic-randr-shell = { workspace = true }
+kdl.workspace = true
+
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
@@ -76,6 +91,7 @@ logind = ["logind-zbus", "zbus"]
 networkmanager = ["cosmic-dbus-networkmanager", "zbus"]
 upower = ["upower_dbus", "zbus"]
 zbus = ["dep:zbus", "nix"]
+
 
 [profile.dev.package.tiny-skia]
 opt-level = 2
@@ -96,6 +112,7 @@ rust-version = "1.85.0"
 [workspace.dependencies]
 env_logger = "0.10.2"
 log = "0.4.22"
+
 # Fix zbus compilation by manually adding nix with user feature
 nix = { version = "0.29", features = ["user"] }
 pwd = "1.4.0"
@@ -103,6 +120,8 @@ ron = "0.10.1"
 serde = "1"
 tokio = "1.39.1"
 zbus = "5"
+kdl = "6"
+cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false, branch = "kdl-command" }
 
 [workspace.dependencies.cosmic-applets-config]
 git = "https://github.com/pop-os/cosmic-applets"
@@ -115,6 +134,7 @@ default-features = false
 [workspace.dependencies.cosmic-comp-config]
 git = "https://github.com/pop-os/cosmic-comp"
 default-features = false
+features = ["output", "randr"]
 
 [workspace.dependencies.cosmic-greeter-config]
 path = "cosmic-greeter-config"
@@ -131,7 +151,12 @@ default-features = false
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
 
-# [patch.'https://github.com/pop-os/libcosmic']
+
+[patch."https://github.com/smithay/client-toolkit.git"]
+sctk = { package = "smithay-client-toolkit", version = "=0.19.2" }
+[patch."https://github.com/pop-os/cosmic-protocols"]
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "5035f8c" }
+
 # libcosmic = { path = "../libcosmic" }
 # cosmic-config = { path = "../libcosmic/cosmic-config" }
 # cosmic-theme = { path = "../libcosmic/cosmic-theme" }
