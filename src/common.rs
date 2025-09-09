@@ -35,11 +35,11 @@ pub struct Common<M> {
     pub error_opt: Option<String>,
     pub fallback_background: widget::image::Handle,
     pub layouts_opt: Option<Arc<xkb_data::KeyboardLayouts>>,
-    pub network_icon_opt: Option<&'static str>,
+    pub network_icon_opt: Option<widget::Icon>,
     pub on_output_event: Option<Box<dyn Fn(OutputEvent, WlOutput) -> M>>,
     pub on_session_lock_event: Option<Box<dyn Fn(SessionLockEvent) -> M>>,
     pub output_names: HashMap<WlOutput, String>,
-    pub power_info_opt: Option<(String, f64)>,
+    pub power_info_opt: Option<(widget::Icon, f64)>,
     pub prompt_opt: Option<(String, bool, Option<String>)>,
     pub subsurface_rects: HashMap<WlOutput, Rectangle>,
     pub surface_ids: HashMap<WlOutput, SurfaceId>,
@@ -283,7 +283,8 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 }
             }
             Message::NetworkIcon(network_icon_opt) => {
-                self.network_icon_opt = network_icon_opt;
+                self.network_icon_opt =
+                    network_icon_opt.map(|name| widget::icon::from_name(name).into());
             }
             Message::OutputEvent(output_event, output) => {
                 if let Some(on_output_event) = &self.on_output_event {
@@ -291,7 +292,8 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 }
             }
             Message::PowerInfo(power_info_opt) => {
-                self.power_info_opt = power_info_opt;
+                self.power_info_opt = power_info_opt
+                    .map(|(name, level)| (widget::icon::from_name(name).into(), level));
             }
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
