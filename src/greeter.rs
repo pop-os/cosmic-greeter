@@ -276,6 +276,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let flags = Flags {
+        user_icons: user_datas
+            .iter_mut()
+            .map(|d| d.icon_opt.take().map(widget::image::Handle::from_bytes))
+            .collect(),
         user_datas,
         sessions,
         greeter_config,
@@ -292,6 +296,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 #[derive(Clone)]
 pub struct Flags {
     user_datas: Vec<UserData>,
+    user_icons: Vec<Option<widget::image::Handle>>,
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
     greeter_config: CosmicGreeterConfig,
     greeter_config_handler: Option<cosmic_config::Config>,
@@ -411,18 +416,6 @@ pub struct App {
     accessibility: Accessibility,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Randr {
-    Mirror(OutputKey),
-    Position(i32, i32),
-    RefreshRate(u32),
-    VariableRefreshRate(AdaptiveSyncState),
-    Resolution(u32, u32),
-    Scale(u32),
-    Transform(Transform),
-    Toggle(bool),
-}
-
 #[derive(Default)]
 struct Accessibility {
     pub wayland_sender: Option<calloop::channel::Sender<AccessibilityRequest>>,
@@ -492,13 +485,13 @@ impl App {
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
 
-            if let Some(network_icon) = self.common.network_icon_opt {
-                status_row = status_row.push(widget::icon::from_name(network_icon));
+            if let Some(network_icon) = self.common.network_icon_opt.as_ref() {
+                status_row = status_row.push(network_icon.clone());
             }
 
             if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
                 status_row = status_row.push(iced::widget::row![
-                    widget::icon::from_name(power_icon.clone()),
+                    power_icon.clone(),
                     widget::text(format!("{:.0}%", power_percent)),
                 ]);
             }
@@ -741,19 +734,21 @@ impl App {
                     column = column.push(widget::text("Opening GREETD_SOCK"));
                 }
                 SocketState::Open => {
-                    for user_data in &self.flags.user_datas {
+                    for (user_data, user_icon) in self
+                        .flags
+                        .user_datas
+                        .iter()
+                        .zip(self.flags.user_icons.iter())
+                    {
                         if !self.entering_name && user_data.name == self.selected_username.username
                         {
-                            match &user_data.icon_opt {
+                            match user_icon {
                                 Some(icon) => {
                                     column = column.push(
                                         widget::container(
-                                            widget::Image::new(
-                                                //TODO: cache handle
-                                                widget::image::Handle::from_bytes(icon.clone()),
-                                            )
-                                            .width(Length::Fixed(78.0))
-                                            .height(Length::Fixed(78.0)),
+                                            widget::image(icon)
+                                                .width(Length::Fixed(78.0))
+                                                .height(Length::Fixed(78.0)),
                                         )
                                         .width(Length::Fill)
                                         .align_x(alignment::Horizontal::Center),
