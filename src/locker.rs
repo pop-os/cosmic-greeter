@@ -88,6 +88,10 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     user_data.load_config_as_user();
 
     let flags = Flags {
+        user_icon: user_data
+            .icon_opt
+            .take()
+            .map(|icon| widget::image::Handle::from_bytes(icon)),
         user_data,
         lockfile_opt: lockfile_opt(),
     };
@@ -208,6 +212,7 @@ impl pam_client::ConversationHandler for Conversation {
 #[derive(Clone)]
 pub struct Flags {
     user_data: UserData,
+    user_icon: Option<widget::image::Handle>,
     lockfile_opt: Option<PathBuf>,
 }
 
@@ -293,13 +298,13 @@ impl App {
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
 
-            if let Some(network_icon) = self.common.network_icon_opt {
-                status_row = status_row.push(widget::icon::from_name(network_icon));
+            if let Some(network_icon) = self.common.network_icon_opt.as_ref() {
+                status_row = status_row.push(network_icon.clone());
             }
 
             if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
                 status_row = status_row.push(iced::widget::row![
-                    widget::icon::from_name(power_icon.clone()),
+                    power_icon.clone(),
                     widget::text(format!("{:.0}%", power_percent)),
                 ]);
             }
@@ -417,12 +422,11 @@ impl App {
                 .spacing(12.0)
                 .max_width(280.0);
 
-            match &self.flags.user_data.icon_opt {
+            match &self.flags.user_icon {
                 Some(icon) => {
                     column = column.push(
                         widget::container(
-                            //TODO: cache image handle?
-                            widget::Image::new(widget::image::Handle::from_bytes(icon.clone()))
+                            widget::image(icon)
                                 .width(Length::Fixed(78.0))
                                 .height(Length::Fixed(78.0)),
                         )
