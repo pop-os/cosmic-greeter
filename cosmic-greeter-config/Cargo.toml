@@ -8,5 +8,5 @@ license = "GPL-3.0-only"
 
 [dependencies]
 cosmic-config.workspace = true
-log.workspace = true
+tracing.workspace = true
 serde.workspace = true

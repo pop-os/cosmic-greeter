@@ -1,6 +1,7 @@
 // Copyright 2023 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
+use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
 use cosmic::iced::{Point, Rectangle, Size};
@@ -33,6 +34,9 @@ use std::{
     sync::Arc,
 };
 use tokio::{sync::mpsc, task};
+use tracing::level_filters::LevelFilter;
+use tracing::warn;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 
 use crate::{
@@ -47,7 +51,35 @@ fn lockfile_opt() -> Option<PathBuf> {
 }
 
 pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    color_eyre::install().wrap_err("failed to install color_eyre error handler")?;
+
+    let trace = tracing_subscriber::registry();
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
+
+    #[cfg(feature = "systemd")]
+    if let Ok(journald) = tracing_journald::layer() {
+        trace
+            .with(journald)
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+    } else {
+        trace
+            .with(fmt::layer())
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+        warn!("failed to connect to journald")
+    }
+
+    #[cfg(not(feature = "systemd"))]
+    trace
+        .with(fmt::layer())
+        .with(env_filter)
+        .try_init()
+        .wrap_err("failed to initialize logger")?;
 
     crate::localize::localize();
 
@@ -74,11 +106,11 @@ pub fn pam_thread(username: String, conversation: Conversation) -> Result<(), pa
     let mut context = pam_client::Context::new("cosmic-greeter", Some(&username), conversation)?;
 
     // Authenticate the user (ask for password, 2nd-factor token, fingerprint, etc.)
-    log::info!("authenticate");
+    tracing::info!("authenticate");
     context.authenticate(pam_client::Flag::NONE)?;
 
     // Validate the account (is not locked, expired, etc.)
-    log::info!("acct_mgmt");
+    tracing::info!("acct_mgmt");
     context.acct_mgmt(pam_client::Flag::NONE)?;
 
     Ok(())
@@ -96,7 +128,7 @@ impl Conversation {
         secret: bool,
     ) -> Result<CString, pam_client::ErrorCode> {
         let prompt = prompt_c.to_str().map_err(|err| {
-            log::error!("failed to convert prompt to UTF-8: {:?}", err);
+            tracing::error!("failed to convert prompt to UTF-8: {:?}", err);
             pam_client::ErrorCode::CONV_ERR
         })?;
 
@@ -108,24 +140,24 @@ impl Conversation {
                 .await
         })
         .map_err(|err| {
-            log::error!("failed to send prompt: {:?}", err);
+            tracing::error!("failed to send prompt: {:?}", err);
             pam_client::ErrorCode::CONV_ERR
         })?;
 
         let value = self.value_rx.blocking_recv().ok_or_else(|| {
-            log::error!("failed to receive value: channel closed");
+            tracing::error!("failed to receive value: channel closed");
             pam_client::ErrorCode::CONV_ERR
         })?;
 
         CString::new(value).map_err(|err| {
-            log::error!("failed to convert value to C string: {:?}", err);
+            tracing::error!("failed to convert value to C string: {:?}", err);
             pam_client::ErrorCode::CONV_ERR
         })
     }
 
     fn message(&mut self, prompt_c: &CStr) -> Result<(), pam_client::ErrorCode> {
         let prompt = prompt_c.to_str().map_err(|err| {
-            log::error!("failed to convert prompt to UTF-8: {:?}", err);
+            tracing::error!("failed to convert prompt to UTF-8: {:?}", err);
             pam_client::ErrorCode::CONV_ERR
         })?;
 
@@ -137,7 +169,7 @@ impl Conversation {
                 .await
         })
         .map_err(|err| {
-            log::error!("failed to send prompt: {:?}", err);
+            tracing::error!("failed to send prompt: {:?}", err);
             pam_client::ErrorCode::CONV_ERR
         })
     }
@@ -145,29 +177,29 @@ impl Conversation {
 
 impl pam_client::ConversationHandler for Conversation {
     fn prompt_echo_on(&mut self, prompt_c: &CStr) -> Result<CString, pam_client::ErrorCode> {
-        log::info!("prompt_echo_on {:?}", prompt_c);
+        tracing::info!("prompt_echo_on {:?}", prompt_c);
         self.prompt_value(prompt_c, false)
     }
     fn prompt_echo_off(&mut self, prompt_c: &CStr) -> Result<CString, pam_client::ErrorCode> {
-        log::info!("prompt_echo_off {:?}", prompt_c);
+        tracing::info!("prompt_echo_off {:?}", prompt_c);
         self.prompt_value(prompt_c, true)
     }
     fn text_info(&mut self, prompt_c: &CStr) {
-        log::info!("text_info {:?}", prompt_c);
+        tracing::info!("text_info {:?}", prompt_c);
         match self.message(prompt_c) {
             Ok(()) => (),
             Err(err) => {
-                log::warn!("failed to send text_info: {:?}", err);
+                tracing::warn!("failed to send text_info: {:?}", err);
             }
         }
     }
     fn error_msg(&mut self, prompt_c: &CStr) {
         //TODO: treat error type differently?
-        log::info!("error_msg {:?}", prompt_c);
+        tracing::info!("error_msg {:?}", prompt_c);
         match self.message(prompt_c) {
             Ok(()) => (),
             Err(err) => {
-                log::warn!("failed to send error_msg: {:?}", err);
+                tracing::warn!("failed to send error_msg: {:?}", err);
             }
         }
     }
@@ -226,7 +258,7 @@ impl Drop for State {
     fn drop(&mut self) {
         // Abort the locked task when the state is changed.
         if let Self::Locked { task_handle } = self {
-            log::info!("dropping lockscreen tasks");
+            tracing::info!("dropping lockscreen tasks");
             task_handle.abort();
         }
     }
@@ -542,7 +574,7 @@ impl cosmic::Application for App {
         let task = if cfg!(feature = "logind") {
             if already_locked {
                 // Recover previously locked state
-                log::info!("recovering previous locked state");
+                tracing::info!("recovering previous locked state");
                 app.state = State::Locking;
                 lock()
             } else {
@@ -551,7 +583,7 @@ impl cosmic::Application for App {
             }
         } else {
             // When logind feature not used, lock immediately
-            log::info!("locking immediately");
+            tracing::info!("locking immediately");
             app.state = State::Locking;
             lock()
         };
@@ -569,7 +601,7 @@ impl cosmic::Application for App {
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
-                        log::info!("output {}: created", output.id());
+                        tracing::info!("output {}: created", output.id());
 
                         let surface_id = SurfaceId::unique();
                         let subsurface_id = SurfaceId::unique();
@@ -578,7 +610,7 @@ impl cosmic::Application for App {
                             self.common.surface_ids.insert(output.clone(), surface_id)
                         {
                             //TODO: remove old surface?
-                            log::warn!(
+                            tracing::warn!(
                                 "output {}: already had surface ID {:?}",
                                 output.id(),
                                 old_surface_id
@@ -614,11 +646,11 @@ impl cosmic::Application for App {
                                         .insert(output_name.clone(), text_input_id.clone());
                                 }
                                 None => {
-                                    log::warn!("output {}: no output name", output.id());
+                                    tracing::warn!("output {}: no output name", output.id());
                                 }
                             },
                             None => {
-                                log::warn!("output {}: no output info", output.id());
+                                tracing::warn!("output {}: no output info", output.id());
                             }
                         }
 
@@ -672,7 +704,7 @@ impl cosmic::Application for App {
                         }
                     }
                     OutputEvent::Removed => {
-                        log::info!("output {}: removed", output.id());
+                        tracing::info!("output {}: removed", output.id());
                         match self.common.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.common.surface_images.remove(&surface_id);
@@ -686,7 +718,7 @@ impl cosmic::Application for App {
                                 }
                             }
                             None => {
-                                log::warn!("output {}: no surface found", output.id());
+                                tracing::warn!("output {}: no surface found", output.id());
                             }
                         }
                     }
@@ -711,14 +743,14 @@ impl cosmic::Application for App {
                             .subsurface_rects
                             .insert(output.clone(), Rectangle::new(loc, sub_size));
 
-                        log::info!("output {}: info update", output.id());
+                        tracing::info!("output {}: info update", output.id());
                     }
                 }
             }
             Message::SessionLockEvent(session_lock_event) => match session_lock_event {
                 SessionLockEvent::Focused(..) => {}
                 SessionLockEvent::Locked => {
-                    log::info!("session locked");
+                    tracing::info!("session locked");
                     if matches!(self.state, State::Locked { .. }) {
                         return Task::none();
                     }
@@ -764,7 +796,7 @@ impl cosmic::Application for App {
 
                                     match pam_res {
                                         Ok(()) => {
-                                            log::info!("successfully authenticated");
+                                            tracing::info!("successfully authenticated");
                                             msg_tx
                                                 .send(cosmic::Action::App(Message::Unlock))
                                                 .await
@@ -772,7 +804,7 @@ impl cosmic::Application for App {
                                             break;
                                         }
                                         Err(err) => {
-                                            log::warn!("authentication error: {}", err);
+                                            tracing::warn!("authentication error: {}", err);
                                             msg_tx
                                                 .send(cosmic::Action::App(Message::Error(
                                                     err.to_string(),
@@ -838,13 +870,13 @@ impl cosmic::Application for App {
                                 cosmic::app::Action::Surface(msg),
                             )));
                         } else {
-                            log::error!("no rectangle for subsurface...");
+                            tracing::error!("no rectangle for subsurface...");
                         }
                     }
                     return Task::batch(commands);
                 }
                 SessionLockEvent::Unlocked => {
-                    log::info!("session unlocked");
+                    tracing::info!("session unlocked");
                     self.state = State::Unlocked;
 
                     let mut commands = Vec::new();
@@ -883,7 +915,7 @@ impl cosmic::Application for App {
             }
             Message::Inhibit(inhibit) => match self.state {
                 State::Locked { .. } => {
-                    log::info!("no need to inhibit sleep when already locked");
+                    tracing::info!("no need to inhibit sleep when already locked");
                 }
                 _ => {
                     self.inhibit_opt = Some(inhibit);
@@ -910,14 +942,14 @@ impl cosmic::Application for App {
                             Message::Channel(value_tx)
                         });
                     }
-                    None => log::warn!("tried to submit when value_tx_opt not set"),
+                    None => tracing::warn!("tried to submit when value_tx_opt not set"),
                 }
             }
             Message::Suspend => {
                 #[cfg(feature = "logind")]
                 return cosmic::Task::future(async move { crate::logind::suspend().await.err() })
                     .and_then(|err| {
-                        log::error!("failed to suspend: {:?}", err);
+                        tracing::error!("failed to suspend: {:?}", err);
                         cosmic::task::message(cosmic::Action::App(Message::Error(err.to_string())))
                     });
             }
@@ -929,7 +961,7 @@ impl cosmic::Application for App {
             }
             Message::Lock => match self.state {
                 State::Unlocked => {
-                    log::info!("session locking");
+                    tracing::info!("session locking");
                     self.state = State::Locking;
                     // Clear errors
                     self.common.error_opt = None;
@@ -938,23 +970,23 @@ impl cosmic::Application for App {
                     // Try to create lockfile when locking
                     if let Some(ref lockfile) = self.flags.lockfile_opt {
                         if let Err(err) = fs::File::create(lockfile) {
-                            log::warn!("failed to create lockfile {:?}: {}", lockfile, err);
+                            tracing::warn!("failed to create lockfile {:?}: {}", lockfile, err);
                         }
                     }
                     // Tell compositor to lock
                     return lock();
                 }
                 State::Unlocking => {
-                    log::info!("session still unlocking");
+                    tracing::info!("session still unlocking");
                 }
                 State::Locking | State::Locked { .. } => {
-                    log::info!("session already locking or locked");
+                    tracing::info!("session already locking or locked");
                 }
             },
             Message::Unlock => {
                 match self.state {
                     State::Locked { .. } => {
-                        log::info!("sessing unlocking");
+                        tracing::info!("sessing unlocking");
                         self.state = State::Unlocking;
                         // Clear errors
                         self.common.error_opt = None;
@@ -963,7 +995,7 @@ impl cosmic::Application for App {
                         // Try to delete lockfile when unlocking
                         if let Some(ref lockfile) = self.flags.lockfile_opt {
                             if let Err(err) = fs::remove_file(lockfile) {
-                                log::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
+                                tracing::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
                             }
                         }
 
@@ -983,10 +1015,10 @@ impl cosmic::Application for App {
                         return Task::batch(commands);
                     }
                     State::Locking => {
-                        log::info!("session still locking");
+                        tracing::info!("session still locking");
                     }
                     State::Unlocking | State::Unlocked => {
-                        log::info!("session already unlocking or unlocked");
+                        tracing::info!("session already unlocking or unlocked");
                     }
                 }
             }
@@ -1032,7 +1064,7 @@ impl cosmic::Application for App {
             )
             .map(|res| {
                 if !res.errors.is_empty() {
-                    log::info!("errors loading background state: {:?}", res.errors);
+                    tracing::info!("errors loading background state: {:?}", res.errors);
                 }
                 Message::BackgroundState(res.config)
             }),
@@ -1047,7 +1079,7 @@ impl cosmic::Application for App {
             )
             .map(|res| {
                 if !res.errors.is_empty() {
-                    log::info!("errors loading background state: {:?}", res.errors);
+                    tracing::info!("errors loading background state: {:?}", res.errors);
                 }
                 Message::TimeAppletConfig(res.config)
             }),

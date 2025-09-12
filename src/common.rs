@@ -80,7 +80,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         ) {
             Ok(config_handler) => Some(config_handler),
             Err(err) => {
-                log::error!("failed to create cosmic-comp config handler: {}", err);
+                tracing::error!("failed to create cosmic-comp config handler: {}", err);
                 None
             }
         };
@@ -88,7 +88,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         let layouts_opt = match xkb_data::all_keyboard_layouts() {
             Ok(ok) => Some(Arc::new(ok)),
             Err(err) => {
-                log::warn!("failed to load keyboard layouts: {}", err);
+                tracing::warn!("failed to load keyboard layouts: {}", err);
                 None
             }
         };
@@ -141,8 +141,8 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             }
             if let Some(comp_config_handler) = &self.comp_config_handler {
                 match comp_config_handler.set("xkb_config", xkb_config) {
-                    Ok(()) => log::info!("updated cosmic-comp xkb_config"),
-                    Err(err) => log::error!("failed to update cosmic-comp xkb_config: {}", err),
+                    Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
+                    Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
                 }
             }
         }
@@ -158,7 +158,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 continue;
             };
 
-            log::info!("updating wallpaper for {:?}", output_name);
+            tracing::info!("updating wallpaper for {:?}", output_name);
 
             for (wallpaper_output_name, wallpaper_source) in user_data.bg_state.wallpapers.iter() {
                 if wallpaper_output_name == output_name {
@@ -171,7 +171,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                                     //TODO: what to do about duplicates?
                                 }
                                 None => {
-                                    log::warn!(
+                                    tracing::warn!(
                                         "output {}: failed to find wallpaper data for source {:?}",
                                         output_name,
                                         path
@@ -182,7 +182,11 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                         }
                         BgSource::Color(color) => {
                             //TODO: support color sources
-                            log::warn!("output {}: unsupported source {:?}", output_name, color);
+                            tracing::warn!(
+                                "output {}: unsupported source {:?}",
+                                output_name,
+                                color
+                            );
                         }
                     }
                 }
@@ -234,7 +238,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                         }
                     }
                 }
-                log::info!("{:?}", self.active_layouts);
+                tracing::info!("{:?}", self.active_layouts);
             }
         }
     }
@@ -299,7 +303,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                             .get(&surface_id)
                             .and_then(|id| self.text_input_ids.get(id))
                         {
-                            log::info!("focus surface found id {:?}", text_input_id);
+                            tracing::info!("focus surface found id {:?}", text_input_id);
                             return widget::text_input::focus(text_input_id.clone());
                         }
                     }
