@@ -6,14 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+libc = "0.2"
 cosmic-applets-config.workspace = true
 cosmic-bg-config.workspace = true
 cosmic-comp-config.workspace = true
 cosmic-config.workspace = true
 cosmic-theme.workspace = true
-env_logger.workspace = true
-libc = "0.2"
-log.workspace = true
+tracing.workspace = true
+tracing-journald = { workspace = true, optional = true }
+color-eyre.workspace = true
 nix.workspace = true
 pwd.workspace = true
 ron.workspace = true
@@ -25,3 +27,7 @@ kdl.workspace = true
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
 xdg = "3.0.0"
+
+[features]
+default = ["systemd"]
+systemd = ["tracing-journald"]

@@ -1,5 +1,10 @@
+use color_eyre::eyre::Context;
+use color_eyre::eyre::WrapErr;
 use cosmic_greeter_daemon::UserData;
 use std::{env, error::Error, future::pending, io, path::Path};
+use tracing::metadata::LevelFilter;
+use tracing::{error, warn};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use zbus::{connection::Builder, DBusError};
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
@@ -99,7 +104,35 @@ impl GreeterProxy {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    color_eyre::install().wrap_err("failed to install color_eyre error handler")?;
+
+    let trace = tracing_subscriber::registry();
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
+
+    #[cfg(feature = "systemd")]
+    if let Ok(journald) = tracing_journald::layer() {
+        trace
+            .with(journald)
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+    } else {
+        trace
+            .with(fmt::layer())
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+        warn!("failed to connect to journald")
+    }
+
+    #[cfg(not(feature = "systemd"))]
+    trace
+        .with(fmt::layer())
+        .with(env_filter)
+        .try_init()
+        .wrap_err("failed to initialize logger")?;
 
     let _conn = Builder::system()?
         .name("com.system76.CosmicGreeter")?
