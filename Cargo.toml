@@ -23,7 +23,6 @@ cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
 dirs = "6"
-env_logger.workspace = true
 freedesktop_entry_parser = "1.3.0"
 libcosmic = { workspace = true, features = [
     "autosize",
@@ -34,7 +33,9 @@ libcosmic = { workspace = true, features = [
     "tokio",
     "dbus-config",
 ] }
-log.workspace = true
+tracing.workspace = true
+tracing-journald = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 pam-client = "0.5.0"
 pwd.workspace = true
 ron.workspace = true
@@ -79,15 +80,16 @@ futures-util = "0.3.30"
 timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
 cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
-
+color-eyre.workspace = true
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
 features = ["tokio-codec"]
 
 [features]
-default = ["logind", "networkmanager", "upower"]
-logind = ["logind-zbus", "zbus"]
+default = ["logind", "networkmanager", "upower", "systemd"]
+logind = ["logind-zbus", "zbus", "systemd"]
+systemd = ["tracing-journald"]
 networkmanager = ["cosmic-dbus-networkmanager", "zbus"]
 upower = ["upower_dbus", "zbus"]
 zbus = ["dep:zbus", "nix"]
@@ -110,8 +112,10 @@ resolver = "2"
 rust-version = "1.85.0"
 
 [workspace.dependencies]
-env_logger = "0.10.2"
-log = "0.4.22"
+tracing = "0.1"
+tracing-journald = { version = "0.3" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+color-eyre = "0.6.5"
 
 # Fix zbus compilation by manually adding nix with user feature
 nix = { version = "0.29", features = ["user"] }

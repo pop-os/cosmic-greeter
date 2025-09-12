@@ -42,7 +42,7 @@ pub fn subscription() -> Subscription<Option<&'static str>> {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
                 Err(err) => {
-                    log::warn!("networkmanager error: {}", err);
+                    tracing::warn!("networkmanager error: {}", err);
                     //TODO: send error
                 }
             }

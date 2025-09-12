@@ -35,14 +35,14 @@ where
             let config = C::get_entry(&handler)
                 .inspect_err(|(errors, _)| {
                     for err in errors.iter().filter(|err| err.is_err()) {
-                        log::error!("{err}")
+                        tracing::error!("{err}")
                     }
                 })
                 .unwrap_or_else(|(_, config)| config);
             (config, Some(handler))
         }
         Err(e) => {
-            log::error!("Failed to get settings for `{APP_ID}` (v {CONFIG_VERSION}): {e:?}");
+            tracing::error!("Failed to get settings for `{APP_ID}` (v {CONFIG_VERSION}): {e:?}");
             (C::default(), None)
         }
     }

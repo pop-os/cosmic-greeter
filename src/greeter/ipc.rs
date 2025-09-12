@@ -31,7 +31,7 @@ pub fn subscription() -> Subscription<Message> {
                 let mut stream = match UnixStream::connect(&socket_path).await {
                     Ok(stream) => stream,
                     Err(why) => {
-                        log::error!("greetd IPC socket connection failed: {why:?}");
+                        tracing::error!("greetd IPC socket connection failed: {why:?}");
                         _ = sender.send(Message::Socket(SocketState::Error(Arc::new(why))));
 
                         break;
@@ -42,7 +42,7 @@ pub fn subscription() -> Subscription<Message> {
 
                 while let Some(request) = rx.recv().await {
                     if let Err(why) = request.write_to(&mut stream).await {
-                        log::error!("error writing to GREETD_SOCK stream: {why:?}");
+                        tracing::error!("error writing to GREETD_SOCK stream: {why:?}");
                         break;
                     }
 
@@ -96,7 +96,7 @@ pub fn subscription() -> Subscription<Message> {
                                     match request {
                                         greetd_ipc::Request::CancelSession => {
                                             // Do not send errors for cancel session to gui
-                                            log::warn!(
+                                            tracing::warn!(
                                                 "error while cancelling session: {}",
                                                 description
                                             );
@@ -123,7 +123,7 @@ pub fn subscription() -> Subscription<Message> {
                                         _ = sender.send(Message::Exit).await;
                                     }
                                     greetd_ipc::Request::CancelSession => {
-                                        log::info!("greetd IPC session canceled");
+                                        tracing::info!("greetd IPC session canceled");
                                         // Reconnect to socket
                                         break;
                                     }
@@ -131,13 +131,13 @@ pub fn subscription() -> Subscription<Message> {
                             }
                         }
                         Err(err) => {
-                            log::error!("failed to read socket: {:?}", err);
+                            tracing::error!("failed to read socket: {:?}", err);
                             break;
                         }
                     }
                 }
 
-                log::info!("reconnecting to greetd IPC socket");
+                tracing::info!("reconnecting to greetd IPC socket");
                 interval.tick().await;
             }
 

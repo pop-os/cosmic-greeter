@@ -47,7 +47,7 @@ impl Time {
         let locale = match get_local() {
             Ok(locale) => locale,
             Err(e) => {
-                log::error!("can't get locale {e}");
+                tracing::error!("can't get locale {e}");
                 Locale::default()
             }
         };
@@ -136,7 +136,7 @@ pub fn tz_updates() -> Task<chrono_tz::Tz> {
     Task::stream(async_fn_stream::fn_stream(|emitter| async move {
         loop {
             if let Err(err) = tz_stream(&emitter).await {
-                log::error!("{err:?}");
+                tracing::error!("{err:?}");
             }
             _ = time::sleep(Duration::from_secs(60)).await;
         }

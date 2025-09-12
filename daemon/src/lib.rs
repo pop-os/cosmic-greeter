@@ -50,7 +50,7 @@ impl UserData {
                                 self.bg_path_data.insert(path.clone(), bytes);
                             }
                             Err(err) => {
-                                log::error!("failed to read wallpaper {:?}: {:?}", path, err);
+                                tracing::error!("failed to read wallpaper {:?}: {:?}", path, err);
                             }
                         }
                     }
@@ -80,7 +80,7 @@ impl UserData {
                     self.icon_opt = Some(icon_data);
                 }
                 Err(err) => {
-                    log::error!("failed to read icon {:?}: {:?}", icon_path, err);
+                    tracing::error!("failed to read icon {:?}: {:?}", icon_path, err);
                 }
             }
         }
@@ -92,12 +92,12 @@ impl UserData {
                     is_dark = theme_mode.is_dark;
                 }
                 Err((errs, theme_mode)) => {
-                    log::error!("failed to load cosmic-theme config: {:?}", errs);
+                    tracing::error!("failed to load cosmic-theme config: {:?}", errs);
                     is_dark = theme_mode.is_dark;
                 }
             },
             Err(err) => {
-                log::error!("failed to create cosmic-theme mode helper: {:?}", err);
+                tracing::error!("failed to create cosmic-theme mode helper: {:?}", err);
             }
         }
 
@@ -111,12 +111,12 @@ impl UserData {
                     self.theme_opt = Some(theme);
                 }
                 Err((errs, theme)) => {
-                    log::error!("failed to load cosmic-theme config: {:?}", errs);
+                    tracing::error!("failed to load cosmic-theme config: {:?}", errs);
                     self.theme_opt = Some(theme);
                 }
             },
             Err(err) => {
-                log::error!("failed to create cosmic-theme config helper: {:?}", err);
+                tracing::error!("failed to create cosmic-theme config helper: {:?}", err);
             }
         }
 
@@ -130,12 +130,12 @@ impl UserData {
                     self.theme_builder_opt = Some(theme);
                 }
                 Err((errs, theme)) => {
-                    log::error!("failed to load cosmic-theme builder config: {:?}", errs);
+                    tracing::error!("failed to load cosmic-theme builder config: {:?}", errs);
                     self.theme_builder_opt = Some(theme);
                 }
             },
             Err(err) => {
-                log::error!(
+                tracing::error!(
                     "failed to create cosmic-theme builder config helper: {:?}",
                     err
                 );
@@ -149,12 +149,12 @@ impl UserData {
                     self.bg_state = state;
                 }
                 Err((errs, state)) => {
-                    log::error!("failed to load cosmic-bg state: {:?}", errs);
+                    tracing::error!("failed to load cosmic-bg state: {:?}", errs);
                     self.bg_state = state;
                 }
             },
             Err(err) => {
-                log::error!("failed to create cosmic-bg state helper: {:?}", err);
+                tracing::error!("failed to create cosmic-bg state helper: {:?}", err);
             }
         }
         self.load_wallpapers_as_user();
@@ -167,14 +167,14 @@ impl UserData {
                         self.accessibility_zoom = config.accessibility_zoom;
                     }
                     Err((errs, config)) => {
-                        log::error!("errors loading cosmic-comp config: {:?}", errs);
+                        tracing::error!("errors loading cosmic-comp config: {:?}", errs);
                         self.xkb_config_opt = Some(config.xkb_config);
                         self.accessibility_zoom = config.accessibility_zoom;
                     }
                 };
             }
             Err(err) => {
-                log::error!("failed to create cosmic-comp config handler: {}", err);
+                tracing::error!("failed to create cosmic-comp config handler: {}", err);
             }
         };
 
@@ -198,12 +198,12 @@ impl UserData {
                     self.time_applet_config = config;
                 }
                 Err((errs, config)) => {
-                    log::error!("failed to load time applet config: {:?}", errs);
+                    tracing::error!("failed to load time applet config: {:?}", errs);
                     self.time_applet_config = config;
                 }
             },
             Err(err) => {
-                log::error!(
+                tracing::error!(
                     "failed to create CosmicAppletTime config handler: {:?}",
                     err
                 );
