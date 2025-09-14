@@ -1,4 +1,12 @@
+accessibility = Accesibilidad
+    .screen-reader = Lector de pantalla
+    .magnifier = Lupa
+    .high-contrast = Modo de contraste alto
+    .invert-colors = Invertir colores
 cancel = Cancelar
+caps-lock = El Bloq Mayús está activo.
+enter-user = Introducir nombre manualmente...
+type-username = Usuario:
 keyboard-layout = Distribución del teclado
 restart = Reiniciar
 restart-now = ¿Reiniciar ahora?
