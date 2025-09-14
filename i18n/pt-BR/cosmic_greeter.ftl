@@ -1,3 +1,8 @@
+accessibility = Acessibilidade
+    .screen-reader = Leitor de Tela
+    .magnifier = Ampliador de Tela
+    .high-contrast = Alto contraste
+    .invert-colors = Inverter Cores
 cancel = Cancelar
 caps-lock = Caps Lock ativado.
 enter-user = Digite o nome manualmente...
