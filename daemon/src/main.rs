@@ -1,11 +1,10 @@
 use color_eyre::eyre::Context;
-use color_eyre::eyre::WrapErr;
 use cosmic_greeter_daemon::UserData;
 use std::{env, error::Error, future::pending, io, path::Path};
 use tracing::metadata::LevelFilter;
-use tracing::{error, warn};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-use zbus::{connection::Builder, DBusError};
+use tracing::warn;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use zbus::{DBusError, connection::Builder};
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
 // callback is executed with the permissions of the specified user id. A good test is to see if
@@ -15,7 +14,9 @@ fn run_as_user<F: FnOnce() -> T, T>(user: &pwd::Passwd, f: F) -> Result<T, io::E
     let root_home_opt = env::var_os("HOME");
 
     // Switch to user HOME
-    env::set_var("HOME", &user.dir);
+    unsafe {
+        env::set_var("HOME", &user.dir);
+    }
 
     // Switch to user UID
     if unsafe { libc::seteuid(user.uid) } != 0 {
@@ -31,8 +32,12 @@ fn run_as_user<F: FnOnce() -> T, T>(user: &pwd::Passwd, f: F) -> Result<T, io::E
 
     // Restore root HOME
     match root_home_opt {
-        Some(root_home) => env::set_var("HOME", root_home),
-        None => env::remove_var("HOME"),
+        Some(root_home) => unsafe {
+            env::set_var("HOME", root_home);
+        },
+        None => unsafe {
+            env::remove_var("HOME");
+        },
     }
 
     Ok(t)

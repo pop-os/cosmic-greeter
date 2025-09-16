@@ -3,10 +3,9 @@
 
 pub mod user;
 
-use std::{collections::HashMap, num::NonZeroU32};
-
-use cosmic_config::{cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry};
+use cosmic_config::{CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, num::NonZeroU32};
 
 pub const APP_ID: &str = "com.system76.CosmicGreeter";
 pub const CONFIG_VERSION: u64 = 1;

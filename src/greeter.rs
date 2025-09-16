@@ -50,7 +50,7 @@ use std::{
     error::Error,
     fs, io,
     num::NonZeroU32,
-    path::{Path, PathBuf},
+    path::Path,
     process,
     sync::Arc,
     time::{Duration, Instant},
@@ -174,17 +174,12 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let session_dirs = xdg::BaseDirectories::with_prefix("wayland-sessions")
-        .map_or(
-            vec![PathBuf::from("/usr/share/wayland-sessions")],
-            |xdg_dirs| xdg_dirs.get_data_dirs(),
-        )
+        .get_data_dirs()
         .into_iter()
         .map(|dir| (dir, SessionType::Wayland))
         .chain(
             xdg::BaseDirectories::with_prefix("xsessions")
-                .map_or(vec![PathBuf::from("/usr/share/xsessions")], |xdg_dirs| {
-                    xdg_dirs.get_data_dirs()
-                })
+                .get_data_dirs()
                 .into_iter()
                 .map(|dir| (dir, SessionType::X11)),
         );
