@@ -119,7 +119,7 @@ serde = "1"
 tokio = "1.47.1"
 zbus = "5"
 kdl = "6"
-cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false, branch = "kdl-command" }
+cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false }
 
 [workspace.dependencies.cosmic-applets-config]
 git = "https://github.com/pop-os/cosmic-applets"
