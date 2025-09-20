@@ -25,6 +25,9 @@ tmpfiles-dst := lib-dir / 'tmpfiles.d' / name + '.conf'
 daemon-src := cargo-target-dir / 'release' / name + '-daemon'
 daemon-dst := base-dir / 'bin' / name + '-daemon'
 
+start-src := name + '-start.sh'
+start-dst := base-dir / 'bin' / name + '-start'
+
 dbus-src := 'dbus' / APPID + '.conf'
 dbus-dst := base-dir / 'share' / 'dbus-1' / 'system.d' / APPID + '.conf'
 
@@ -68,6 +71,7 @@ run *args:
 # The sysusers and tmpfiles files are automatically added
 install-debian:
     install -Dm0755 {{bin-src}} {{bin-dst}}
+    install -Dm0755 {{start-src}} {{start-dst}}
     install -Dm0755 {{daemon-src}} {{daemon-dst}}
     install -Dm0755 {{dbus-src}} {{dbus-dst}}
 
@@ -78,11 +82,11 @@ install: install-debian
 
 # Uninstalls installed files
 uninstall:
-    rm {{bin-dst}} {{daemon-dst}} {{dbus-dst}} {{sysusers-dst}} {{tmpfiles-dst}}
+    rm {{start-dst}} {{bin-dst}} {{daemon-dst}} {{dbus-dst}} {{sysusers-dst}} {{tmpfiles-dst}}
 
 # Vendor dependencies locally
 vendor:
-    #!/usr/bin/env bash
+    #!/usr/bin/env sh
     mkdir -p .cargo
     cargo vendor --sync Cargo.toml | head -n -1 > .cargo/config.toml
     echo 'directory = "vendor"' >> .cargo/config.toml

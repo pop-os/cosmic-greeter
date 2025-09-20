@@ -1,4 +1,12 @@
+accessibility = Accessibility
+    .screen-reader = Screen Reader
+    .magnifier = Magnifier
+    .high-contrast = High contrast
+    .invert-colors = Invert Colors
 cancel = Cancel
+caps-lock = Caps Lock is active.
+enter-user = Enter name manually...
+type-username = Username:
 keyboard-layout = Keyboard layout
 restart = Restart
 restart-now = Restart now?

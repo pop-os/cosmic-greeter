@@ -3,53 +3,72 @@
 
 mod ipc;
 
+use crate::wayland::{self, WaylandUpdate};
+use cctk::sctk::reexports::calloop;
+use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
-use cosmic::iced::{Point, Size};
-use cosmic::iced_core::image;
+use cosmic::iced::event::listen_with;
+use cosmic::iced::{Point, Size, window};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::surface;
 use cosmic::widget::text;
 use cosmic::{
     Element,
-    cosmic_config::{self, ConfigSet, CosmicConfigEntry},
+    cosmic_config::{self, ConfigSet},
     executor,
     iced::{
         self, Background, Border, Length, Subscription, alignment,
-        event::{
-            self,
-            wayland::{Event as WaylandEvent, OutputEvent},
-        },
+        event::wayland::OutputEvent,
         futures::SinkExt,
         platform_specific::{
             runtime::wayland::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
             shell::wayland::commands::layer_surface::{
                 Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, get_layer_surface,
             },
+            shell::wayland::commands::subsurface::reposition_subsurface,
         },
     },
     iced_runtime::core::window::Id as SurfaceId,
     theme, widget,
 };
-use cosmic_comp_config::CosmicCompConfig;
+use cosmic::{
+    cosmic_theme::{self, CosmicPalette},
+    surface,
+};
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
-use cosmic_greeter_daemon::{UserData, WallpaperData};
+use cosmic_greeter_daemon::UserData;
+use cosmic_randr_shell::{AdaptiveSyncState, KdlParseWithError, List, OutputKey, Transform};
+use cosmic_settings_subscriptions::cosmic_a11y_manager::{
+    AccessibilityEvent, AccessibilityRequest,
+};
 use greetd_ipc::Request;
+use kdl::KdlDocument;
+use std::process::Stdio;
+use std::sync::LazyLock;
 use std::{
     collections::{HashMap, hash_map},
     error::Error,
     fs, io,
     num::NonZeroU32,
-    path::{Path, PathBuf},
+    path::Path,
     process,
     sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::process::Child;
 use tokio::time;
+use tracing::metadata::LevelFilter;
+use tracing::warn;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
 
-use crate::fl;
+use crate::{
+    common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT},
+    fl,
+};
+
+static USERNAME_ID: LazyLock<iced::id::Id> = LazyLock::new(|| iced::id::Id::new("username-id"));
 
 #[proxy(
     interface = "com.system76.CosmicGreeter",
@@ -90,42 +109,41 @@ fn user_data_fallback() -> Vec<UserData> {
                     _ => true,
                 }
             })
-            .map(|user| {
-                //TODO: use accountsservice
-                let icon_path = Path::new("/var/lib/AccountsService/icons").join(&user.name);
-                let icon_opt = if icon_path.is_file() {
-                    match fs::read(&icon_path) {
-                        Ok(icon_data) => Some(icon_data),
-                        Err(err) => {
-                            log::error!("failed to read {:?}: {:?}", icon_path, err);
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                UserData {
-                    uid: user.uid,
-                    name: user.name,
-                    full_name_opt: user
-                        .gecos
-                        .filter(|s| !s.is_empty())
-                        .map(|gecos| gecos.split(',').next().unwrap_or_default().to_string()),
-                    icon_opt,
-                    theme_opt: None,
-                    wallpapers_opt: None,
-                    xkb_config_opt: None,
-                    clock_military_time: false,
-                    // clock_show_seconds: false,
-                }
-            })
+            .map(UserData::from)
             .collect()
     }
 }
 
 pub fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    color_eyre::install().wrap_err("failed to install color_eyre error handler")?;
+
+    let trace = tracing_subscriber::registry();
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
+
+    #[cfg(feature = "systemd")]
+    if let Ok(journald) = tracing_journald::layer() {
+        trace
+            .with(journald)
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+    } else {
+        trace
+            .with(fmt::layer())
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+        warn!("failed to connect to journald")
+    }
+
+    #[cfg(not(feature = "systemd"))]
+    trace
+        .with(fmt::layer())
+        .with(env_filter)
+        .try_init()
+        .wrap_err("failed to initialize logger")?;
 
     crate::localize::localize();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -135,14 +153,13 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     let mut user_datas = match runtime.block_on(user_data_dbus()) {
         Ok(ok) => ok,
         Err(err) => {
-            log::error!("failed to load user data from daemon: {}", err);
+            tracing::error!("failed to load user data from daemon: {}", err);
             user_data_fallback()
         }
     };
 
     // Sort user data by uid
     user_datas.sort_by(|a, b| a.uid.cmp(&b.uid));
-
     let (mut greeter_config, greeter_config_handler) = CosmicGreeterConfig::load();
     // Filter out users that were removed from the system since the last time we loaded config
     greeter_config.users.retain(|uid, _| {
@@ -157,17 +174,12 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let session_dirs = xdg::BaseDirectories::with_prefix("wayland-sessions")
-        .map_or(
-            vec![PathBuf::from("/usr/share/wayland-sessions")],
-            |xdg_dirs| xdg_dirs.get_data_dirs(),
-        )
+        .get_data_dirs()
         .into_iter()
         .map(|dir| (dir, SessionType::Wayland))
         .chain(
             xdg::BaseDirectories::with_prefix("xsessions")
-                .map_or(vec![PathBuf::from("/usr/share/xsessions")], |xdg_dirs| {
-                    xdg_dirs.get_data_dirs()
-                })
+                .get_data_dirs()
                 .into_iter()
                 .map(|dir| (dir, SessionType::X11)),
         );
@@ -178,7 +190,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
             let read_dir = match fs::read_dir(&session_dir) {
                 Ok(ok) => ok,
                 Err(err) => {
-                    log::warn!(
+                    tracing::warn!(
                         "failed to read session directory {:?}: {:?}",
                         session_dir,
                         err
@@ -191,7 +203,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let dir_entry = match dir_entry_res {
                     Ok(ok) => ok,
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to read session directory {:?} entry: {:?}",
                             session_dir,
                             err
@@ -203,7 +215,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let entry = match freedesktop_entry_parser::parse_entry(dir_entry.path()) {
                     Ok(ok) => ok,
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to read session file {:?}: {:?}",
                             dir_entry.path(),
                             err
@@ -215,7 +227,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let name = match entry.section("Desktop Entry").attr("Name") {
                     Some(some) => some,
                     None => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to read session file {:?}: no Desktop Entry/Name attribute",
                             dir_entry.path()
                         );
@@ -226,7 +238,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let exec = match entry.section("Desktop Entry").attr("Exec") {
                     Some(some) => some,
                     None => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to read session file {:?}: no Desktop Entry/Exec attribute",
                             dir_entry.path()
                         );
@@ -269,7 +281,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                         }
                     }
                     None => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to parse session file {:?} Exec field {:?}",
                             dir_entry.path(),
                             exec
@@ -278,10 +290,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                log::info!("session {} using command {:?} env {:?}", name, command, env);
+                tracing::info!("session {} using command {:?} env {:?}", name, command, env);
                 match sessions.insert(name.to_string(), (command, env)) {
                     Some(some) => {
-                        log::warn!("session {} overwrote old command {:?}", name, some);
+                        tracing::warn!("session {} overwrote old command {:?}", name, some);
                     }
                     None => {}
                 }
@@ -290,34 +302,15 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions
     };
 
-    let layouts_opt = match xkb_data::all_keyboard_layouts() {
-        Ok(ok) => Some(Arc::new(ok)),
-        Err(err) => {
-            log::warn!("failed to load keyboard layouts: {}", err);
-            None
-        }
-    };
-
-    let comp_config_handler =
-        match cosmic_config::Config::new("com.system76.CosmicComp", CosmicCompConfig::VERSION) {
-            Ok(config_handler) => Some(config_handler),
-            Err(err) => {
-                log::error!("failed to create cosmic-comp config handler: {}", err);
-                None
-            }
-        };
-
-    let fallback_background =
-        widget::image::Handle::from_bytes(include_bytes!("../res/background.jpg").as_slice());
-
     let flags = Flags {
+        user_icons: user_datas
+            .iter_mut()
+            .map(|d| d.icon_opt.take().map(widget::image::Handle::from_bytes))
+            .collect(),
         user_datas,
         sessions,
-        layouts_opt,
-        comp_config_handler,
         greeter_config,
         greeter_config_handler,
-        fallback_background,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -330,12 +323,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 #[derive(Clone)]
 pub struct Flags {
     user_datas: Vec<UserData>,
+    user_icons: Vec<Option<widget::image::Handle>>,
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
-    layouts_opt: Option<Arc<xkb_data::KeyboardLayouts>>,
-    comp_config_handler: Option<cosmic_config::Config>,
     greeter_config: CosmicGreeterConfig,
     greeter_config_handler: Option<cosmic_config::Config>,
-    fallback_background: widget::image::Handle,
 }
 
 #[derive(Clone, Debug)]
@@ -348,13 +339,6 @@ pub enum SocketState {
     NotSet,
     /// Failed to open GREETD_SOCK
     Error(Arc<io::Error>),
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct ActiveLayout {
-    layout: String,
-    description: String,
-    variant: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -378,6 +362,7 @@ impl DialogPage {
 ///TODO: this is custom code that should be better handled by libcosmic
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dropdown {
+    Accessibility,
     Keyboard,
     User,
     Session,
@@ -393,6 +378,8 @@ struct NameIndexPair {
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
+    Common(common::Message),
+    OutputEvent(OutputEvent, WlOutput),
     Auth(Option<String>),
     ConfigUpdateUser,
     DialogCancel,
@@ -400,58 +387,115 @@ pub enum Message {
     DropdownToggle(Dropdown),
     Error(String),
     Exit,
-    Focus(SurfaceId),
     // Sets channel used to communicate with the greetd IPC subscription.
     GreetdChannel(tokio::sync::mpsc::Sender<Request>),
+    /// Refreshes display outputs.
+    RandrUpdate {
+        /// Available outputs from cosmic-randr.
+        randr: Arc<Result<List, cosmic_randr_shell::Error>>,
+    },
     Heartbeat,
     KeyboardLayout(usize),
     Login,
-    NetworkIcon(Option<&'static str>),
-    OutputEvent(OutputEvent, WlOutput),
-    PowerInfo(Option<(String, f64)>),
-    Prompt(String, bool, Option<String>),
     Reconnect,
+    Reload(cosmic::Theme),
+    RepositionMenu(window::Id, Size),
     Restart,
     Session(String),
     Shutdown,
     Socket(SocketState),
     Surface(surface::Action),
     Suspend,
-    Tick,
-    Tz(chrono_tz::Tz),
     Username(String),
+    EnterUser(bool, String),
+    ScreenReader(bool),
+    Magnifier(bool),
+    HighContrast(bool),
+    InvertColors(bool),
+    WaylandUpdate(WaylandUpdate),
+}
+
+impl From<common::Message> for Message {
+    fn from(message: common::Message) -> Self {
+        Self::Common(message)
+    }
 }
 
 /// The [`App`] stores application-specific state.
 pub struct App {
-    core: Core,
+    common: Common<Message>,
     flags: Flags,
     greetd_sender: Option<tokio::sync::mpsc::Sender<greetd_ipc::Request>>,
-    surface_ids: HashMap<WlOutput, SurfaceId>,
-    active_surface_id_opt: Option<SurfaceId>,
-    surface_images: HashMap<SurfaceId, image::Handle>,
-    surface_names: HashMap<SurfaceId, String>,
-    text_input_ids: HashMap<String, widget::Id>,
-    network_icon_opt: Option<&'static str>,
-    power_info_opt: Option<(String, f64)>,
     socket_state: SocketState,
     usernames: Vec<(String, String)>,
     selected_username: NameIndexPair,
-    prompt_opt: Option<(String, bool, Option<String>)>,
     session_names: Vec<String>,
     selected_session: String,
-    active_layouts: Vec<ActiveLayout>,
-    error_opt: Option<String>,
     dialog_page_opt: Option<DialogPage>,
     dropdown_opt: Option<Dropdown>,
-    window_size: HashMap<SurfaceId, Size>,
     heartbeat_handle: Option<cosmic::iced::task::Handle>,
-    time: crate::time::Time,
+    entering_name: bool,
+    theme_builder: cosmic_theme::ThemeBuilder,
+    surface_id_pairs: Vec<(window::Id, window::Id)>,
+
+    randr_list: Option<cosmic_randr_shell::List>,
+
+    accessibility: Accessibility,
+}
+
+#[derive(Default)]
+struct Accessibility {
+    pub wayland_sender: Option<calloop::channel::Sender<AccessibilityRequest>>,
+    pub wayland_protocol_version: Option<u32>,
+
+    pub state: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState,
+    pub helper: Option<cosmic::cosmic_config::Config>,
+
+    pub screen_reader: Option<Child>,
+    pub magnifier: bool,
+    pub high_contrast: bool,
+    pub invert_colors: bool,
 }
 
 impl App {
+    /// Applies a display configuration via `cosmic-randr`.
+    fn exec_randr(&self, user_config: cosmic_randr_shell::List) -> Task<Message> {
+        let mut task = tokio::process::Command::new("cosmic-randr");
+        task.arg("kdl");
+
+        cosmic::task::future::<(), ()>(async move {
+            task.stdin(Stdio::piped());
+            let Ok(mut p) = task.spawn() else {
+                return;
+            };
+
+            let kdl_doc = kdl::KdlDocument::from(user_config).to_string();
+            use tokio::io::AsyncWriteExt;
+
+            if let Some(mut stdin) = p.stdin.take() {
+                if let Err(err) = stdin.write_all(kdl_doc.as_bytes()).await {
+                    tracing::error!("Failed to write KDL to stdin: {err:?}");
+                }
+                if let Err(err) = stdin.flush().await {
+                    tracing::error!("Failed to flush stdin: {err:?}");
+                }
+            }
+            tracing::debug!("executing {task:?}");
+            let status = p.wait().await;
+            if let Err(err) = status {
+                tracing::error!("Randr error: {err:?}");
+            }
+        })
+        .discard()
+    }
+
     fn menu(&self, id: SurfaceId) -> Element<Message> {
-        let window_width = self.window_size.get(&id).map(|s| s.width).unwrap_or(800.);
+        let window_width = self
+            .common
+            .window_size
+            .get(&id)
+            .map(|s| s.width)
+            .unwrap_or(800.);
         let menu_width = if window_width > 800. {
             800.
         } else {
@@ -461,30 +505,30 @@ impl App {
             let military_time = self
                 .selected_username
                 .data_idx
-                .and_then(|i| {
-                    self.flags
-                        .user_datas
-                        .get(i)
-                        .map(|user| user.clock_military_time)
-                })
+                .and_then(|i| self.flags.user_datas.get(i))
+                .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
-            let date_time_column = self.time.date_time_widget(military_time);
+            let date_time_column = self.common.time.date_time_widget(military_time);
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
 
-            if let Some(network_icon) = self.network_icon_opt {
-                status_row = status_row.push(widget::icon::from_name(network_icon));
+            if let Some(network_icon) = self.common.network_icon_opt.as_ref() {
+                status_row = status_row.push(network_icon.clone());
             }
 
-            if let Some((power_icon, power_percent)) = &self.power_info_opt {
+            if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
                 status_row = status_row.push(iced::widget::row![
-                    widget::icon::from_name(power_icon.clone()),
+                    power_icon.clone(),
                     widget::text(format!("{:.0}%", power_percent)),
                 ]);
             }
 
             //TODO: move code for custom dropdowns to libcosmic
-            let menu_checklist = |label, value, message| {
+            fn menu_checklist<'a>(
+                label: impl Into<std::borrow::Cow<'a, str>> + 'a,
+                value: bool,
+                message: Message,
+            ) -> Element<'a, Message> {
                 Element::from(
                     widget::menu::menu_button(vec![
                         if value {
@@ -503,9 +547,21 @@ impl App {
                     ])
                     .on_press(message),
                 )
-            };
-            let dropdown_menu = |items| {
-                widget::container(widget::column::with_children(items))
+            }
+            let dropdown_menu = |items: Vec<_>| {
+                let item_cnt = items.len();
+
+                let items = widget::column::with_children(items);
+                let items = if item_cnt > 7 {
+                    Element::from(
+                        widget::scrollable(items)
+                            .height(Length::Fixed(DEFAULT_MENU_ITEM_HEIGHT * 7.)),
+                    )
+                } else {
+                    Element::from(items)
+                };
+
+                widget::container(items)
                     .padding(1)
                     //TODO: move style to libcosmic
                     .class(theme::Container::custom(|theme| {
@@ -533,8 +589,8 @@ impl App {
             )
             .position(widget::popover::Position::Bottom);
             if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
-                let mut items = Vec::with_capacity(self.active_layouts.len());
-                for (i, layout) in self.active_layouts.iter().enumerate() {
+                let mut items = Vec::with_capacity(self.common.active_layouts.len());
+                for (i, layout) in self.common.active_layouts.iter().enumerate() {
                     items.push(menu_checklist(
                         &layout.description,
                         i == 0,
@@ -559,7 +615,29 @@ impl App {
                         Message::Username(name.clone()),
                     ));
                 }
-                user_button = user_button.popup(dropdown_menu(items));
+                let item_cnt = items.len();
+                let menu_button = widget::menu::menu_button(vec![
+                    Element::from(widget::Space::with_width(Length::Fixed(25.0))),
+                    widget::text(fl!("enter-user"))
+                        .align_x(iced::alignment::Horizontal::Left)
+                        .into(),
+                ])
+                .on_press(Message::EnterUser(true, String::new()))
+                .into();
+                let items = if item_cnt >= 6 {
+                    dropdown_menu(vec![
+                        widget::scrollable(widget::column::with_children(items))
+                            .height(Length::Fixed(DEFAULT_MENU_ITEM_HEIGHT * 6.))
+                            .into(),
+                        widget::divider::horizontal::light().into(),
+                        menu_button,
+                    ])
+                } else {
+                    items.push(menu_button);
+                    dropdown_menu(items)
+                };
+
+                user_button = user_button.popup(items);
             }
 
             let mut session_button = widget::popover(
@@ -580,14 +658,49 @@ impl App {
                 session_button = session_button.popup(dropdown_menu(items));
             }
 
-            let button_row = iced::widget::row![
-                /*TODO: greeter accessibility options
-                widget::button(widget::icon::from_name(
-                    "applications-accessibility-symbolic"
+            // Accessibility menu as a popup dialog
+            let mut accessibility_dropdown = widget::popover(
+                widget::button::custom(widget::icon::from_name(
+                    "applications-accessibility-symbolic",
                 ))
                 .padding(12.0)
-                .on_press(Message::None),
-                */
+                .on_press(Message::DropdownToggle(Dropdown::Accessibility)),
+            )
+            .position(widget::popover::Position::Bottom);
+
+            if matches!(self.dropdown_opt, Some(Dropdown::Accessibility)) {
+                let mut items = Vec::new();
+                items.push(menu_checklist(
+                    fl!("accessibility", "screen-reader"),
+                    self.accessibility.screen_reader.is_some(),
+                    Message::ScreenReader(!self.accessibility.screen_reader.is_some()),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "magnifier"),
+                    self.accessibility.magnifier,
+                    Message::Magnifier(!self.accessibility.magnifier),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "high-contrast"),
+                    self.accessibility.high_contrast,
+                    Message::HighContrast(!self.accessibility.high_contrast),
+                ));
+                items.push(menu_checklist(
+                    fl!("accessibility", "invert-colors"),
+                    self.accessibility.invert_colors,
+                    Message::InvertColors(!self.accessibility.invert_colors),
+                ));
+                accessibility_dropdown = accessibility_dropdown.popup(dropdown_menu(items));
+            }
+
+            let accessibility_button = accessibility_dropdown;
+
+            let button_row = iced::widget::row![
+                widget::tooltip(
+                    accessibility_button,
+                    text(fl!("accessibility")),
+                    widget::tooltip::Position::Top
+                ),
                 widget::tooltip(
                     input_button,
                     text(fl!("keyboard-layout")),
@@ -648,18 +761,21 @@ impl App {
                     column = column.push(widget::text("Opening GREETD_SOCK"));
                 }
                 SocketState::Open => {
-                    for user_data in &self.flags.user_datas {
-                        if user_data.name == self.selected_username.username {
-                            match &user_data.icon_opt {
+                    for (user_data, user_icon) in self
+                        .flags
+                        .user_datas
+                        .iter()
+                        .zip(self.flags.user_icons.iter())
+                    {
+                        if !self.entering_name && user_data.name == self.selected_username.username
+                        {
+                            match user_icon {
                                 Some(icon) => {
                                     column = column.push(
                                         widget::container(
-                                            widget::Image::new(
-                                                //TODO: cache handle
-                                                widget::image::Handle::from_bytes(icon.clone()),
-                                            )
-                                            .width(Length::Fixed(78.0))
-                                            .height(Length::Fixed(78.0)),
+                                            widget::image(icon)
+                                                .width(Length::Fixed(78.0))
+                                                .height(Length::Fixed(78.0)),
                                         )
                                         .width(Length::Fill)
                                         .align_x(alignment::Horizontal::Center),
@@ -667,45 +783,59 @@ impl App {
                                 }
                                 None => {}
                             }
-                            match &user_data.full_name_opt {
-                                Some(full_name) => {
-                                    column = column.push(
-                                        widget::container(widget::text::title4(full_name))
-                                            .width(Length::Fill)
-                                            .align_x(alignment::Horizontal::Center),
-                                    );
-                                }
-                                None => {}
-                            }
+                            column = column.push(
+                                widget::container(widget::text::title4(&user_data.full_name))
+                                    .width(Length::Fill)
+                                    .align_x(alignment::Horizontal::Center),
+                            );
                         }
                     }
-                    match &self.prompt_opt {
+                    if self.entering_name {
+                        column = column.push(
+                            widget::text_input(
+                                fl!("type-username"),
+                                self.selected_username.username.as_str(),
+                            )
+                            .id(USERNAME_ID.clone())
+                            .on_input(|input| Message::EnterUser(false, input))
+                            .on_submit(|v| Message::Username(v)),
+                        )
+                    }
+                    match &self.common.prompt_opt {
                         Some((prompt, secret, value_opt)) => match value_opt {
                             Some(value) => {
                                 let text_input_id = self
+                                    .common
                                     .surface_names
                                     .get(&id)
-                                    .and_then(|id| self.text_input_ids.get(id))
+                                    .and_then(|id| self.common.text_input_ids.get(id))
                                     .cloned()
                                     .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
                                 let mut text_input = widget::secure_input(
                                     prompt.clone(),
-                                    "",
-                                    Some(Message::Prompt(
-                                        prompt.clone(),
-                                        !*secret,
-                                        Some(value.clone()),
-                                    )),
+                                    value.as_str(),
+                                    Some(
+                                        common::Message::Prompt(
+                                            prompt.clone(),
+                                            !*secret,
+                                            Some(value.clone()),
+                                        )
+                                        .into(),
+                                    ),
                                     *secret,
                                 )
                                 .id(text_input_id)
-                                .manage_value(true)
+                                .on_input(|input| {
+                                    common::Message::Prompt(prompt.clone(), *secret, Some(input))
+                                        .into()
+                                })
                                 .on_submit(|v| Message::Auth(Some(v)));
 
                                 if let Some(text_input_id) = self
+                                    .common
                                     .surface_names
                                     .get(&id)
-                                    .and_then(|id| self.text_input_ids.get(id))
+                                    .and_then(|id| self.common.text_input_ids.get(id))
                                 {
                                     text_input = text_input.id(text_input_id.clone());
                                 }
@@ -715,6 +845,10 @@ impl App {
                                 }
 
                                 column = column.push(text_input);
+
+                                if self.common.caps_lock {
+                                    column = column.push(widget::text(fl!("caps-lock")));
+                                }
                             }
                             None => {
                                 column = column.push(
@@ -736,7 +870,7 @@ impl App {
                 }
             }
 
-            if let Some(error) = &self.error_opt {
+            if let Some(error) = &self.common.error_opt {
                 column = column.push(widget::text(error));
             }
 
@@ -814,6 +948,7 @@ impl App {
             None => popover.into(),
         }
     }
+
     /// Send a [`Request`] to the greetd IPC subscription.
     fn send_request(&self, request: Request) {
         if let Some(ref sender) = self.greetd_sender {
@@ -834,27 +969,10 @@ impl App {
             None => return,
         };
 
-        if let Some(mut xkb_config) = user_data.xkb_config_opt.clone() {
-            xkb_config.layout = String::new();
-            xkb_config.variant = String::new();
-            for (i, layout) in self.active_layouts.iter().enumerate() {
-                if i > 0 {
-                    xkb_config.layout.push(',');
-                    xkb_config.variant.push(',');
-                }
-                xkb_config.layout.push_str(&layout.layout);
-                xkb_config.variant.push_str(&layout.variant);
-            }
-            if let Some(comp_config_handler) = &self.flags.comp_config_handler {
-                match comp_config_handler.set("xkb_config", xkb_config) {
-                    Ok(()) => log::info!("updated cosmic-comp xkb_config"),
-                    Err(err) => log::error!("failed to update cosmic-comp xkb_config: {}", err),
-                }
-            }
-        }
+        self.common.set_xkb_config(&user_data);
     }
 
-    fn update_user_config(&mut self) -> Task<Message> {
+    fn update_user_data(&mut self) -> Task<Message> {
         let user_data = match self
             .selected_username
             .data_idx
@@ -866,101 +984,32 @@ impl App {
             }
         };
 
-        if let Some(wallpapers) = &user_data.wallpapers_opt {
-            for (output, surface_id) in self.surface_ids.iter() {
-                if self.surface_images.contains_key(surface_id) {
-                    continue;
-                }
+        self.common.update_user_data(&user_data);
 
-                let output_name = match self.surface_names.get(surface_id) {
-                    Some(some) => some,
-                    None => continue,
-                };
+        // Ensure that user's xkb config is used
+        self.common.set_xkb_config(&user_data);
 
-                log::info!("updating wallpaper for {:?}", output_name);
-
-                for (wallpaper_output_name, wallpaper_data) in wallpapers.iter() {
-                    if wallpaper_output_name == output_name {
-                        match wallpaper_data {
-                            WallpaperData::Bytes(bytes) => {
-                                self.surface_images
-                                    .insert(*surface_id, image::Handle::from_bytes(bytes.clone()));
-
-                                //TODO: what to do about duplicates?
-                                break;
-                            }
-                            WallpaperData::Color(color) => {
-                                //TODO: support color sources
-                                log::warn!(
-                                    "output {}: unsupported source {:?}",
-                                    output.id(),
-                                    color
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // From cosmic-applet-input-sources
-        if let Some(keyboard_layouts) = &self.flags.layouts_opt {
-            if let Some(xkb_config) = &user_data.xkb_config_opt {
-                self.active_layouts.clear();
-                let config_layouts = xkb_config.layout.split_terminator(',');
-                let config_variants = xkb_config
-                    .variant
-                    .split_terminator(',')
-                    .chain(std::iter::repeat(""));
-                for (config_layout, config_variant) in config_layouts.zip(config_variants) {
-                    for xkb_layout in keyboard_layouts.layouts() {
-                        if config_layout != xkb_layout.name() {
-                            continue;
-                        }
-                        if config_variant.is_empty() {
-                            let active_layout = ActiveLayout {
-                                description: xkb_layout.description().to_owned(),
-                                layout: config_layout.to_owned(),
-                                variant: config_variant.to_owned(),
-                            };
-                            self.active_layouts.push(active_layout);
-                            continue;
-                        }
-
-                        let Some(xkb_variants) = xkb_layout.variants() else {
-                            continue;
-                        };
-                        for xkb_variant in xkb_variants {
-                            if config_variant != xkb_variant.name() {
-                                continue;
-                            }
-                            let active_layout = ActiveLayout {
-                                description: xkb_variant.description().to_owned(),
-                                layout: config_layout.to_owned(),
-                                variant: config_variant.to_owned(),
-                            };
-                            self.active_layouts.push(active_layout);
-                        }
-                    }
-                }
-                log::info!("{:?}", self.active_layouts);
-
-                // Ensure that user's xkb config is used
-                self.set_xkb_config();
-            }
+        if let Some(builder) = &user_data.theme_builder_opt {
+            self.theme_builder = builder.clone();
         }
 
-        match &user_data.theme_opt {
-            Some(theme) => {
-                cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(theme.clone())))
-            }
-            None => Task::none(),
+        let mut tasks = Vec::new();
+        self.accessibility.magnifier = user_data.accessibility_zoom.start_on_login;
+        self.randr_list = None;
+        tasks.push(cosmic::Task::future(async {
+            let randr_fut = cosmic_randr_shell::list().await;
+            cosmic::action::app(Message::RandrUpdate {
+                randr: Arc::new(randr_fut),
+            })
+        }));
+        if let Some(theme) = &user_data.theme_opt {
+            self.accessibility.high_contrast = theme.is_high_contrast;
+            tasks.push(cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(
+                theme.clone(),
+            ))));
         }
-    }
 
-    fn user_data_index(user_datas: &[UserData], username: &str) -> Option<usize> {
-        user_datas
-            .binary_search_by(|probe| probe.name.as_str().cmp(username))
-            .ok()
+        Task::batch(tasks)
     }
 }
 
@@ -979,40 +1028,46 @@ impl cosmic::Application for App {
     const APP_ID: &'static str = "com.system76.CosmicGreeter";
 
     fn core(&self) -> &Core {
-        &self.core
+        &self.common.core
     }
 
     fn core_mut(&mut self) -> &mut Core {
-        &mut self.core
+        &mut self.common.core
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
-        core.window.show_window_menu = false;
-        core.window.show_headerbar = false;
-        // XXX must be false or define custom style to have transparent bg
-        core.window.sharp_corners = false;
-        core.window.show_maximize = false;
-        core.window.show_minimize = false;
-        core.window.use_template = false;
+    fn init(core: Core, flags: Self::Flags) -> (Self, Task<Message>) {
+        let mut tasks = Vec::new();
+        let (mut common, common_task) = Common::init(core);
+        common.on_output_event = Some(Box::new(|output_event, output| {
+            Message::OutputEvent(output_event, output)
+        }));
+        tasks.push(common_task);
 
-        //TODO: use full_name_opt
+        //TODO: use full_name?
         let mut usernames: Vec<_> = flags
             .user_datas
             .iter()
-            .map(|x| {
-                let name = x.name.clone();
-                let full_name = x.full_name_opt.clone().unwrap_or_else(|| name.clone());
-                (name, full_name)
-            })
+            .map(|x| (x.name.clone(), x.full_name.clone()))
             .collect();
         usernames.sort_by(|a, b| a.1.cmp(&b.1));
 
-        //TODO: use last selected user
-        let (username, uid) = flags
-            .user_datas
-            .first()
-            .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+        let last_user = flags.greeter_config.last_user.as_ref();
+
+        let (username, uid) = last_user
+            .and_then(|last_user| {
+                flags
+                    .user_datas
+                    .iter()
+                    .find(|d| d.uid == last_user.get())
+                    .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+            })
+            .or_else(|| {
+                flags
+                    .user_datas
+                    .first()
+                    .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+            })
             .unwrap_or_default();
 
         let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
@@ -1030,56 +1085,51 @@ impl cosmic::Application for App {
             .unwrap_or_default();
         let data_idx = Some(0);
         let selected_username = NameIndexPair { username, data_idx };
+        let mut accessibility = Accessibility::default();
+        accessibility.helper =
+            cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config().ok();
 
         let app = App {
-            core,
+            common,
             flags,
             greetd_sender: None,
-            surface_ids: HashMap::new(),
-            active_surface_id_opt: None,
-            surface_images: HashMap::new(),
-            surface_names: HashMap::new(),
-            text_input_ids: HashMap::new(),
-            network_icon_opt: None,
-            power_info_opt: None,
             socket_state: SocketState::Pending,
             usernames,
             selected_username,
-            prompt_opt: None,
             session_names,
             selected_session,
-            active_layouts: Vec::new(),
-            error_opt: None,
             dialog_page_opt: None,
             dropdown_opt: None,
-            window_size: HashMap::new(),
             heartbeat_handle: None,
-            time: crate::time::Time::new(),
+            entering_name: false,
+            accessibility,
+            theme_builder: Default::default(),
+            randr_list: None,
+            surface_id_pairs: Vec::new(),
         };
-        (
-            app,
-            Task::batch(vec![
-                crate::time::tick().map(|_| cosmic::Action::App(Message::Tick)),
-                crate::time::tz_updates().map(|tz| cosmic::Action::App(Message::Tz(tz))),
-            ]),
-        )
+        (app, Task::batch(tasks))
     }
 
     /// Handle application events here.
     fn update(&mut self, message: Self::Message) -> Task<Message> {
         match message {
+            Message::Common(common_message) => {
+                return self.common.update(common_message);
+            }
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
-                        log::info!("output {}: created", output.id());
+                        tracing::info!("output {}: created", output.id());
 
                         let surface_id = SurfaceId::unique();
                         let subsurface_id = SurfaceId::unique();
+                        self.surface_id_pairs
+                            .push((surface_id.clone(), subsurface_id.clone()));
 
-                        match self.surface_ids.insert(output.clone(), surface_id) {
+                        match self.common.surface_ids.insert(output.clone(), surface_id) {
                             Some(old_surface_id) => {
                                 //TODO: remove old surface?
-                                log::warn!(
+                                tracing::warn!(
                                     "output {}: already had surface ID {:?}",
                                     output.id(),
                                     old_surface_id
@@ -1097,21 +1147,25 @@ impl cosmic::Application for App {
                         match output_info_opt {
                             Some(output_info) => match output_info.name {
                                 Some(output_name) => {
-                                    self.surface_names.insert(surface_id, output_name.clone());
-                                    self.surface_names
+                                    self.common
+                                        .surface_names
+                                        .insert(surface_id, output_name.clone());
+                                    self.common
+                                        .surface_names
                                         .insert(subsurface_id, output_name.clone());
-                                    self.surface_images.remove(&surface_id);
+                                    self.common.surface_images.remove(&surface_id);
                                     let text_input_id =
                                         widget::Id::new(format!("input-{output_name}",));
-                                    self.text_input_ids
+                                    self.common
+                                        .text_input_ids
                                         .insert(output_name.clone(), text_input_id.clone());
                                 }
                                 None => {
-                                    log::warn!("output {}: no output name", output.id());
+                                    tracing::warn!("output {}: no output name", output.id());
                                 }
                             },
                             None => {
-                                log::warn!("output {}: no output info", output.id());
+                                tracing::warn!("output {}: no output info", output.id());
                             }
                         }
 
@@ -1129,7 +1183,7 @@ impl cosmic::Application for App {
                                 Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32 - 32.),
                             )
                         };
-                        self.window_size.insert(
+                        self.common.window_size.insert(
                             surface_id,
                             Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
                         );
@@ -1151,7 +1205,7 @@ impl cosmic::Application for App {
                             })),
                         );
                         return Task::batch([
-                            self.update_user_config(),
+                            self.update_user_data(),
                             get_layer_surface(SctkLayerSurfaceSettings {
                                 id: surface_id,
                                 layer: Layer::Overlay,
@@ -1176,23 +1230,23 @@ impl cosmic::Application for App {
                         ]);
                     }
                     OutputEvent::Removed => {
-                        log::info!("output {}: removed", output.id());
-                        match self.surface_ids.remove(&output) {
+                        tracing::info!("output {}: removed", output.id());
+                        match self.common.surface_ids.remove(&output) {
                             Some(surface_id) => {
-                                self.surface_images.remove(&surface_id);
-                                self.window_size.remove(&surface_id);
-                                if let Some(n) = self.surface_names.remove(&surface_id) {
-                                    self.text_input_ids.remove(&n);
+                                self.common.surface_images.remove(&surface_id);
+                                self.common.window_size.remove(&surface_id);
+                                if let Some(n) = self.common.surface_names.remove(&surface_id) {
+                                    self.common.text_input_ids.remove(&n);
                                 }
                                 return destroy_layer_surface(surface_id);
                             }
                             None => {
-                                log::warn!("output {}: no surface found", output.id());
+                                tracing::warn!("output {}: no surface found", output.id());
                             }
                         }
                     }
                     OutputEvent::InfoUpdate(_output_info) => {
-                        log::info!("output {}: info update", output.id());
+                        tracing::info!("output {}: info update", output.id());
                     }
                 }
             }
@@ -1208,30 +1262,8 @@ impl cosmic::Application for App {
                     _ => {}
                 }
             }
-            Message::NetworkIcon(network_icon_opt) => {
-                self.network_icon_opt = network_icon_opt;
-            }
-            Message::PowerInfo(power_info_opt) => {
-                self.power_info_opt = power_info_opt;
-            }
-            Message::Prompt(prompt, secret, value_opt) => {
-                let value_was_some = self
-                    .prompt_opt
-                    .as_ref()
-                    .map_or(false, |(_, _, x)| x.is_some());
-                let value_is_some = value_opt.is_some();
-                self.prompt_opt = Some((prompt, secret, value_opt));
-                if value_is_some && !value_was_some {
-                    if let Some(surface_id) = self.active_surface_id_opt {
-                        if let Some(text_input_id) = self
-                            .surface_names
-                            .get(&surface_id)
-                            .and_then(|id| self.text_input_ids.get(id))
-                        {
-                            return widget::text_input::focus(text_input_id.clone());
-                        }
-                    }
-                }
+            Message::Reload(new) => {
+                return cosmic::command::set_theme(new.clone());
             }
             Message::Session(selected_session) => {
                 self.selected_session = selected_session;
@@ -1239,14 +1271,36 @@ impl cosmic::Application for App {
                     self.dropdown_opt = None;
                 }
             }
+            Message::EnterUser(focus_input, username) => {
+                if self.dropdown_opt == Some(Dropdown::User) {
+                    self.dropdown_opt = None;
+                }
+                self.entering_name = true;
+                self.selected_username = NameIndexPair {
+                    data_idx: self
+                        .flags
+                        .user_datas
+                        .iter()
+                        .position(|d| d.name == username),
+                    username,
+                };
+                if focus_input {
+                    return widget::text_input::focus(USERNAME_ID.clone());
+                }
+            }
             Message::Username(username) => {
                 if self.dropdown_opt == Some(Dropdown::User) {
                     self.dropdown_opt = None;
                 }
-                if username != self.selected_username.username {
-                    let data_idx = Self::user_data_index(&self.flags.user_datas, &username);
+                if self.entering_name || username != self.selected_username.username {
+                    self.entering_name = false;
+                    let data_idx = self
+                        .flags
+                        .user_datas
+                        .iter()
+                        .position(|d| d.name == username);
                     self.selected_username = NameIndexPair { username, data_idx };
-                    self.surface_images.clear();
+                    self.common.surface_images.clear();
                     if let Some(session) = data_idx.and_then(|i| {
                         self.flags
                             .user_datas
@@ -1265,10 +1319,15 @@ impl cosmic::Application for App {
                     };
                     match &self.socket_state {
                         SocketState::Open => {
-                            self.prompt_opt = None;
+                            self.common.prompt_opt = None;
                             self.send_request(Request::CancelSession);
                         }
                         _ => {}
+                    }
+                    if let Some(randr_list) = self.randr_list.as_ref() {
+                        return self.update(Message::RandrUpdate {
+                            randr: Arc::new(Ok(randr_list.clone())),
+                        });
                     }
                 }
             }
@@ -1282,12 +1341,16 @@ impl cosmic::Application for App {
                                 .map(|uid| self.flags.greeter_config.users.entry(uid))
                         })
                 }) else {
-                    log::error!("Couldn't find user: {:?}", self.selected_username.username);
+                    tracing::error!(
+                        "Couldn't find user: {:?} {:?}",
+                        self.selected_username.username,
+                        self.selected_username.data_idx,
+                    );
                     return Task::none();
                 };
 
                 let Some(handler) = self.flags.greeter_config_handler.as_mut() else {
-                    log::error!(
+                    tracing::error!(
                         "Failed to update config for {} (UID: {}): no config handler",
                         self.selected_username.username,
                         user_entry.key()
@@ -1296,6 +1359,14 @@ impl cosmic::Application for App {
                 };
 
                 let uid = *user_entry.key();
+                self.flags.greeter_config.last_user = Some(uid);
+                if let Err(err) = handler.set("last_user", &self.flags.greeter_config.last_user) {
+                    tracing::error!(
+                        "Failed to set {:?} as last user: {:?}",
+                        self.flags.greeter_config.last_user,
+                        err
+                    );
+                }
                 match user_entry {
                     hash_map::Entry::Vacant(entry) => {
                         let last_session = Some(self.selected_session.clone());
@@ -1327,7 +1398,7 @@ impl cosmic::Application for App {
                 //     .greeter_config
                 //     .set_users(&handler, self.flags.greeter_config.users.clone())
                 if let Err(err) = handler.set("users", &self.flags.greeter_config.users) {
-                    log::error!(
+                    tracing::error!(
                         "Failed to set {} as last selected session for {} (UID: {}): {:?}",
                         self.selected_session,
                         self.selected_username.username,
@@ -1337,13 +1408,13 @@ impl cosmic::Application for App {
                 }
             }
             Message::Auth(response) => {
-                self.prompt_opt = None;
-                self.error_opt = None;
+                self.common.prompt_opt = None;
+                self.common.error_opt = None;
                 self.send_request(Request::PostAuthMessageResponse { response });
             }
             Message::Login => {
-                self.prompt_opt = None;
-                self.error_opt = None;
+                self.common.prompt_opt = None;
+                self.common.error_opt = None;
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
                         self.send_request(Request::StartSession { cmd, env });
@@ -1353,11 +1424,11 @@ impl cosmic::Application for App {
                 }
             }
             Message::Error(error) => {
-                self.error_opt = Some(error);
+                self.common.error_opt = Some(error);
                 self.send_request(Request::CancelSession);
             }
             Message::Reconnect => {
-                return self.update_user_config();
+                return self.update_user_data();
             }
             Message::DialogCancel => {
                 self.dialog_page_opt = None;
@@ -1372,7 +1443,7 @@ impl cosmic::Application for App {
                         match crate::logind::reboot().await {
                             Ok(()) => (),
                             Err(err) => {
-                                log::error!("failed to reboot: {:?}", err);
+                                tracing::error!("failed to reboot: {:?}", err);
                             }
                         }
                     })
@@ -1384,7 +1455,7 @@ impl cosmic::Application for App {
                         match crate::logind::power_off().await {
                             Ok(()) => (),
                             Err(err) => {
-                                log::error!("failed to power off: {:?}", err);
+                                tracing::error!("failed to power off: {:?}", err);
                             }
                         }
                     })
@@ -1400,8 +1471,8 @@ impl cosmic::Application for App {
                 }
             }
             Message::KeyboardLayout(layout_i) => {
-                if layout_i < self.active_layouts.len() {
-                    self.active_layouts.swap(0, layout_i);
+                if layout_i < self.common.active_layouts.len() {
+                    self.common.active_layouts.swap(0, layout_i);
                     self.set_xkb_config();
                 }
                 if self.dropdown_opt == Some(Dropdown::Keyboard) {
@@ -1414,7 +1485,7 @@ impl cosmic::Application for App {
                     match crate::logind::suspend().await {
                         Ok(()) => (),
                         Err(err) => {
-                            log::error!("failed to suspend: {:?}", err);
+                            tracing::error!("failed to suspend: {:?}", err);
                         }
                     }
                 })
@@ -1461,11 +1532,11 @@ impl cosmic::Application for App {
             },
             Message::Exit => {
                 let mut commands = Vec::new();
-                for (_output, surface_id) in self.surface_ids.drain() {
-                    self.surface_images.remove(&surface_id);
-                    self.surface_names.remove(&surface_id);
-                    if let Some(n) = self.surface_names.remove(&surface_id) {
-                        self.text_input_ids.remove(&n);
+                for (_output, surface_id) in self.common.surface_ids.drain() {
+                    self.common.surface_images.remove(&surface_id);
+                    self.common.surface_names.remove(&surface_id);
+                    if let Some(n) = self.common.surface_names.remove(&surface_id) {
+                        self.common.text_input_ids.remove(&n);
                     }
                     commands.push(destroy_layer_surface(surface_id));
                 }
@@ -1480,21 +1551,210 @@ impl cosmic::Application for App {
                     cosmic::app::Action::Surface(a),
                 ));
             }
-            Message::Focus(surface_id) => {
-                self.active_surface_id_opt = Some(surface_id);
-                if let Some(text_input_id) = self
-                    .surface_names
-                    .get(&surface_id)
-                    .and_then(|id| self.text_input_ids.get(id))
+            Message::ScreenReader(enabled) => {
+                if enabled
+                    && self
+                        .accessibility
+                        .screen_reader
+                        .as_mut()
+                        .is_none_or(|c| c.try_wait().is_ok())
                 {
-                    return widget::text_input::focus(text_input_id.clone());
+                    self.accessibility.screen_reader =
+                        tokio::process::Command::new("/usr/bin/orca").spawn().ok();
+                } else {
+                    if let Some(mut c) = self.accessibility.screen_reader.take() {
+                        return cosmic::task::future::<(), ()>(async move {
+                            if let Err(err) = c.kill().await {
+                                tracing::error!("Failed to stop screen reader: {err:?}");
+                            }
+                        })
+                        .discard();
+                    }
+                }
+
+                if let Some(helper) = self.accessibility.helper.as_ref() {
+                    _ = self
+                        .accessibility
+                        .state
+                        .set_screen_reader(&helper, Some(enabled));
                 }
             }
-            Message::Tick => {
-                self.time.tick();
+            Message::Magnifier(enabled) => {
+                if let Some(tx) = &self.accessibility.wayland_sender {
+                    self.accessibility.magnifier = enabled;
+                    let _ = tx.send(AccessibilityRequest::Magnifier(enabled));
+                    if let Some(helper) = self.accessibility.helper.as_ref() {
+                        _ = self
+                            .accessibility
+                            .state
+                            .set_magnifier(&helper, Some(enabled));
+                    }
+                } else {
+                    self.accessibility.magnifier = false;
+                }
             }
-            Message::Tz(tz) => {
-                self.time.set_tz(tz);
+            Message::HighContrast(enabled) => {
+                self.accessibility.high_contrast = enabled;
+
+                if let Some(helper) = self.accessibility.helper.as_ref() {
+                    _ = self
+                        .accessibility
+                        .state
+                        .set_high_contrast(&helper, Some(enabled));
+                }
+                let builder = self.theme_builder.clone();
+
+                return cosmic::task::future::<_, _>(async move {
+                    let builder = builder.clone();
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    std::thread::spawn(move || match apply_hc_theme(builder, enabled) {
+                        Ok(t) => {
+                            _ = tx.send(Some(t));
+                        }
+                        Err(err) => {
+                            tracing::error!("{err:?}");
+                            _ = tx.send(None);
+                        }
+                    });
+                    if let Ok(Some(theme)) = rx.await {
+                        cosmic::Action::App(Message::Reload(cosmic::Theme::custom(
+                            std::sync::Arc::new(theme),
+                        )))
+                    } else {
+                        cosmic::Action::None
+                    }
+                });
+            }
+            Message::InvertColors(enabled) => {
+                if let Some(tx) = &self.accessibility.wayland_sender {
+                    self.accessibility.invert_colors = enabled;
+                    let _ = tx.send(AccessibilityRequest::ScreenFilter {
+                        inverted: enabled,
+                        filter: None,
+                    });
+                    if let Some(helper) = self.accessibility.helper.as_ref() {
+                        _ = self
+                            .accessibility
+                            .state
+                            .set_invert_colors(&helper, Some(enabled));
+                    }
+                } else {
+                    self.accessibility.invert_colors = false;
+                }
+            }
+            Message::WaylandUpdate(update) => match update {
+                WaylandUpdate::Errored => {
+                    let _ = self.accessibility.wayland_sender.take();
+                    self.accessibility.wayland_protocol_version = None;
+                    self.accessibility.magnifier = false;
+                    self.accessibility.invert_colors = false;
+                }
+                WaylandUpdate::State(AccessibilityEvent::Bound(ver)) => {
+                    self.accessibility.wayland_protocol_version = Some(ver);
+                }
+                WaylandUpdate::State(AccessibilityEvent::Magnifier(enabled)) => {
+                    self.accessibility.magnifier = enabled;
+                }
+                WaylandUpdate::State(AccessibilityEvent::ScreenFilter { inverted, .. }) => {
+                    self.accessibility.invert_colors = inverted;
+                }
+                WaylandUpdate::State(AccessibilityEvent::Closed) => {
+                    self.accessibility.wayland_sender = None;
+                    self.accessibility.wayland_protocol_version = None;
+                }
+                WaylandUpdate::Started(tx) => {
+                    let _ = tx.send(AccessibilityRequest::ScreenFilter {
+                        inverted: self.accessibility.invert_colors,
+                        filter: None,
+                    });
+                    let _ = tx.send(AccessibilityRequest::Magnifier(
+                        self.accessibility.magnifier,
+                    ));
+
+                    self.accessibility.wayland_sender = Some(tx);
+                }
+            },
+            Message::RandrUpdate { randr } => match randr.as_ref() {
+                Ok(outputs) => {
+                    let mut tasks = Vec::new();
+                    self.randr_list = Some(outputs.clone());
+
+                    let mut list: Option<List> = None;
+
+                    let Some(cur_user_output_state) = self
+                        .selected_username
+                        .data_idx
+                        .and_then(|i| self.flags.user_datas.get(i))
+                        .map(|user_data| &user_data.kdl_output_lists)
+                    else {
+                        return Task::none();
+                    };
+                    'outer: for configured_list in cur_user_output_state
+                        .iter()
+                        .filter_map(|s| match KdlDocument::parse(s) {
+                            Ok(doc) => Some(doc),
+                            Err(err) => {
+                                tracing::warn!("Invalid output KDL {err:?}");
+                                None
+                            }
+                        })
+                        .map(|kdl| match List::try_from(kdl) {
+                            Ok(list) => list,
+                            Err(KdlParseWithError { list, errors }) => {
+                                for err in errors {
+                                    tracing::warn!("KDL output error: {err:?}");
+                                }
+                                list
+                            }
+                        })
+                    {
+                        if configured_list.outputs.len() != outputs.outputs.len() {
+                            continue;
+                        }
+
+                        for o in outputs.outputs.values() {
+                            if configured_list.outputs.values().all(|configured| {
+                                configured.name != o.name
+                                    || configured.make != o.make
+                                    || configured.model != o.model
+                            }) {
+                                continue 'outer;
+                            }
+                        }
+                        if list
+                            .as_ref()
+                            .is_none_or(|old| old.outputs.len() < configured_list.outputs.len())
+                        {
+                            list = Some(configured_list);
+                        }
+                    }
+                    if let Some(list) = list {
+                        tasks.push(self.exec_randr(list))
+                    } else {
+                        tracing::warn!("Failed to apply user display config");
+                    }
+
+                    return Task::batch(tasks);
+                }
+                Err(err) => {
+                    tracing::error!("Randr error: {err}");
+                }
+            },
+            Message::RepositionMenu(id, size) => {
+                let Some(subsurface_id) = self
+                    .surface_id_pairs
+                    .iter()
+                    .find_map(|(p, s)| (*p == id).then_some(s))
+                else {
+                    tracing::error!("Failed to find subsurface menu id");
+                    return Task::none();
+                };
+                let loc = if size.width > 800. {
+                    Point::new(size.width / 2. - 400., 32.)
+                } else {
+                    Point::new(0., 32.)
+                };
+                return reposition_subsurface(*subsurface_id, loc.x as i32, loc.y as i32);
             }
         }
         Task::none()
@@ -1508,9 +1768,10 @@ impl cosmic::Application for App {
     /// Creates a view after each update.
     fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
         let img = self
+            .common
             .surface_images
             .get(&surface_id)
-            .unwrap_or(&self.flags.fallback_background);
+            .unwrap_or(&self.common.fallback_background);
         widget::image(img)
             .content_fit(iced::ContentFit::Cover)
             .width(Length::Fill)
@@ -1519,33 +1780,41 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        let mut subscriptions = vec![
-            event::listen_with(|event, _, id| match event {
-                iced::Event::PlatformSpecific(iced::event::PlatformSpecific::Wayland(
-                    wayland_event,
-                )) => match wayland_event {
-                    WaylandEvent::Output(output_event, output) => {
-                        Some(Message::OutputEvent(output_event, output))
-                    }
-
-                    _ => None,
-                },
-                iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(id)),
+        Subscription::batch([
+            self.common.subscription().map(Message::from),
+            ipc::subscription(),
+            wayland::a11y_subscription().map(Message::WaylandUpdate),
+            listen_with(|event, _status, id| match event {
+                iced::Event::Window(window::Event::Resized(size))
+                | iced::Event::Window(window::Event::Opened { size, .. }) => {
+                    Some(Message::RepositionMenu(id, size))
+                }
                 _ => None,
             }),
-            ipc::subscription(),
-        ];
-
-        #[cfg(feature = "networkmanager")]
-        {
-            subscriptions.push(crate::networkmanager::subscription().map(Message::NetworkIcon));
-        }
-
-        #[cfg(feature = "upower")]
-        {
-            subscriptions.push(crate::upower::subscription().map(Message::PowerInfo));
-        }
-
-        Subscription::batch(subscriptions)
+        ])
     }
+}
+
+pub fn apply_hc_theme(
+    builder: cosmic_theme::ThemeBuilder,
+    enabled: bool,
+) -> Result<cosmic_theme::Theme, cosmic_config::Error> {
+    let is_dark = builder.palette.is_dark();
+    let mut builder = builder.clone();
+
+    builder.palette = if is_dark {
+        if enabled {
+            CosmicPalette::HighContrastDark(builder.palette.inner())
+        } else {
+            CosmicPalette::Dark(builder.palette.inner())
+        }
+    } else if enabled {
+        CosmicPalette::HighContrastLight(builder.palette.inner())
+    } else {
+        CosmicPalette::Light(builder.palette.inner())
+    };
+
+    let new_theme = builder.build();
+
+    Ok(new_theme)
 }

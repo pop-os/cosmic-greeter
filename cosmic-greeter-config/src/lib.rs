@@ -3,10 +3,9 @@
 
 pub mod user;
 
-use std::{collections::HashMap, num::NonZeroU32};
-
-use cosmic_config::{cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry};
+use cosmic_config::{CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
 use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, num::NonZeroU32};
 
 pub const APP_ID: &str = "com.system76.CosmicGreeter";
 pub const CONFIG_VERSION: u64 = 1;
@@ -17,6 +16,7 @@ pub const CONFIG_VERSION: u64 = 1;
 pub struct Config {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub users: HashMap<NonZeroU32, user::UserState>,
+    pub last_user: Option<NonZeroU32>,
 }
 
 impl Config {
@@ -34,14 +34,14 @@ where
             let config = C::get_entry(&handler)
                 .inspect_err(|(errors, _)| {
                     for err in errors.iter().filter(|err| err.is_err()) {
-                        log::error!("{err}")
+                        tracing::error!("{err}")
                     }
                 })
                 .unwrap_or_else(|(_, config)| config);
             (config, Some(handler))
         }
         Err(e) => {
-            log::error!("Failed to get settings for `{APP_ID}` (v {CONFIG_VERSION}): {e:?}");
+            tracing::error!("Failed to get settings for `{APP_ID}` (v {CONFIG_VERSION}): {e:?}");
             (C::default(), None)
         }
     }

@@ -1,4 +1,12 @@
+accessibility = الإتَاحَة
+    .screen-reader = قَارِئُ الشَّاشَة
+    .magnifier = المُكَبِّرَة
+    .high-contrast = تَبَايُنٌ عَالٍ
+    .invert-colors = عَكْسُ الألوَان
 cancel = ألغِ
+caps-lock = المَفَاتِيحُ العَالِيَةُ مُثَبَّتَة.
+enter-user = أَدْخِل الاِسمَ يَدَوِيًّا…
+type-username = اِسمُ المُستَخدِم:
 keyboard-layout = مُخطَّطُ لوحَةِ المَفاتِيح
 restart = أعِد التَّشغيل
 restart-now = أمُتأكِّدٌ مِن إعادةِ التَّشغيلِ الآن؟

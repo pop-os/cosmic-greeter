@@ -9,7 +9,7 @@ use logind_zbus::{
 use std::{any::TypeId, error::Error, os::fd::OwnedFd, sync::Arc, time::Duration};
 use zbus::Connection;
 
-use crate::locker::Message;
+use crate::{common, locker::Message};
 
 pub async fn power_off() -> zbus::Result<()> {
     let connection = Connection::system().await?;
@@ -52,7 +52,7 @@ pub fn subscription() -> Subscription<Message> {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
                 Err(err) => {
-                    log::warn!("logind error: {}", err);
+                    tracing::warn!("logind error: {}", err);
                     //TODO: send error
                 }
             }
@@ -89,32 +89,34 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Message>) -> Result<(), Box<dyn E
                     Some(signal) => match signal.args() {
                         Ok(args) => {
                             if args.start {
-                                log::info!("logind prepare for sleep");
+                                tracing::info!("logind prepare for sleep");
                                 if let Some(inhibit) = inhibit_opt.take() {
                                     msg_tx.send(Message::Inhibit(Arc::new(inhibit))).await?;
                                 }
                                 msg_tx.send(Message::Lock).await?;
                             } else {
-                                log::info!("logind resume");
+                                tracing::info!("logind resume");
                                 if inhibit_opt.is_none() {
                                     inhibit_opt = Some(inhibit(&manager).await?);
                                 }
+                                // Immediately update time when resuming from sleep.
+                                msg_tx.send(Message::Common(common::Message::Tick)).await?;
                             }
                         },
                         Err(err) => {
-                            log::warn!("logind prepare to sleep invalid data: {}", err);
+                            tracing::warn!("logind prepare to sleep invalid data: {}", err);
                         }
                     },
                     None => {
-                        log::warn!("logind prepare to sleep missing data");
+                        tracing::warn!("logind prepare to sleep missing data");
                     }
                 }
             },
             _ = lock.next() =>  {
-            log::info!("logind lock");
+            tracing::info!("logind lock");
             msg_tx.send(Message::Lock).await?;
         }, _ = unlock.next() => {
-            log::info!("logind unlock");
+            tracing::info!("logind unlock");
             msg_tx.send(Message::Unlock).await?;
         });
 
