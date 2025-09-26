@@ -1,4 +1,12 @@
+accessibility = Inrochtaineacht
+    .screen-reader = Léitheoir Scáileáin
+    .magnifier = Formhéadaitheoir
+    .high-contrast = Ardchodarsnacht
+    .invert-colors = Dathanna Inbhéartaithe
 cancel = Cealaigh
+caps-lock = Tá glas-caipíní gníomhach.
+enter-user = Cuir isteach d'ainm de láimh...
+type-username = Ainm úsáideora:
 keyboard-layout = Leagan amach an mhéarchláir
 restart = Atosaigh
 restart-now = Atosaigh anois?
