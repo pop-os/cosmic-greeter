@@ -1,6 +1,10 @@
+use color_eyre::eyre::Context;
 use cosmic_greeter_daemon::UserData;
 use std::{env, error::Error, future::pending, io, path::Path};
-use zbus::{connection::Builder, DBusError};
+use tracing::metadata::LevelFilter;
+use tracing::warn;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use zbus::{DBusError, connection::Builder};
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
 // callback is executed with the permissions of the specified user id. A good test is to see if
@@ -10,7 +14,9 @@ fn run_as_user<F: FnOnce() -> T, T>(user: &pwd::Passwd, f: F) -> Result<T, io::E
     let root_home_opt = env::var_os("HOME");
 
     // Switch to user HOME
-    env::set_var("HOME", &user.dir);
+    unsafe {
+        env::set_var("HOME", &user.dir);
+    }
 
     // Switch to user UID
     if unsafe { libc::seteuid(user.uid) } != 0 {
@@ -26,8 +32,12 @@ fn run_as_user<F: FnOnce() -> T, T>(user: &pwd::Passwd, f: F) -> Result<T, io::E
 
     // Restore root HOME
     match root_home_opt {
-        Some(root_home) => env::set_var("HOME", root_home),
-        None => env::remove_var("HOME"),
+        Some(root_home) => unsafe {
+            env::set_var("HOME", root_home);
+        },
+        None => unsafe {
+            env::remove_var("HOME");
+        },
     }
 
     Ok(t)
@@ -99,7 +109,35 @@ impl GreeterProxy {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    color_eyre::install().wrap_err("failed to install color_eyre error handler")?;
+
+    let trace = tracing_subscriber::registry();
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
+
+    #[cfg(feature = "systemd")]
+    if let Ok(journald) = tracing_journald::layer() {
+        trace
+            .with(journald)
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+    } else {
+        trace
+            .with(fmt::layer())
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+        warn!("failed to connect to journald")
+    }
+
+    #[cfg(not(feature = "systemd"))]
+    trace
+        .with(fmt::layer())
+        .with(env_filter)
+        .try_init()
+        .wrap_err("failed to initialize logger")?;
 
     let _conn = Builder::system()?
         .name("com.system76.CosmicGreeter")?

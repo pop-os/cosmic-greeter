@@ -1,3 +1,8 @@
+accessibility = Dostępność
+    .screen-reader = Czytnik ekranu
+    .magnifier = Lupa
+    .high-contrast = Tryb wysokiego kontrastu
+    .invert-colors = Odwróć kolory
 cancel = Anuluj
 caps-lock = Caps lock jest aktywny.
 enter-user = Ręcznie wprowadź nazwę użytkownika…

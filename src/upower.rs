@@ -15,7 +15,7 @@ pub fn subscription() -> Subscription<Option<(String, f64)>> {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
                 Err(err) => {
-                    log::warn!("upower error: {}", err);
+                    tracing::warn!("upower error: {}", err);
                     //TODO: send error
                 }
             }

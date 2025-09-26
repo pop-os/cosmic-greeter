@@ -35,11 +35,11 @@ pub struct Common<M> {
     pub error_opt: Option<String>,
     pub fallback_background: widget::image::Handle,
     pub layouts_opt: Option<Arc<xkb_data::KeyboardLayouts>>,
-    pub network_icon_opt: Option<&'static str>,
+    pub network_icon_opt: Option<widget::Icon>,
     pub on_output_event: Option<Box<dyn Fn(OutputEvent, WlOutput) -> M>>,
     pub on_session_lock_event: Option<Box<dyn Fn(SessionLockEvent) -> M>>,
     pub output_names: HashMap<WlOutput, String>,
-    pub power_info_opt: Option<(String, f64)>,
+    pub power_info_opt: Option<(widget::Icon, f64)>,
     pub prompt_opt: Option<(String, bool, Option<String>)>,
     pub subsurface_rects: HashMap<WlOutput, Rectangle>,
     pub surface_ids: HashMap<WlOutput, SurfaceId>,
@@ -80,7 +80,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         ) {
             Ok(config_handler) => Some(config_handler),
             Err(err) => {
-                log::error!("failed to create cosmic-comp config handler: {}", err);
+                tracing::error!("failed to create cosmic-comp config handler: {}", err);
                 None
             }
         };
@@ -88,7 +88,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         let layouts_opt = match xkb_data::all_keyboard_layouts() {
             Ok(ok) => Some(Arc::new(ok)),
             Err(err) => {
-                log::warn!("failed to load keyboard layouts: {}", err);
+                tracing::warn!("failed to load keyboard layouts: {}", err);
                 None
             }
         };
@@ -141,8 +141,8 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             }
             if let Some(comp_config_handler) = &self.comp_config_handler {
                 match comp_config_handler.set("xkb_config", xkb_config) {
-                    Ok(()) => log::info!("updated cosmic-comp xkb_config"),
-                    Err(err) => log::error!("failed to update cosmic-comp xkb_config: {}", err),
+                    Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
+                    Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
                 }
             }
         }
@@ -158,7 +158,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 continue;
             };
 
-            log::info!("updating wallpaper for {:?}", output_name);
+            tracing::info!("updating wallpaper for {:?}", output_name);
 
             for (wallpaper_output_name, wallpaper_source) in user_data.bg_state.wallpapers.iter() {
                 if wallpaper_output_name == output_name {
@@ -171,7 +171,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                                     //TODO: what to do about duplicates?
                                 }
                                 None => {
-                                    log::warn!(
+                                    tracing::warn!(
                                         "output {}: failed to find wallpaper data for source {:?}",
                                         output_name,
                                         path
@@ -182,7 +182,11 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                         }
                         BgSource::Color(color) => {
                             //TODO: support color sources
-                            log::warn!("output {}: unsupported source {:?}", output_name, color);
+                            tracing::warn!(
+                                "output {}: unsupported source {:?}",
+                                output_name,
+                                color
+                            );
                         }
                     }
                 }
@@ -234,7 +238,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                         }
                     }
                 }
-                log::info!("{:?}", self.active_layouts);
+                tracing::info!("{:?}", self.active_layouts);
             }
         }
     }
@@ -279,7 +283,8 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 }
             }
             Message::NetworkIcon(network_icon_opt) => {
-                self.network_icon_opt = network_icon_opt;
+                self.network_icon_opt =
+                    network_icon_opt.map(|name| widget::icon::from_name(name).into());
             }
             Message::OutputEvent(output_event, output) => {
                 if let Some(on_output_event) = &self.on_output_event {
@@ -287,7 +292,8 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 }
             }
             Message::PowerInfo(power_info_opt) => {
-                self.power_info_opt = power_info_opt;
+                self.power_info_opt = power_info_opt
+                    .map(|(name, level)| (widget::icon::from_name(name).into(), level));
             }
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
@@ -299,7 +305,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                             .get(&surface_id)
                             .and_then(|id| self.text_input_ids.get(id))
                         {
-                            log::info!("focus surface found id {:?}", text_input_id);
+                            tracing::info!("focus surface found id {:?}", text_input_id);
                             return widget::text_input::focus(text_input_id.clone());
                         }
                     }

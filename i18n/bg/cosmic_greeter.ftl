@@ -1,4 +1,12 @@
+accessibility = Достъпност
+    .screen-reader = Четец на екрана
+    .magnifier = Лупа
+    .high-contrast = Висок контраст
+    .invert-colors = Обръщане на цветовете
 cancel = Отказване
+caps-lock = Caps Lock е активен.
+enter-user = Въведете името...
+type-username = Потребителско име:
 keyboard-layout = Клавиатурна подредба
 restart = Рестартиране
 restart-now = Рестартиране сега?

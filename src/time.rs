@@ -1,5 +1,3 @@
-use std::{str::FromStr, time::Duration};
-
 use anyhow::bail;
 use async_fn_stream::StreamEmitter;
 use chrono::{Datelike, Timelike};
@@ -7,20 +5,18 @@ use cosmic::{
     Task,
     iced_core::Element,
     style,
-    widget::{self, column, text::title2},
+    widget::{column, text},
 };
 use futures_util::StreamExt;
 use icu::{
-    calendar::DateTime,
     datetime::{
-        DateTimeFormatter, DateTimeFormatterOptions,
-        options::{
-            components::{self, Bag},
-            preferences,
-        },
+        DateTimeFormatter, DateTimeFormatterPreferences, fieldsets,
+        input::{Date, DateTime, Time as IcuTime},
+        options::TimePrecision,
     },
-    locid::Locale,
+    locale::{Locale, preferences::extensions::unicode::keywords::HourCycle},
 };
+use std::time::Duration;
 use timedate_zbus::TimeDateProxy;
 use tokio::time;
 
@@ -33,24 +29,32 @@ pub struct Time {
 
 impl Time {
     pub fn new() -> Self {
-        fn get_local() -> Result<Locale, Box<dyn std::error::Error>> {
-            let locale = std::env::var("LC_TIME").or_else(|_| std::env::var("LANG"))?;
-            let locale = locale
-                .split('.')
-                .next()
-                .ok_or(format!("Can't split the locale {locale}"))?;
+        fn get_local() -> Locale {
+            for var in ["LC_TIME", "LC_ALL", "LANG"] {
+                if let Ok(locale_str) = std::env::var(var) {
+                    let cleaned_locale = locale_str
+                        .split('.')
+                        .next()
+                        .unwrap_or(&locale_str)
+                        .replace('_', "-");
 
-            let locale = Locale::from_str(locale).map_err(|e| format!("{e:?}"))?;
-            Ok(locale)
+                    if let Ok(locale) = Locale::try_from_str(&cleaned_locale) {
+                        return locale;
+                    }
+
+                    // Try language-only fallback (e.g., "en" from "en-US")
+                    if let Some(lang) = cleaned_locale.split('-').next() {
+                        if let Ok(locale) = Locale::try_from_str(lang) {
+                            return locale;
+                        }
+                    }
+                }
+            }
+            tracing::warn!("No valid locale found in environment, using fallback");
+            Locale::try_from_str("en-US").expect("Failed to parse fallback locale 'en-US'")
         }
 
-        let locale = match get_local() {
-            Ok(locale) => locale,
-            Err(e) => {
-                log::error!("can't get locale {e}");
-                Locale::default()
-            }
-        };
+        let locale = get_local();
         let now = chrono::Local::now().fixed_offset();
 
         Self {
@@ -72,59 +76,61 @@ impl Time {
             .unwrap_or_else(|| chrono::Local::now().into());
     }
 
-    pub fn format<D: Datelike>(&self, bag: Bag, date: &D) -> String {
-        let options = DateTimeFormatterOptions::Components(bag);
+    pub fn format_date<D: Datelike>(&self, date: &D) -> String {
+        let prefs = DateTimeFormatterPreferences::from(&self.locale);
+        let dtf = DateTimeFormatter::try_new(prefs, fieldsets::MDE::long()).unwrap();
 
-        let dtf =
-            DateTimeFormatter::try_new_experimental(&self.locale.clone().into(), options).unwrap();
+        let datetime = DateTime {
+            date: Date::try_new_gregorian(date.year(), date.month() as u8, date.day() as u8)
+                .unwrap(),
+            time: IcuTime::try_new(
+                self.now.hour() as u8,
+                self.now.minute() as u8,
+                self.now.second() as u8,
+                0,
+            )
+            .unwrap(),
+        };
 
-        let datetime = DateTime::try_new_gregorian_datetime(
-            date.year(),
-            date.month() as u8,
-            date.day() as u8,
-            // hack cause we know that we will only use "now"
-            // when we need hours (NaiveDate don't support this functions)
-            self.now.hour() as u8,
-            self.now.minute() as u8,
-            self.now.second() as u8,
+        dtf.format(&datetime).to_string()
+    }
+
+    pub fn format_time<D: Datelike>(&self, date: &D, military_time: bool) -> String {
+        let mut prefs = DateTimeFormatterPreferences::from(&self.locale);
+        prefs.hour_cycle = Some(if military_time {
+            HourCycle::H23
+        } else {
+            HourCycle::H12
+        });
+        let dtf = DateTimeFormatter::try_new(
+            prefs,
+            fieldsets::T::medium().with_time_precision(TimePrecision::Minute),
         )
-        .unwrap()
-        .to_iso()
-        .to_any();
+        .unwrap();
 
-        dtf.format(&datetime)
-            .expect("can't format value")
-            .to_string()
+        let datetime = DateTime {
+            date: Date::try_new_gregorian(date.year(), date.month() as u8, date.day() as u8)
+                .unwrap(),
+            time: IcuTime::try_new(
+                self.now.hour() as u8,
+                self.now.minute() as u8,
+                self.now.second() as u8,
+                0,
+            )
+            .unwrap(),
+        };
+
+        dtf.format(&datetime).to_string()
     }
 
     pub fn date_time_widget<'a, M: 'a>(&self, military_time: bool) -> cosmic::Element<'a, M> {
-        let mut top_bag = Bag::empty();
-
-        top_bag.weekday = Some(components::Text::Long);
-
-        top_bag.day = Some(components::Day::NumericDayOfMonth);
-        top_bag.month = Some(components::Month::Long);
-
-        let mut bottom_bag = Bag::empty();
-
-        bottom_bag.hour = Some(components::Numeric::Numeric);
-        bottom_bag.minute = Some(components::Numeric::Numeric);
-
-        let hour_cycle = if military_time {
-            preferences::HourCycle::H23
-        } else {
-            preferences::HourCycle::H12
-        };
-
-        bottom_bag.preferences = Some(preferences::Bag::from_hour_cycle(hour_cycle));
-
         Element::from(
             column()
                 .padding(16.)
                 .spacing(12.0)
-                .push(title2(self.format(top_bag, &self.now)).class(style::Text::Accent))
+                .push(text::title2(self.format_date(&self.now)).class(style::Text::Accent))
                 .push(
-                    widget::text(self.format(bottom_bag, &self.now))
+                    text(self.format_time(&self.now, military_time))
                         .size(if military_time { 112. } else { 75. })
                         .class(style::Text::Accent),
                 ),
@@ -136,7 +142,7 @@ pub fn tz_updates() -> Task<chrono_tz::Tz> {
     Task::stream(async_fn_stream::fn_stream(|emitter| async move {
         loop {
             if let Err(err) = tz_stream(&emitter).await {
-                log::error!("{err:?}");
+                tracing::error!("{err:?}");
             }
             _ = time::sleep(Duration::from_secs(60)).await;
         }

@@ -1,12 +1,12 @@
 [package]
 name = "cosmic-greeter-config"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Configuration for COSMIC Greeter"
 repository = "https://github.com/pop-os/cosmic-greeter"
 license = "GPL-3.0-only"
 
 [dependencies]
 cosmic-config.workspace = true
-log.workspace = true
+tracing.workspace = true
 serde.workspace = true

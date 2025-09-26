@@ -5,6 +5,7 @@ mod ipc;
 
 use crate::wayland::{self, WaylandUpdate};
 use cctk::sctk::reexports::calloop;
+use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
 use cosmic::iced::event::listen_with;
@@ -49,13 +50,16 @@ use std::{
     error::Error,
     fs, io,
     num::NonZeroU32,
-    path::{Path, PathBuf},
+    path::Path,
     process,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::process::Child;
 use tokio::time;
+use tracing::metadata::LevelFilter;
+use tracing::warn;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
 use zbus::{Connection, proxy};
 
@@ -111,7 +115,35 @@ fn user_data_fallback() -> Vec<UserData> {
 }
 
 pub fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    color_eyre::install().wrap_err("failed to install color_eyre error handler")?;
+
+    let trace = tracing_subscriber::registry();
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
+
+    #[cfg(feature = "systemd")]
+    if let Ok(journald) = tracing_journald::layer() {
+        trace
+            .with(journald)
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+    } else {
+        trace
+            .with(fmt::layer())
+            .with(env_filter)
+            .try_init()
+            .wrap_err("failed to initialize logger")?;
+        warn!("failed to connect to journald")
+    }
+
+    #[cfg(not(feature = "systemd"))]
+    trace
+        .with(fmt::layer())
+        .with(env_filter)
+        .try_init()
+        .wrap_err("failed to initialize logger")?;
 
     crate::localize::localize();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -121,7 +153,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     let mut user_datas = match runtime.block_on(user_data_dbus()) {
         Ok(ok) => ok,
         Err(err) => {
-            log::error!("failed to load user data from daemon: {}", err);
+            tracing::error!("failed to load user data from daemon: {}", err);
             user_data_fallback()
         }
     };
@@ -142,17 +174,12 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let session_dirs = xdg::BaseDirectories::with_prefix("wayland-sessions")
-        .map_or(
-            vec![PathBuf::from("/usr/share/wayland-sessions")],
-            |xdg_dirs| xdg_dirs.get_data_dirs(),
-        )
+        .get_data_dirs()
         .into_iter()
         .map(|dir| (dir, SessionType::Wayland))
         .chain(
             xdg::BaseDirectories::with_prefix("xsessions")
-                .map_or(vec![PathBuf::from("/usr/share/xsessions")], |xdg_dirs| {
-                    xdg_dirs.get_data_dirs()
-                })
+                .get_data_dirs()
                 .into_iter()
                 .map(|dir| (dir, SessionType::X11)),
         );
@@ -163,7 +190,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
             let read_dir = match fs::read_dir(&session_dir) {
                 Ok(ok) => ok,
                 Err(err) => {
-                    log::warn!(
+                    tracing::warn!(
                         "failed to read session directory {:?}: {:?}",
                         session_dir,
                         err
@@ -176,7 +203,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let dir_entry = match dir_entry_res {
                     Ok(ok) => ok,
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to read session directory {:?} entry: {:?}",
                             session_dir,
                             err
@@ -188,7 +215,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let entry = match freedesktop_entry_parser::parse_entry(dir_entry.path()) {
                     Ok(ok) => ok,
                     Err(err) => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to read session file {:?}: {:?}",
                             dir_entry.path(),
                             err
@@ -200,7 +227,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let name = match entry.section("Desktop Entry").attr("Name") {
                     Some(some) => some,
                     None => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to read session file {:?}: no Desktop Entry/Name attribute",
                             dir_entry.path()
                         );
@@ -211,7 +238,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let exec = match entry.section("Desktop Entry").attr("Exec") {
                     Some(some) => some,
                     None => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to read session file {:?}: no Desktop Entry/Exec attribute",
                             dir_entry.path()
                         );
@@ -254,7 +281,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                         }
                     }
                     None => {
-                        log::warn!(
+                        tracing::warn!(
                             "failed to parse session file {:?} Exec field {:?}",
                             dir_entry.path(),
                             exec
@@ -263,10 +290,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                log::info!("session {} using command {:?} env {:?}", name, command, env);
+                tracing::info!("session {} using command {:?} env {:?}", name, command, env);
                 match sessions.insert(name.to_string(), (command, env)) {
                     Some(some) => {
-                        log::warn!("session {} overwrote old command {:?}", name, some);
+                        tracing::warn!("session {} overwrote old command {:?}", name, some);
                     }
                     None => {}
                 }
@@ -276,6 +303,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let flags = Flags {
+        user_icons: user_datas
+            .iter_mut()
+            .map(|d| d.icon_opt.take().map(widget::image::Handle::from_bytes))
+            .collect(),
         user_datas,
         sessions,
         greeter_config,
@@ -292,6 +323,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 #[derive(Clone)]
 pub struct Flags {
     user_datas: Vec<UserData>,
+    user_icons: Vec<Option<widget::image::Handle>>,
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
     greeter_config: CosmicGreeterConfig,
     greeter_config_handler: Option<cosmic_config::Config>,
@@ -411,18 +443,6 @@ pub struct App {
     accessibility: Accessibility,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Randr {
-    Mirror(OutputKey),
-    Position(i32, i32),
-    RefreshRate(u32),
-    VariableRefreshRate(AdaptiveSyncState),
-    Resolution(u32, u32),
-    Scale(u32),
-    Transform(Transform),
-    Toggle(bool),
-}
-
 #[derive(Default)]
 struct Accessibility {
     pub wayland_sender: Option<calloop::channel::Sender<AccessibilityRequest>>,
@@ -454,16 +474,16 @@ impl App {
 
             if let Some(mut stdin) = p.stdin.take() {
                 if let Err(err) = stdin.write_all(kdl_doc.as_bytes()).await {
-                    log::error!("Failed to write KDL to stdin: {err:?}");
+                    tracing::error!("Failed to write KDL to stdin: {err:?}");
                 }
                 if let Err(err) = stdin.flush().await {
-                    log::error!("Failed to flush stdin: {err:?}");
+                    tracing::error!("Failed to flush stdin: {err:?}");
                 }
             }
-            log::debug!("executing {task:?}");
+            tracing::debug!("executing {task:?}");
             let status = p.wait().await;
             if let Err(err) = status {
-                log::error!("Randr error: {err:?}");
+                tracing::error!("Randr error: {err:?}");
             }
         })
         .discard()
@@ -492,13 +512,13 @@ impl App {
 
             let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
 
-            if let Some(network_icon) = self.common.network_icon_opt {
-                status_row = status_row.push(widget::icon::from_name(network_icon));
+            if let Some(network_icon) = self.common.network_icon_opt.as_ref() {
+                status_row = status_row.push(network_icon.clone());
             }
 
             if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
                 status_row = status_row.push(iced::widget::row![
-                    widget::icon::from_name(power_icon.clone()),
+                    power_icon.clone(),
                     widget::text(format!("{:.0}%", power_percent)),
                 ]);
             }
@@ -741,19 +761,21 @@ impl App {
                     column = column.push(widget::text("Opening GREETD_SOCK"));
                 }
                 SocketState::Open => {
-                    for user_data in &self.flags.user_datas {
+                    for (user_data, user_icon) in self
+                        .flags
+                        .user_datas
+                        .iter()
+                        .zip(self.flags.user_icons.iter())
+                    {
                         if !self.entering_name && user_data.name == self.selected_username.username
                         {
-                            match &user_data.icon_opt {
+                            match user_icon {
                                 Some(icon) => {
                                     column = column.push(
                                         widget::container(
-                                            widget::Image::new(
-                                                //TODO: cache handle
-                                                widget::image::Handle::from_bytes(icon.clone()),
-                                            )
-                                            .width(Length::Fixed(78.0))
-                                            .height(Length::Fixed(78.0)),
+                                            widget::image(icon)
+                                                .width(Length::Fixed(78.0))
+                                                .height(Length::Fixed(78.0)),
                                         )
                                         .width(Length::Fill)
                                         .align_x(alignment::Horizontal::Center),
@@ -1097,7 +1119,7 @@ impl cosmic::Application for App {
             Message::OutputEvent(output_event, output) => {
                 match output_event {
                     OutputEvent::Created(output_info_opt) => {
-                        log::info!("output {}: created", output.id());
+                        tracing::info!("output {}: created", output.id());
 
                         let surface_id = SurfaceId::unique();
                         let subsurface_id = SurfaceId::unique();
@@ -1107,7 +1129,7 @@ impl cosmic::Application for App {
                         match self.common.surface_ids.insert(output.clone(), surface_id) {
                             Some(old_surface_id) => {
                                 //TODO: remove old surface?
-                                log::warn!(
+                                tracing::warn!(
                                     "output {}: already had surface ID {:?}",
                                     output.id(),
                                     old_surface_id
@@ -1139,11 +1161,11 @@ impl cosmic::Application for App {
                                         .insert(output_name.clone(), text_input_id.clone());
                                 }
                                 None => {
-                                    log::warn!("output {}: no output name", output.id());
+                                    tracing::warn!("output {}: no output name", output.id());
                                 }
                             },
                             None => {
-                                log::warn!("output {}: no output info", output.id());
+                                tracing::warn!("output {}: no output info", output.id());
                             }
                         }
 
@@ -1208,7 +1230,7 @@ impl cosmic::Application for App {
                         ]);
                     }
                     OutputEvent::Removed => {
-                        log::info!("output {}: removed", output.id());
+                        tracing::info!("output {}: removed", output.id());
                         match self.common.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.common.surface_images.remove(&surface_id);
@@ -1219,12 +1241,12 @@ impl cosmic::Application for App {
                                 return destroy_layer_surface(surface_id);
                             }
                             None => {
-                                log::warn!("output {}: no surface found", output.id());
+                                tracing::warn!("output {}: no surface found", output.id());
                             }
                         }
                     }
                     OutputEvent::InfoUpdate(_output_info) => {
-                        log::info!("output {}: info update", output.id());
+                        tracing::info!("output {}: info update", output.id());
                     }
                 }
             }
@@ -1319,7 +1341,7 @@ impl cosmic::Application for App {
                                 .map(|uid| self.flags.greeter_config.users.entry(uid))
                         })
                 }) else {
-                    log::error!(
+                    tracing::error!(
                         "Couldn't find user: {:?} {:?}",
                         self.selected_username.username,
                         self.selected_username.data_idx,
@@ -1328,7 +1350,7 @@ impl cosmic::Application for App {
                 };
 
                 let Some(handler) = self.flags.greeter_config_handler.as_mut() else {
-                    log::error!(
+                    tracing::error!(
                         "Failed to update config for {} (UID: {}): no config handler",
                         self.selected_username.username,
                         user_entry.key()
@@ -1339,7 +1361,7 @@ impl cosmic::Application for App {
                 let uid = *user_entry.key();
                 self.flags.greeter_config.last_user = Some(uid);
                 if let Err(err) = handler.set("last_user", &self.flags.greeter_config.last_user) {
-                    log::error!(
+                    tracing::error!(
                         "Failed to set {:?} as last user: {:?}",
                         self.flags.greeter_config.last_user,
                         err
@@ -1376,7 +1398,7 @@ impl cosmic::Application for App {
                 //     .greeter_config
                 //     .set_users(&handler, self.flags.greeter_config.users.clone())
                 if let Err(err) = handler.set("users", &self.flags.greeter_config.users) {
-                    log::error!(
+                    tracing::error!(
                         "Failed to set {} as last selected session for {} (UID: {}): {:?}",
                         self.selected_session,
                         self.selected_username.username,
@@ -1421,7 +1443,7 @@ impl cosmic::Application for App {
                         match crate::logind::reboot().await {
                             Ok(()) => (),
                             Err(err) => {
-                                log::error!("failed to reboot: {:?}", err);
+                                tracing::error!("failed to reboot: {:?}", err);
                             }
                         }
                     })
@@ -1433,7 +1455,7 @@ impl cosmic::Application for App {
                         match crate::logind::power_off().await {
                             Ok(()) => (),
                             Err(err) => {
-                                log::error!("failed to power off: {:?}", err);
+                                tracing::error!("failed to power off: {:?}", err);
                             }
                         }
                     })
@@ -1463,7 +1485,7 @@ impl cosmic::Application for App {
                     match crate::logind::suspend().await {
                         Ok(()) => (),
                         Err(err) => {
-                            log::error!("failed to suspend: {:?}", err);
+                            tracing::error!("failed to suspend: {:?}", err);
                         }
                     }
                 })
@@ -1543,7 +1565,7 @@ impl cosmic::Application for App {
                     if let Some(mut c) = self.accessibility.screen_reader.take() {
                         return cosmic::task::future::<(), ()>(async move {
                             if let Err(err) = c.kill().await {
-                                log::error!("Failed to stop screen reader: {err:?}");
+                                tracing::error!("Failed to stop screen reader: {err:?}");
                             }
                         })
                         .discard();
@@ -1590,7 +1612,7 @@ impl cosmic::Application for App {
                             _ = tx.send(Some(t));
                         }
                         Err(err) => {
-                            log::error!("{err:?}");
+                            tracing::error!("{err:?}");
                             _ = tx.send(None);
                         }
                     });
@@ -1672,7 +1694,7 @@ impl cosmic::Application for App {
                         .filter_map(|s| match KdlDocument::parse(s) {
                             Ok(doc) => Some(doc),
                             Err(err) => {
-                                log::warn!("Invalid output KDL {err:?}");
+                                tracing::warn!("Invalid output KDL {err:?}");
                                 None
                             }
                         })
@@ -1680,7 +1702,7 @@ impl cosmic::Application for App {
                             Ok(list) => list,
                             Err(KdlParseWithError { list, errors }) => {
                                 for err in errors {
-                                    log::warn!("KDL output error: {err:?}");
+                                    tracing::warn!("KDL output error: {err:?}");
                                 }
                                 list
                             }
@@ -1709,13 +1731,13 @@ impl cosmic::Application for App {
                     if let Some(list) = list {
                         tasks.push(self.exec_randr(list))
                     } else {
-                        log::warn!("Failed to apply user display config");
+                        tracing::warn!("Failed to apply user display config");
                     }
 
                     return Task::batch(tasks);
                 }
                 Err(err) => {
-                    log::error!("Randr error: {err}");
+                    tracing::error!("Randr error: {err}");
                 }
             },
             Message::RepositionMenu(id, size) => {
@@ -1724,7 +1746,7 @@ impl cosmic::Application for App {
                     .iter()
                     .find_map(|(p, s)| (*p == id).then_some(s))
                 else {
-                    log::error!("Failed to find subsurface menu id");
+                    tracing::error!("Failed to find subsurface menu id");
                     return Task::none();
                 };
                 let loc = if size.width > 800. {
