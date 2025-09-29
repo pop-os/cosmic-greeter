@@ -10,28 +10,24 @@ type-username = Uživatelské jméno:
 keyboard-layout = Rozložení klávesnice
 restart = Restartovat
 restart-now = Restartovat nyní?
-restart-timeout = Systém se automaticky restartuje za
-  { $seconds ->
-    [one] {$seconds} sekundu.
-    [few] {$seconds} sekundy.
-    [many] {$seconds} sekund.
-    *[other] {$seconds} sekund.
-  }
+restart-timeout =
+    Systém se automaticky restartuje za
+    { $seconds ->
+        [one] { $seconds } sekundu.
+        [few] { $seconds } sekundy.
+        [many] { $seconds } sekund.
+       *[other] { $seconds } sekund.
+    }
 session = Relace
 shutdown = Vypnout
 shutdown-now = Vypnout nyní?
-shutdown-timeout = Systém se automaticky vypne za
-  { $seconds ->
-    [one] {$seconds} sekundu.
-    [few] {$seconds} sekundy.
-    [many] {$seconds} sekund.
-    *[other] {$seconds} sekund.
-  }
+shutdown-timeout =
+    Systém se automaticky vypne za
+    { $seconds ->
+        [one] { $seconds } sekundu.
+        [few] { $seconds } sekundy.
+        [many] { $seconds } sekund.
+       *[other] { $seconds } sekund.
+    }
 suspend = Uspat
-user = 
-  { $usersCount ->
-    [one] Uživatel
-    [few] Uživatelé
-    [many] Uživatelů
-    *[other] Uživatelů
-  }
+user = Uživatel
