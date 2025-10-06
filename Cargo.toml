@@ -75,6 +75,7 @@ timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
 cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
 color-eyre.workspace = true
+which = "8.0.0"
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
