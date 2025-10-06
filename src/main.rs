@@ -4,6 +4,7 @@
 use clap_lex::RawArgs;
 use cosmic_greeter::{greeter, locker};
 use std::error::Error;
+use which::which;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let raw_args = RawArgs::from_args();
@@ -23,6 +24,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                     env!("VERGEN_GIT_SHA")
                 );
                 return Ok(());
+            },
+            Some("--check-deps") => {
+                let mut failed = false;
+                for cmd in [ "orca", "env", "cosmic-randr", "startx" ] {
+                    match which(cmd) {
+                        Ok(cmd_path) => {
+                            println!("Found {cmd} at: {}", cmd_path.display().to_string());
+                        },
+                        Err(err) => {
+                            println!("Could not find {cmd} in PATH: {err:?}");
+                            failed = true;
+                        }
+                    }
+                }
+                if failed {
+                    return Err("failed to find at least one dependency".into())
+                } else {
+                    return Ok(());
+                }
             }
             _ => {}
         }
