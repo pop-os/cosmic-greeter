@@ -1,4 +1,4 @@
-cancel = Отменить
+cancel = Отмена
 keyboard-layout = Раскладка клавиатуры
 restart = Перезагрузить
 restart-now = Перезагрузить сейчас?
