@@ -61,6 +61,7 @@ use tracing::metadata::LevelFilter;
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use wayland_client::{Proxy, protocol::wl_output::WlOutput};
+use which::which;
 use zbus::{Connection, proxy};
 
 use crate::{
@@ -184,6 +185,13 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 .map(|dir| (dir, SessionType::X11)),
         );
 
+    //TODO: xinit may be better, but more complicated to set up
+    let startx_path_res = which("startx");
+    match startx_path_res {
+        Ok(_) => {},
+        Err(err) => tracing::warn!("Unable to find startx in path, skipping X11 sessions: {err:?}")
+    }
+
     let sessions = {
         let mut sessions = HashMap::new();
         for (session_dir, session_type) in session_dirs {
@@ -250,9 +258,16 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let mut env = Vec::new();
                 match session_type {
                     SessionType::X11 => {
-                        //TODO: xinit may be better, but more complicated to set up
-                        command.push("startx".to_string());
-                        env.push("XDG_SESSION_TYPE=x11".to_string());
+                        match startx_path_res {
+                            Ok(ref startx_path) => {
+                                command.push(startx_path.display().to_string());
+                                env.push("XDG_SESSION_TYPE=x11".to_string());
+                            },
+                            Err(err) => {
+                                // Don't add the broken session
+                                continue;
+                            }
+                        }
                     }
                     SessionType::Wayland => {
                         env.push("XDG_SESSION_TYPE=wayland".to_string());
@@ -267,7 +282,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 }
 
                 // Session exec may contain environmental variables
-                command.push("/usr/bin/env".to_string());
+                let env_path = which("env").expect("env not in path");
+                command.push(env_path.display().to_string());
 
                 // To ensure the env is set correctly, we also set it in the session command
                 for arg in env.iter() {
@@ -460,7 +476,8 @@ struct Accessibility {
 impl App {
     /// Applies a display configuration via `cosmic-randr`.
     fn exec_randr(&self, user_config: cosmic_randr_shell::List) -> Task<Message> {
-        let mut task = tokio::process::Command::new("cosmic-randr");
+        let cosmic_randr_path = which("cosmic-randr").expect("cosmic-randr not in path");
+        let mut task = tokio::process::Command::new(cosmic_randr_path.display().to_string());
         task.arg("kdl");
 
         cosmic::task::future::<(), ()>(async move {
@@ -1559,8 +1576,15 @@ impl cosmic::Application for App {
                         .as_mut()
                         .is_none_or(|c| c.try_wait().is_ok())
                 {
-                    self.accessibility.screen_reader =
-                        tokio::process::Command::new("/usr/bin/orca").spawn().ok();
+                    match which("orca") {
+                        Ok(orca_path) => {
+                            self.accessibility.screen_reader =
+                                tokio::process::Command::new(orca_path.display().to_string()).spawn().ok();
+                        },
+                        Err(err) => {
+                            tracing::warn!("Screen reader enabled, but could not find orca: {err:?}");
+                        }
+                    }
                 } else {
                     if let Some(mut c) = self.accessibility.screen_reader.take() {
                         return cosmic::task::future::<(), ()>(async move {
