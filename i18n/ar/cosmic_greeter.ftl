@@ -25,5 +25,5 @@ shutdown-timeout =
         [1] 1 ثانية.
        *[other] { $seconds } ثانية.
     }
-suspend = تعليق
+suspend = عَلِّق
 user = المستخدم
