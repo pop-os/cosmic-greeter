@@ -62,7 +62,7 @@ impl GreeterProxy {
         let users: Vec<_> = /* unsafe */ {
              pwd::Passwd::iter()
                 .filter(|user| {
-                    if user.uid < 1000 {
+                    if user.uid < 500 {
                         // Skip system accounts
                         return false;
                     }
@@ -80,7 +80,7 @@ impl GreeterProxy {
 
         let mut user_datas = Vec::new();
         for user in users {
-            if user.uid < 1000 {
+            if user.uid < 500 {
                 // Skip system accounts
                 continue;
             }

@@ -15,5 +15,5 @@ pub struct UserState {
 
 // Only serialize users not system accounts
 const fn invalid_uid(uid: &NonZeroU32) -> bool {
-    uid.get() < 1000
+    uid.get() < 500
 }
