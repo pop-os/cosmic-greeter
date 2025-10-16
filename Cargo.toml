@@ -49,7 +49,9 @@ cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settin
     "greeter",
 ] }
 cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit" }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = ["client"] }
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = [
+    "client",
+] }
 
 # For network status using networkmanager feature
 cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
@@ -75,6 +77,13 @@ timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
 cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
 color-eyre.workspace = true
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "rayon",
+    "webp",
+    "hdr",
+] }
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
