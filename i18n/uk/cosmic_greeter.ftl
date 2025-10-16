@@ -19,11 +19,11 @@ shutdown-timeout =
     }.
 suspend = Призупинити
 user = Користувач
-caps-lock = Увімкнено Caps Lock.
+caps-lock = Увімкнений Caps Lock.
 enter-user = Ввести ім'я самостійно...
 type-username = Ім'я користувача:
 accessibility = Доступність
-    .screen-reader = Читач екрану
+    .screen-reader = Зчитувач екрана
     .magnifier = Лупа
-    .high-contrast = Режим високої контрастності
-    .invert-colors = Інвертація кольорів
+    .high-contrast = Висока контрастність
+    .invert-colors = Інверсія кольорів
