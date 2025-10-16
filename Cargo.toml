@@ -62,7 +62,7 @@ nix = { workspace = true, optional = true }
 # For power status with upower feature
 upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # Required for some features
-zbus = { workspace = true, optional = true }
+zbus = { workspace = true }
 # CLI arguments
 clap_lex = "0.7"
 # Internationalization
@@ -91,12 +91,10 @@ features = ["tokio-codec"]
 
 [features]
 default = ["logind", "networkmanager", "upower", "systemd"]
-logind = ["logind-zbus", "zbus", "systemd"]
+logind = ["logind-zbus", "systemd"]
 systemd = ["tracing-journald"]
-networkmanager = ["cosmic-dbus-networkmanager", "zbus"]
-upower = ["upower_dbus", "zbus"]
-zbus = ["dep:zbus", "nix"]
-
+networkmanager = ["cosmic-dbus-networkmanager"]
+upower = ["upower_dbus"]
 
 [profile.dev.package.tiny-skia]
 opt-level = 2
