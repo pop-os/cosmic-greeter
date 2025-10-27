@@ -45,7 +45,7 @@ impl UserData {
                 //TODO: do not reread duplicate paths, cache data by path?
                 BgSource::Path(path) => {
                     if !self.bg_path_data.contains_key(path) {
-                        match fs::read(&path) {
+                        match fs::read(path) {
                             Ok(bytes) => {
                                 self.bg_path_data.insert(path.clone(), bytes);
                             }

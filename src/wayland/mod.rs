@@ -1,7 +1,6 @@
 // Copyright 2023 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-use anyhow;
 use cctk::sctk::reexports::calloop;
 use cosmic::iced::{
     self, Subscription,
