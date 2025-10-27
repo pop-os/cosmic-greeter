@@ -91,7 +91,7 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
         user_icon: user_data
             .icon_opt
             .take()
-            .map(|icon| widget::image::Handle::from_bytes(icon)),
+            .map(widget::image::Handle::from_bytes),
         user_data,
         lockfile_opt: lockfile_opt(),
     };
@@ -418,23 +418,20 @@ impl App {
         };
 
         let right_element = {
-            let mut column = widget::column::with_capacity(2)
+            let mut column = widget::column::with_capacity(5)
                 .spacing(12.0)
                 .max_width(280.0);
 
-            match &self.flags.user_icon {
-                Some(icon) => {
-                    column = column.push(
-                        widget::container(
-                            widget::image(icon)
-                                .width(Length::Fixed(78.0))
-                                .height(Length::Fixed(78.0)),
-                        )
-                        .width(Length::Fill)
-                        .align_x(Alignment::Center),
+            if let Some(icon) = &self.flags.user_icon {
+                column = column.push(
+                    widget::container(
+                        widget::image(icon)
+                            .width(Length::Fixed(78.0))
+                            .height(Length::Fixed(78.0)),
                     )
-                }
-                None => {}
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                )
             }
 
             column = column.push(
@@ -443,8 +440,8 @@ impl App {
                     .align_x(Alignment::Center),
             );
 
-            match &self.common.prompt_opt {
-                Some((prompt, secret, value_opt)) => match value_opt {
+            if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
+                match value_opt {
                     Some(value) => {
                         let text_input_id = self
                             .common
@@ -488,8 +485,7 @@ impl App {
                     None => {
                         column = column.push(widget::text(prompt));
                     }
-                },
-                None => {}
+                }
             }
 
             if let Some(error) = &self.common.error_opt {
@@ -567,7 +563,7 @@ impl cosmic::Application for App {
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
         }));
-        common.on_session_lock_event = Some(Box::new(|evt| Message::SessionLockEvent(evt)));
+        common.on_session_lock_event = Some(Box::new(Message::SessionLockEvent));
         common.update_user_data(&flags.user_data);
 
         let already_locked = match flags.lockfile_opt {
@@ -1017,7 +1013,7 @@ impl cosmic::Application for App {
 
                         for (_output, surface_id) in self.common.surface_ids.iter() {
                             self.common.surface_names.remove(surface_id);
-                            self.common.window_size.remove(&surface_id);
+                            self.common.window_size.remove(surface_id);
                             commands.push(destroy_lock_surface(*surface_id));
                         }
 
