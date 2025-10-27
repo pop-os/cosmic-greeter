@@ -10,7 +10,7 @@ use cosmic::surface;
 use cosmic::{
     Element, executor,
     iced::{
-        self, Background, Border, Length, Subscription, alignment,
+        self, Alignment, Background, Border, Length, Subscription,
         event::wayland::{OutputEvent, SessionLockEvent},
         futures::{self, SinkExt},
         platform_specific::shell::wayland::commands::session_lock::{
@@ -414,7 +414,7 @@ impl App {
                 widget::divider::horizontal::default().width(Length::Fixed(menu_width / 2. - 16.)),
                 button_row,
             ])
-            .align_x(alignment::Horizontal::Left)
+            .align_x(Alignment::Start)
         };
 
         let right_element = {
@@ -431,7 +431,7 @@ impl App {
                                 .height(Length::Fixed(78.0)),
                         )
                         .width(Length::Fill)
-                        .align_x(alignment::Horizontal::Center),
+                        .align_x(Alignment::Center),
                     )
                 }
                 None => {}
@@ -440,7 +440,7 @@ impl App {
             column = column.push(
                 widget::container(widget::text::title4(&self.flags.user_data.full_name))
                     .width(Length::Fill)
-                    .align_x(alignment::Horizontal::Center),
+                    .align_x(Alignment::Center),
             );
 
             match &self.common.prompt_opt {
@@ -481,6 +481,8 @@ impl App {
 
                         if self.common.caps_lock {
                             column = column.push(widget::text(fl!("caps-lock")));
+                        } else if self.common.error_opt.is_none() {
+                            column = column.push(widget::text(""));
                         }
                     }
                     None => {
@@ -491,18 +493,25 @@ impl App {
             }
 
             if let Some(error) = &self.common.error_opt {
-                column = column.push(widget::text(error));
+                column = column.push(
+                    widget::text(error)
+                        .class(theme::Text::Color(iced::Color::from_rgb(1.0, 0.0, 0.0))),
+                );
+                if !self.common.caps_lock {
+                    column = column.push(widget::text(""));
+                }
+            } else {
+                column = column.push(widget::text(""));
             }
 
             widget::container(column)
-                .align_x(alignment::Horizontal::Center)
+                .align_x(Alignment::Center)
                 .width(Length::Fill)
         };
 
         widget::container(
             widget::layer_container(
-                iced::widget::row![left_element, right_element]
-                    .align_y(alignment::Alignment::Center),
+                iced::widget::row![left_element, right_element].align_y(Alignment::Center),
             )
             .layer(cosmic::cosmic_theme::Layer::Background)
             .padding(16)
@@ -523,8 +532,8 @@ impl App {
         .padding([32.0, 0.0, 0.0, 0.0])
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(alignment::Horizontal::Center)
-        .align_y(alignment::Vertical::Top)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Start)
         .class(cosmic::theme::Container::Transparent)
         .into()
     }
