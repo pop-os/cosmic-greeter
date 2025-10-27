@@ -49,15 +49,13 @@ async fn main() {
                     auth_message_type: AuthMessageType::Secret,
                     auth_message: "MOCKING:".to_string(),
                 },
-                Request::PostAuthMessageResponse { response } => {
-                    match response.as_ref().map(|x| x.as_str()) {
-                        Some("password") => Response::Success,
-                        _ => Response::Error {
-                            error_type: ErrorType::AuthError,
-                            description: "pam_authenticate: AUTH_ERR".to_string(),
-                        },
-                    }
-                }
+                Request::PostAuthMessageResponse { response } => match response.as_deref() {
+                    Some("password") => Response::Success,
+                    _ => Response::Error {
+                        error_type: ErrorType::AuthError,
+                        description: "pam_authenticate: AUTH_ERR".to_string(),
+                    },
+                },
                 Request::StartSession { .. } => Response::Success,
                 Request::CancelSession => Response::Success,
             };

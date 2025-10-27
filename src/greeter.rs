@@ -37,7 +37,7 @@ use cosmic::{
 };
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
-use cosmic_randr_shell::{AdaptiveSyncState, KdlParseWithError, List, OutputKey, Transform};
+use cosmic_randr_shell::{KdlParseWithError, List};
 use cosmic_settings_subscriptions::cosmic_a11y_manager::{
     AccessibilityEvent, AccessibilityRequest,
 };
@@ -291,11 +291,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 };
 
                 tracing::info!("session {} using command {:?} env {:?}", name, command, env);
-                match sessions.insert(name.to_string(), (command, env)) {
-                    Some(some) => {
-                        tracing::warn!("session {} overwrote old command {:?}", name, some);
-                    }
-                    None => {}
+                if let Some(some) = sessions.insert(name.to_string(), (command, env)) {
+                    tracing::warn!("session {} overwrote old command {:?}", name, some);
                 }
             }
         }
@@ -676,7 +673,7 @@ impl App {
                 items.push(menu_checklist(
                     fl!("accessibility", "screen-reader"),
                     self.accessibility.screen_reader.is_some(),
-                    Message::ScreenReader(!self.accessibility.screen_reader.is_some()),
+                    Message::ScreenReader(self.accessibility.screen_reader.is_none()),
                 ));
                 items.push(menu_checklist(
                     fl!("accessibility", "magnifier"),
@@ -772,19 +769,16 @@ impl App {
                     {
                         if !self.entering_name && user_data.name == self.selected_username.username
                         {
-                            match user_icon {
-                                Some(icon) => {
-                                    column = column.push(
-                                        widget::container(
-                                            widget::image(icon)
-                                                .width(Length::Fixed(78.0))
-                                                .height(Length::Fixed(78.0)),
-                                        )
-                                        .width(Length::Fill)
-                                        .align_x(Alignment::Center),
+                            if let Some(icon) = user_icon {
+                                column = column.push(
+                                    widget::container(
+                                        widget::image(icon)
+                                            .width(Length::Fixed(78.0))
+                                            .height(Length::Fixed(78.0)),
                                     )
-                                }
-                                None => {}
+                                    .width(Length::Fill)
+                                    .align_x(Alignment::Center),
+                                )
                             }
                             column = column.push(
                                 widget::container(widget::text::title4(&user_data.full_name))
@@ -801,11 +795,11 @@ impl App {
                             )
                             .id(USERNAME_ID.clone())
                             .on_input(|input| Message::EnterUser(false, input))
-                            .on_submit(|v| Message::Username(v)),
+                            .on_submit(Message::Username),
                         )
                     }
-                    match &self.common.prompt_opt {
-                        Some((prompt, secret, value_opt)) => match value_opt {
+                    if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
+                        match value_opt {
                             Some(value) => {
                                 let text_input_id = self
                                     .common
@@ -860,8 +854,7 @@ impl App {
                                     widget::button::custom("Confirm").on_press(Message::Auth(None)),
                                 );
                             }
-                        },
-                        None => {}
+                        }
                     }
                 }
                 SocketState::NotSet => {
@@ -981,7 +974,7 @@ impl App {
             None => return,
         };
 
-        self.common.set_xkb_config(&user_data);
+        self.common.set_xkb_config(user_data);
     }
 
     fn update_user_data(&mut self) -> Task<Message> {
@@ -996,10 +989,10 @@ impl App {
             }
         };
 
-        self.common.update_user_data(&user_data);
+        self.common.update_user_data(user_data);
 
         // Ensure that user's xkb config is used
-        self.common.set_xkb_config(&user_data);
+        self.common.set_xkb_config(user_data);
 
         if let Some(builder) = &user_data.theme_builder_opt {
             self.theme_builder = builder.clone();
@@ -1097,9 +1090,11 @@ impl cosmic::Application for App {
             .unwrap_or_default();
         let data_idx = Some(0);
         let selected_username = NameIndexPair { username, data_idx };
-        let mut accessibility = Accessibility::default();
-        accessibility.helper =
-            cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config().ok();
+        let accessibility = Accessibility {
+            helper: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config()
+                .ok(),
+            ..Default::default()
+        };
 
         let app = App {
             common,
@@ -1135,19 +1130,17 @@ impl cosmic::Application for App {
 
                         let surface_id = SurfaceId::unique();
                         let subsurface_id = SurfaceId::unique();
-                        self.surface_id_pairs
-                            .push((surface_id.clone(), subsurface_id.clone()));
+                        self.surface_id_pairs.push((surface_id, subsurface_id));
 
-                        match self.common.surface_ids.insert(output.clone(), surface_id) {
-                            Some(old_surface_id) => {
-                                //TODO: remove old surface?
-                                tracing::warn!(
-                                    "output {}: already had surface ID {:?}",
-                                    output.id(),
-                                    old_surface_id
-                                );
-                            }
-                            None => {}
+                        if let Some(old_surface_id) =
+                            self.common.surface_ids.insert(output.clone(), surface_id)
+                        {
+                            //TODO: remove old surface?
+                            tracing::warn!(
+                                "output {}: already had surface ID {:?}",
+                                output.id(),
+                                old_surface_id
+                            );
                         }
                         let size = if let Some((w, h)) =
                             output_info_opt.as_ref().and_then(|info| info.logical_size)
@@ -1264,14 +1257,11 @@ impl cosmic::Application for App {
             }
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
-                match &self.socket_state {
-                    SocketState::Open => {
-                        // When socket is opened, send create session
-                        self.send_request(Request::CreateSession {
-                            username: self.selected_username.username.clone(),
-                        });
-                    }
-                    _ => {}
+                if let SocketState::Open = &self.socket_state {
+                    // When socket is opened, send create session
+                    self.send_request(Request::CreateSession {
+                        username: self.selected_username.username.clone(),
+                    });
                 }
             }
             Message::Reload(new) => {
@@ -1329,12 +1319,9 @@ impl cosmic::Application for App {
                     }) {
                         session.clone_into(&mut self.selected_session);
                     };
-                    match &self.socket_state {
-                        SocketState::Open => {
-                            self.common.prompt_opt = None;
-                            self.send_request(Request::CancelSession);
-                        }
-                        _ => {}
+                    if let SocketState::Open = &self.socket_state {
+                        self.common.prompt_opt = None;
+                        self.send_request(Request::CancelSession);
                     }
                     if let Some(randr_list) = self.randr_list.as_ref() {
                         return self.update(Message::RandrUpdate {
@@ -1372,7 +1359,7 @@ impl cosmic::Application for App {
 
                 let uid = *user_entry.key();
                 self.flags.greeter_config.last_user = Some(uid);
-                if let Err(err) = handler.set("last_user", &self.flags.greeter_config.last_user) {
+                if let Err(err) = handler.set("last_user", self.flags.greeter_config.last_user) {
                     tracing::error!(
                         "Failed to set {:?} as last user: {:?}",
                         self.flags.greeter_config.last_user,
@@ -1573,22 +1560,20 @@ impl cosmic::Application for App {
                 {
                     self.accessibility.screen_reader =
                         tokio::process::Command::new("/usr/bin/orca").spawn().ok();
-                } else {
-                    if let Some(mut c) = self.accessibility.screen_reader.take() {
-                        return cosmic::task::future::<(), ()>(async move {
-                            if let Err(err) = c.kill().await {
-                                tracing::error!("Failed to stop screen reader: {err:?}");
-                            }
-                        })
-                        .discard();
-                    }
+                } else if let Some(mut c) = self.accessibility.screen_reader.take() {
+                    return cosmic::task::future::<(), ()>(async move {
+                        if let Err(err) = c.kill().await {
+                            tracing::error!("Failed to stop screen reader: {err:?}");
+                        }
+                    })
+                    .discard();
                 }
 
                 if let Some(helper) = self.accessibility.helper.as_ref() {
                     _ = self
                         .accessibility
                         .state
-                        .set_screen_reader(&helper, Some(enabled));
+                        .set_screen_reader(helper, Some(enabled));
                 }
             }
             Message::Magnifier(enabled) => {
@@ -1599,7 +1584,7 @@ impl cosmic::Application for App {
                         _ = self
                             .accessibility
                             .state
-                            .set_magnifier(&helper, Some(enabled));
+                            .set_magnifier(helper, Some(enabled));
                     }
                 } else {
                     self.accessibility.magnifier = false;
@@ -1612,7 +1597,7 @@ impl cosmic::Application for App {
                     _ = self
                         .accessibility
                         .state
-                        .set_high_contrast(&helper, Some(enabled));
+                        .set_high_contrast(helper, Some(enabled));
                 }
                 let builder = self.theme_builder.clone();
 
@@ -1648,7 +1633,7 @@ impl cosmic::Application for App {
                         _ = self
                             .accessibility
                             .state
-                            .set_invert_colors(&helper, Some(enabled));
+                            .set_invert_colors(helper, Some(enabled));
                     }
                 } else {
                     self.accessibility.invert_colors = false;
