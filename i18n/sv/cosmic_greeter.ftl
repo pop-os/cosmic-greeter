@@ -17,7 +17,7 @@ shutdown-timeout =
         [1] 1 sekund.
        *[other] { $seconds } sekunder.
     }
-suspend = Suspendera
+suspend = Vänteläge
 user = Användare
 accessibility = Tillgänglighet
     .screen-reader = Skärmläsare
