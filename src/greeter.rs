@@ -884,7 +884,8 @@ impl App {
                 .align_x(Alignment::Center)
                 .width(Length::Fill)
         };
-        let menu = widget::container(
+        let menu = widget::container(widget::column::with_children(vec![
+            widget::Space::with_height(Length::FillPortion(1)).into(),
             widget::layer_container(
                 iced::widget::row![left_element, right_element].align_y(Alignment::Center),
             )
@@ -902,13 +903,13 @@ impl App {
                 },
             )))
             .class(cosmic::theme::Container::Background)
-            .width(Length::Fixed(800.0)),
-        )
-        .padding([32.0, 0.0, 0.0, 0.0])
+            .width(Length::Fixed(800.0))
+            .into(),
+            widget::Space::with_height(Length::FillPortion(4)).into(),
+        ]))
         .width(Length::Fill)
-        .height(Length::Shrink)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Start);
+        .height(Length::Fill)
+        .align_x(Alignment::Center);
 
         let popover = widget::popover(menu).modal(true);
         match self.dialog_page_opt {

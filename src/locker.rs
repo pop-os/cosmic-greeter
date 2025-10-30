@@ -505,7 +505,8 @@ impl App {
                 .width(Length::Fill)
         };
 
-        widget::container(
+        widget::container(widget::column::with_children(vec![
+            widget::Space::with_height(Length::FillPortion(1)).into(),
             widget::layer_container(
                 iced::widget::row![left_element, right_element].align_y(Alignment::Center),
             )
@@ -523,13 +524,13 @@ impl App {
                 },
             )))
             .width(Length::Fill)
-            .height(Length::Shrink),
-        )
-        .padding([32.0, 0.0, 0.0, 0.0])
+            .height(Length::Shrink)
+            .into(),
+            widget::Space::with_height(Length::FillPortion(4)).into(),
+        ]))
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Alignment::Center)
-        .align_y(Alignment::Start)
         .class(cosmic::theme::Container::Transparent)
         .into()
     }
