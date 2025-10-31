@@ -19,7 +19,7 @@ shutdown-timeout =
     }
 suspend = Призупинити
 user = Користувач
-caps-lock = Увімкнений Caps Lock.
+caps-lock = Caps Lock увімкнено.
 enter-user = Ввести ім'я вручну...
 type-username = Ім'я користувача:
 accessibility = Доступність
