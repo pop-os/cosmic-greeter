@@ -14,7 +14,6 @@ restart-timeout =
     Systém se automaticky restartuje za { $seconds } { $seconds ->
         [one] sekundu.
         [few] sekundy.
-        [many] sekund.
        *[other] sekund.
     }
 session = Relace
@@ -24,7 +23,6 @@ shutdown-timeout =
     Systém se automaticky vypne za { $seconds } { $seconds ->
         [one] sekundu.
         [few] sekundy.
-        [many] sekund.
        *[other] sekund.
     }
 suspend = Uspat
