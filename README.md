@@ -11,6 +11,7 @@ This project uses [just](https://github.com/casey/just) as a command runner.
 - `just build-debug` - Compile with debug profile
 - `just build-release` - Compile with release profile (default)
 - `just build-vendored` - Compile release profile with vendored dependencies
+    - Requires vendoring first, which can be done with `just vendor`
 
 #### Testing & Development
 - `just mock` - Run greeter in a windowed compositor for quick testing (builds and runs the mock server example)
