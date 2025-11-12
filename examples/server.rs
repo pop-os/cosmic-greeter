@@ -54,10 +54,14 @@ fn main() {
                         Request::PostAuthMessageResponse { response } => {
                             match response.as_deref() {
                                 Some("password") => Response::Success,
-                                _ => Response::Error {
-                                    error_type: ErrorType::AuthError,
-                                    description: "AUTH_ERR".to_string(),
-                                },
+                                _ => {
+                                    // Add 1 second delay to simulate real PAM authentication failure behavior
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    Response::Error {
+                                        error_type: ErrorType::AuthError,
+                                        description: "AUTH_ERR".to_string(),
+                                    }
+                                }
                             }
                         }
                         Request::StartSession { .. } => Response::Success,

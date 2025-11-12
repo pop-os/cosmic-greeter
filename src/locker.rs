@@ -103,6 +103,31 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Convert PAM errors to user-friendly localized messages
+fn pam_error_to_message(error: &pam_client::Error) -> String {
+    use pam_client::ErrorCode;
+
+    // Use the structured error code instead of string matching for reliability
+    match error.code() {
+        ErrorCode::AUTH_ERR | ErrorCode::CRED_INSUFFICIENT => {
+            fl!("auth-error-credentials")
+        }
+        ErrorCode::PERM_DENIED => {
+            fl!("auth-error-denied")
+        }
+        ErrorCode::MAXTRIES => {
+            fl!("auth-error-maxtries")
+        }
+        ErrorCode::ACCT_EXPIRED | ErrorCode::USER_UNKNOWN => {
+            fl!("auth-error-account")
+        }
+        _ => {
+            // For any other error, show a generic message
+            fl!("auth-error-default")
+        }
+    }
+}
+
 pub fn pam_thread(username: String, conversation: Conversation) -> Result<(), pam_client::Error> {
     //TODO: send errors to GUI, restart process
 
@@ -241,6 +266,7 @@ pub enum Message {
     Error(String),
     Lock,
     Unlock,
+    SpinnerTick,
 }
 
 impl From<common::Message> for Message {
@@ -277,6 +303,9 @@ pub struct App {
     dropdown_opt: Option<Dropdown>,
     inhibit_opt: Option<Arc<OwnedFd>>,
     value_tx_opt: Option<mpsc::Sender<String>>,
+    authenticating: bool,
+    spinner_rotation: f32,
+    spinner_handle: Option<cosmic::iced::task::Handle>,
 }
 
 impl App {
@@ -422,16 +451,39 @@ impl App {
                 .spacing(12.0)
                 .max_width(280.0);
 
-            if let Some(icon) = &self.flags.user_icon {
+            let military_time = self.flags.user_data.time_applet_config.military_time;
+            let space_height = match military_time {
+                true => 63.0,
+                false => 10.0,
+            };
+
+            // Add top spacing for better visual appearance
+            // Bottom of the password text input field should align with bottom of time widget
+            column = column.push(widget::Space::with_height(Length::Fixed(space_height)));
+
+            // Display user icon or empty transparent box
+            if let Some(icon_handle) = &self.flags.user_icon {
                 column = column.push(
                     widget::container(
-                        widget::image(icon)
+                        widget::image(icon_handle)
                             .width(Length::Fixed(78.0))
-                            .height(Length::Fixed(78.0)),
+                            .height(Length::Fixed(78.0))
+                            .content_fit(iced::ContentFit::Fill),
                     )
+                    .padding(0.0)
                     .width(Length::Fill)
+                    .height(Length::Fixed(78.0))
                     .align_x(Alignment::Center),
-                )
+                );
+            } else {
+                // Empty transparent box for users without icons
+                column = column.push(
+                    widget::container(widget::Space::new(Length::Fixed(78.0), Length::Fixed(78.0)))
+                        .padding(0.0)
+                        .width(Length::Fill)
+                        .height(Length::Fixed(78.0))
+                        .align_x(Alignment::Center),
+                );
             }
 
             column = column.push(
@@ -464,11 +516,17 @@ impl App {
                             ),
                             *secret,
                         )
-                        .id(text_input_id)
-                        .on_input(|input| {
-                            common::Message::Prompt(prompt.clone(), *secret, Some(input)).into()
-                        })
-                        .on_submit(Message::Submit);
+                        .id(text_input_id);
+
+                        // Don't allow input when authenticating
+                        if !self.authenticating {
+                            text_input = text_input
+                                .on_input(|input| {
+                                    common::Message::Prompt(prompt.clone(), *secret, Some(input))
+                                        .into()
+                                })
+                                .on_submit(Message::Submit);
+                        }
 
                         if *secret {
                             text_input = text_input.password()
@@ -476,7 +534,7 @@ impl App {
 
                         column = column.push(text_input);
 
-                        if self.common.caps_lock {
+                        if self.common.caps_lock && !self.authenticating {
                             column = column.push(widget::text(fl!("caps-lock")));
                         } else if self.common.error_opt.is_none() {
                             column = column.push(widget::text(""));
@@ -488,7 +546,27 @@ impl App {
                 }
             }
 
-            if let Some(error) = &self.common.error_opt {
+            // Show either authenticating message or error message in the same location
+            if self.authenticating {
+                column = column.push(
+                    widget::container(
+                        widget::row::with_capacity(2)
+                            .spacing(8.0)
+                            .align_y(Alignment::Center)
+                            .push(
+                                widget::icon::from_name("process-working-symbolic")
+                                    .size(16)
+                                    .icon()
+                                    .rotation(iced::Rotation::Floating(iced::Radians(
+                                        self.spinner_rotation.to_radians(),
+                                    ))),
+                            )
+                            .push(widget::text(fl!("authenticating"))),
+                    )
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                );
+            } else if let Some(error) = &self.common.error_opt {
                 column = column.push(
                     widget::text(error)
                         .class(theme::Text::Color(iced::Color::from_rgb(1.0, 0.0, 0.0))),
@@ -506,9 +584,8 @@ impl App {
         };
 
         widget::container(widget::column::with_children(vec![
-            widget::Space::with_height(Length::FillPortion(1)).into(),
             widget::layer_container(
-                iced::widget::row![left_element, right_element].align_y(Alignment::Center),
+                iced::widget::row![left_element, right_element].align_y(Alignment::Start),
             )
             .layer(cosmic::cosmic_theme::Layer::Background)
             .padding(16)
@@ -526,7 +603,7 @@ impl App {
             .width(Length::Fill)
             .height(Length::Shrink)
             .into(),
-            widget::Space::with_height(Length::FillPortion(4)).into(),
+            widget::Space::with_height(Length::Fill).into(),
         ]))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -579,6 +656,9 @@ impl cosmic::Application for App {
             dropdown_opt: None,
             inhibit_opt: None,
             value_tx_opt: None,
+            authenticating: false,
+            spinner_rotation: 0.0,
+            spinner_handle: None,
         };
 
         let task = if cfg!(feature = "logind") {
@@ -817,7 +897,7 @@ impl cosmic::Application for App {
                                             tracing::warn!("authentication error: {}", err);
                                             msg_tx
                                                 .send(cosmic::Action::App(Message::Error(
-                                                    err.to_string(),
+                                                    pam_error_to_message(&err),
                                                 )))
                                                 .await
                                                 .unwrap();
@@ -941,16 +1021,41 @@ impl cosmic::Application for App {
                 }
             }
             Message::Submit(value) => {
-                self.common.prompt_opt = None;
                 self.common.error_opt = None;
+                self.authenticating = true;
                 match self.value_tx_opt.take() {
                     Some(value_tx) => {
-                        // Clear errors
-                        self.common.error_opt = None;
-                        return cosmic::task::future(async move {
-                            value_tx.send(value).await.unwrap();
-                            Message::Channel(value_tx)
-                        });
+                        // Start spinner animation if not already running
+                        if self.spinner_handle.is_none() {
+                            let (spinner_task, handle) = cosmic::task::stream(
+                                cosmic::iced_futures::stream::channel(1, |mut msg_tx| async move {
+                                    let mut interval =
+                                        tokio::time::interval(Duration::from_millis(16)); // ~60fps
+                                    loop {
+                                        msg_tx
+                                            .send(cosmic::Action::App(Message::SpinnerTick))
+                                            .await
+                                            .unwrap();
+                                        interval.tick().await;
+                                    }
+                                }),
+                            )
+                            .abortable();
+                            self.spinner_handle = Some(handle);
+
+                            return Task::batch([
+                                spinner_task,
+                                cosmic::task::future(async move {
+                                    value_tx.send(value).await.unwrap();
+                                    Message::Channel(value_tx)
+                                }),
+                            ]);
+                        } else {
+                            return cosmic::task::future(async move {
+                                value_tx.send(value).await.unwrap();
+                                Message::Channel(value_tx)
+                            });
+                        }
                     }
                     None => tracing::warn!("tried to submit when value_tx_opt not set"),
                 }
@@ -968,6 +1073,17 @@ impl cosmic::Application for App {
             }
             Message::Error(error) => {
                 self.common.error_opt = Some(error);
+                self.authenticating = false;
+
+                // Stop spinner animation
+                if let Some(handle) = self.spinner_handle.take() {
+                    handle.abort();
+                }
+                self.spinner_rotation = 0.0;
+            }
+            Message::SpinnerTick => {
+                // Update spinner rotation angle (360 degrees per second = 6 degrees per frame at 60fps)
+                self.spinner_rotation = (self.spinner_rotation + 6.0) % 360.0;
             }
             Message::Lock => match self.state {
                 State::Unlocked => {
@@ -977,6 +1093,12 @@ impl cosmic::Application for App {
                     self.common.error_opt = None;
                     // Clear value_tx
                     self.value_tx_opt = None;
+                    // Reset authenticating state
+                    self.authenticating = false;
+                    if let Some(handle) = self.spinner_handle.take() {
+                        handle.abort();
+                    }
+                    self.spinner_rotation = 0.0;
                     // Try to create lockfile when locking
                     if let Some(ref lockfile) = self.flags.lockfile_opt {
                         if let Err(err) = fs::File::create(lockfile) {
@@ -1002,6 +1124,14 @@ impl cosmic::Application for App {
                         self.common.error_opt = None;
                         // Clear value_tx
                         self.value_tx_opt = None;
+                        // Stop authenticating
+                        self.authenticating = false;
+
+                        // Stop spinner animation
+                        if let Some(handle) = self.spinner_handle.take() {
+                            handle.abort();
+                        }
+                        self.spinner_rotation = 0.0;
                         // Try to delete lockfile when unlocking
                         if let Some(ref lockfile) = self.flags.lockfile_opt {
                             if let Err(err) = fs::remove_file(lockfile) {

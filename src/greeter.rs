@@ -410,6 +410,7 @@ pub enum Message {
     HighContrast(bool),
     InvertColors(bool),
     WaylandUpdate(WaylandUpdate),
+    SpinnerTick,
 }
 
 impl From<common::Message> for Message {
@@ -438,6 +439,9 @@ pub struct App {
     randr_list: Option<cosmic_randr_shell::List>,
 
     accessibility: Accessibility,
+    authenticating: bool,
+    spinner_rotation: f32,
+    spinner_handle: Option<cosmic::iced::task::Handle>,
 }
 
 #[derive(Default)]
@@ -617,7 +621,7 @@ impl App {
                 }
                 let item_cnt = items.len();
                 let menu_button = widget::menu::menu_button(vec![
-                    Element::from(widget::Space::with_width(Length::Fixed(25.0))),
+                    Element::from(widget::Space::with_width(Length::Fixed(10.0))),
                     widget::text(fl!("enter-user"))
                         .align_x(iced::alignment::Horizontal::Left)
                         .into(),
@@ -756,6 +760,21 @@ impl App {
                 .spacing(12.0)
                 .max_width(280.0);
 
+            let military_time = self
+                .selected_username
+                .data_idx
+                .and_then(|i| self.flags.user_datas.get(i))
+                .map(|user_data| user_data.time_applet_config.military_time)
+                .unwrap_or_default();
+            let space_height = match military_time {
+                true => 63.0,
+                false => 10.0,
+            };
+
+            // Add top spacing for better visual appearance
+            // Bottom of the password text input field should align with bottom of time widget
+            column = column.push(widget::Space::with_height(Length::Fixed(space_height)));
+
             match &self.socket_state {
                 SocketState::Pending => {
                     column = column.push(widget::text("Opening GREETD_SOCK"));
@@ -769,16 +788,32 @@ impl App {
                     {
                         if !self.entering_name && user_data.name == self.selected_username.username
                         {
-                            if let Some(icon) = user_icon {
+                            // Display user icon or empty transparent box
+                            if let Some(icon_handle) = user_icon {
                                 column = column.push(
                                     widget::container(
-                                        widget::image(icon)
+                                        widget::image(icon_handle)
                                             .width(Length::Fixed(78.0))
-                                            .height(Length::Fixed(78.0)),
+                                            .height(Length::Fixed(78.0))
+                                            .content_fit(iced::ContentFit::Fill),
                                     )
+                                    .padding(0.0)
                                     .width(Length::Fill)
+                                    .height(Length::Fixed(78.0))
                                     .align_x(Alignment::Center),
-                                )
+                                );
+                            } else {
+                                // Empty transparent box for users without icons
+                                column = column.push(
+                                    widget::container(widget::Space::new(
+                                        Length::Fixed(78.0),
+                                        Length::Fixed(78.0),
+                                    ))
+                                    .padding(0.0)
+                                    .width(Length::Fill)
+                                    .height(Length::Fixed(78.0))
+                                    .align_x(Alignment::Center),
+                                );
                             }
                             column = column.push(
                                 widget::container(widget::text::title4(&user_data.full_name))
@@ -801,52 +836,59 @@ impl App {
                     if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
                         match value_opt {
                             Some(value) => {
-                                let text_input_id = self
-                                    .common
-                                    .surface_names
-                                    .get(&id)
-                                    .and_then(|id| self.common.text_input_ids.get(id))
-                                    .cloned()
-                                    .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
-                                let mut text_input = widget::secure_input(
-                                    prompt.clone(),
-                                    value.as_str(),
-                                    Some(
+                                // Only show password input when not authenticating
+                                if !self.authenticating {
+                                    let text_input_id = self
+                                        .common
+                                        .surface_names
+                                        .get(&id)
+                                        .and_then(|id| self.common.text_input_ids.get(id))
+                                        .cloned()
+                                        .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
+                                    let mut text_input = widget::secure_input(
+                                        prompt.clone(),
+                                        value.as_str(),
+                                        Some(
+                                            common::Message::Prompt(
+                                                prompt.clone(),
+                                                !*secret,
+                                                Some(value.clone()),
+                                            )
+                                            .into(),
+                                        ),
+                                        *secret,
+                                    )
+                                    .id(text_input_id)
+                                    .on_input(|input| {
                                         common::Message::Prompt(
                                             prompt.clone(),
-                                            !*secret,
-                                            Some(value.clone()),
+                                            *secret,
+                                            Some(input),
                                         )
-                                        .into(),
-                                    ),
-                                    *secret,
-                                )
-                                .id(text_input_id)
-                                .on_input(|input| {
-                                    common::Message::Prompt(prompt.clone(), *secret, Some(input))
                                         .into()
-                                })
-                                .on_submit(|v| Message::Auth(Some(v)));
+                                    })
+                                    .on_submit(|v| Message::Auth(Some(v)));
 
-                                if let Some(text_input_id) = self
-                                    .common
-                                    .surface_names
-                                    .get(&id)
-                                    .and_then(|id| self.common.text_input_ids.get(id))
-                                {
-                                    text_input = text_input.id(text_input_id.clone());
-                                }
+                                    if let Some(text_input_id) = self
+                                        .common
+                                        .surface_names
+                                        .get(&id)
+                                        .and_then(|id| self.common.text_input_ids.get(id))
+                                    {
+                                        text_input = text_input.id(text_input_id.clone());
+                                    }
 
-                                if *secret {
-                                    text_input = text_input.password()
-                                }
+                                    if *secret {
+                                        text_input = text_input.password()
+                                    }
 
-                                column = column.push(text_input);
+                                    column = column.push(text_input);
 
-                                if self.common.caps_lock {
-                                    column = column.push(widget::text(fl!("caps-lock")));
-                                } else if self.common.error_opt.is_none() {
-                                    column = column.push(widget::text(""));
+                                    if self.common.caps_lock {
+                                        column = column.push(widget::text(fl!("caps-lock")));
+                                    } else if self.common.error_opt.is_none() {
+                                        column = column.push(widget::text(""));
+                                    }
                                 }
                             }
                             None => {
@@ -868,7 +910,27 @@ impl App {
                 }
             }
 
-            if let Some(error) = &self.common.error_opt {
+            // Show either authenticating message or error message in the same location
+            if self.authenticating {
+                column = column.push(
+                    widget::container(
+                        widget::row::with_capacity(2)
+                            .spacing(8.0)
+                            .align_y(Alignment::Center)
+                            .push(
+                                widget::icon::from_name("process-working-symbolic")
+                                    .size(16)
+                                    .icon()
+                                    .rotation(iced::Rotation::Floating(iced::Radians(
+                                        self.spinner_rotation.to_radians(),
+                                    ))),
+                            )
+                            .push(widget::text(fl!("authenticating"))),
+                    )
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                );
+            } else if let Some(error) = &self.common.error_opt {
                 column = column.push(
                     widget::text(error)
                         .class(theme::Text::Color(iced::Color::from_rgb(1.0, 0.0, 0.0))),
@@ -885,9 +947,8 @@ impl App {
                 .width(Length::Fill)
         };
         let menu = widget::container(widget::column::with_children(vec![
-            widget::Space::with_height(Length::FillPortion(1)).into(),
             widget::layer_container(
-                iced::widget::row![left_element, right_element].align_y(Alignment::Center),
+                iced::widget::row![left_element, right_element].align_y(Alignment::Start),
             )
             .layer(cosmic::cosmic_theme::Layer::Background)
             .padding(16)
@@ -905,7 +966,7 @@ impl App {
             .class(cosmic::theme::Container::Background)
             .width(Length::Fixed(800.0))
             .into(),
-            widget::Space::with_height(Length::FillPortion(4)).into(),
+            widget::Space::with_height(Length::Fill).into(),
         ]))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -1114,6 +1175,9 @@ impl cosmic::Application for App {
             theme_builder: Default::default(),
             randr_list: None,
             surface_id_pairs: Vec::new(),
+            authenticating: false,
+            spinner_rotation: 0.0,
+            spinner_handle: None,
         };
         (app, Task::batch(tasks))
     }
@@ -1297,6 +1361,7 @@ impl cosmic::Application for App {
                 }
                 if self.entering_name || username != self.selected_username.username {
                     self.entering_name = false;
+                    self.authenticating = false;
                     let data_idx = self
                         .flags
                         .user_datas
@@ -1408,13 +1473,40 @@ impl cosmic::Application for App {
                 }
             }
             Message::Auth(response) => {
-                self.common.prompt_opt = None;
                 self.common.error_opt = None;
+                self.authenticating = true;
                 self.send_request(Request::PostAuthMessageResponse { response });
+
+                // Start spinner animation if not already running
+                if self.spinner_handle.is_none() {
+                    let (spinner_task, handle) = cosmic::task::stream(
+                        cosmic::iced_futures::stream::channel(1, |mut msg_tx| async move {
+                            let mut interval = time::interval(Duration::from_millis(16)); // ~60fps
+                            loop {
+                                msg_tx
+                                    .send(cosmic::Action::App(Message::SpinnerTick))
+                                    .await
+                                    .unwrap();
+                                interval.tick().await;
+                            }
+                        }),
+                    )
+                    .abortable();
+                    self.spinner_handle = Some(handle);
+                    return spinner_task;
+                }
             }
             Message::Login => {
                 self.common.prompt_opt = None;
                 self.common.error_opt = None;
+                self.authenticating = false;
+
+                // Stop spinner animation
+                if let Some(handle) = self.spinner_handle.take() {
+                    handle.abort();
+                }
+                self.spinner_rotation = 0.0;
+
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
                         self.send_request(Request::StartSession { cmd, env });
@@ -1425,6 +1517,14 @@ impl cosmic::Application for App {
             }
             Message::Error(error) => {
                 self.common.error_opt = Some(error);
+                self.authenticating = false;
+
+                // Stop spinner animation
+                if let Some(handle) = self.spinner_handle.take() {
+                    handle.abort();
+                }
+                self.spinner_rotation = 0.0;
+
                 self.send_request(Request::CancelSession);
             }
             Message::Reconnect => {
@@ -1753,6 +1853,10 @@ impl cosmic::Application for App {
                     Point::new(0., 32.)
                 };
                 return reposition_subsurface(*subsurface_id, loc.x as i32, loc.y as i32);
+            }
+            Message::SpinnerTick => {
+                // Update spinner rotation angle (360 degrees per second = 6 degrees per frame at 60fps)
+                self.spinner_rotation = (self.spinner_rotation + 6.0) % 360.0;
             }
         }
         Task::none()
