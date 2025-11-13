@@ -947,6 +947,7 @@ impl App {
                 .width(Length::Fill)
         };
         let menu = widget::container(widget::column::with_children(vec![
+            widget::Space::with_height(Length::FillPortion(1)).into(),
             widget::layer_container(
                 iced::widget::row![left_element, right_element].align_y(Alignment::Start),
             )
@@ -966,7 +967,7 @@ impl App {
             .class(cosmic::theme::Container::Background)
             .width(Length::Fixed(800.0))
             .into(),
-            widget::Space::with_height(Length::Fill).into(),
+            widget::Space::with_height(Length::FillPortion(4)).into(),
         ]))
         .width(Length::Fill)
         .height(Length::Fill)

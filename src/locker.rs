@@ -584,6 +584,7 @@ impl App {
         };
 
         widget::container(widget::column::with_children(vec![
+            widget::Space::with_height(Length::FillPortion(1)).into(),
             widget::layer_container(
                 iced::widget::row![left_element, right_element].align_y(Alignment::Start),
             )
@@ -603,7 +604,7 @@ impl App {
             .width(Length::Fill)
             .height(Length::Shrink)
             .into(),
-            widget::Space::with_height(Length::Fill).into(),
+            widget::Space::with_height(Length::FillPortion(4)).into(),
         ]))
         .width(Length::Fill)
         .height(Length::Fill)
