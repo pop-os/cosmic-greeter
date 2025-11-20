@@ -27,3 +27,9 @@ shutdown-timeout =
     }
 suspend = Uspat
 user = Uživatel
+authenticating = Ověřování...
+auth-error-default = Ověření selhalo. Zkuste to prosím znovu.
+auth-error-denied = Přístup zamítnut.
+auth-error-maxtries = Příliš mnoho neúspěšných pokusů o ověření.
+auth-error-account = Účet je nedostupný nebo vypnutý.
+auth-error-credentials = Nesprávné heslo. Zkontrolujte prosím rozložení klávesnice a zkuste to znovu.

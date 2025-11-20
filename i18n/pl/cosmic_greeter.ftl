@@ -27,3 +27,9 @@ shutdown-timeout =
     }
 suspend = Wstrzymaj
 user = Użytkownik
+authenticating = Uwierzytelnianie...
+auth-error-default = Uwierzytelnianie nie powiodło się. Spróbuj ponownie.
+auth-error-credentials = Nieprawidłowe hasło. Sprawdź układ klawiatury i spróbuj ponownie.
+auth-error-denied = Odmowa dostępu.
+auth-error-maxtries = Zbyt dużo nieudanych prób uwierzytelnienia.
+auth-error-account = Konto jest niedostępne lub wyłączone.
