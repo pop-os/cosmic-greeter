@@ -8,7 +8,7 @@ caps-lock = مفتاح Caps Lock نشط.
 enter-user = أدخل الاسم يدويًا...
 type-username = اسم المستخدم:
 keyboard-layout = تخطيط لوحة المفاتيح
-restart = إعادة التشغيل
+restart = أعد التشغيل
 restart-now = إعادة التشغيل الآن؟
 restart-timeout =
     سيتم إعادة تشغيل النظام تلقائيًا في غضون
@@ -17,13 +17,13 @@ restart-timeout =
        *[other] { $seconds } ثانية.
     }
 session = الجلسة
-shutdown = ايقاف التشغيل
-shutdown-now = إيقاف التشغيل الآن؟
+shutdown = أطفئ
+shutdown-now = أطفئ الآن؟
 shutdown-timeout =
     سيتم إيقاف تشغيل النظام تلقائيًا في
     { $seconds ->
         [1] 1 ثانية.
        *[other] { $seconds } ثانية.
     }
-suspend = عَلِّق
+suspend = علِّق
 user = المستخدم
