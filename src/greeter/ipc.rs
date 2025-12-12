@@ -101,15 +101,16 @@ pub fn subscription() -> Subscription<Message> {
                                             )
                                             .await;
                                     }
-                                    //TODO: treat error type differently?
-                                    greetd_ipc::AuthMessageType::Info
-                                    | greetd_ipc::AuthMessageType::Error => {
+                                    greetd_ipc::AuthMessageType::Info => {
                                         _ = sender
                                             .send(
                                                 common::Message::Prompt(auth_message, false, None)
                                                     .into(),
                                             )
                                             .await;
+                                    }
+                                    greetd_ipc::AuthMessageType::Error => {
+                                        _ = sender.send(Message::Error(auth_message)).await;
                                     }
                                 },
                                 greetd_ipc::Response::Error {
