@@ -202,6 +202,25 @@ impl Conversation {
             pam_client::ErrorCode::CONV_ERR
         })
     }
+
+    fn error_message(&mut self, prompt_c: &CStr) -> Result<(), pam_client::ErrorCode> {
+        let prompt = prompt_c.to_str().map_err(|err| {
+            tracing::error!("failed to convert prompt to UTF-8: {:?}", err);
+            pam_client::ErrorCode::CONV_ERR
+        })?;
+
+        futures::executor::block_on(async {
+            self.msg_tx
+                .send(cosmic::Action::App(
+                    Message::Error(prompt.to_string()),
+                ))
+                .await
+        })
+        .map_err(|err| {
+            tracing::error!("failed to send error message: {:?}", err);
+            pam_client::ErrorCode::CONV_ERR
+        })
+    }
 }
 
 impl pam_client::ConversationHandler for Conversation {
@@ -223,9 +242,8 @@ impl pam_client::ConversationHandler for Conversation {
         }
     }
     fn error_msg(&mut self, prompt_c: &CStr) {
-        //TODO: treat error type differently?
         tracing::info!("error_msg {:?}", prompt_c);
-        match self.message(prompt_c) {
+        match self.error_message(prompt_c) {
             Ok(()) => (),
             Err(err) => {
                 tracing::warn!("failed to send error_msg: {:?}", err);
