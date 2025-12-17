@@ -3,12 +3,14 @@ use cosmic_config::CosmicConfigEntry;
 use kdl::KdlDocument;
 use std::{
     collections::BTreeMap,
-    fs,
+    fs, iter,
     path::{Path, PathBuf},
 };
 
 pub use cosmic_applets_config::time::TimeAppletConfig;
-pub use cosmic_bg_config::{Color, Source as BgSource, state::State as BgState};
+pub use cosmic_bg_config::{
+    Color, Config as BgConfig, Source as BgSource, state::State as BgState,
+};
 pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig, ZoomConfig};
 pub use cosmic_theme::{Theme, ThemeBuilder};
 
@@ -20,8 +22,7 @@ pub struct UserData {
     pub icon_opt: Option<Vec<u8>>,
     pub theme_opt: Option<Theme>,
     pub theme_builder_opt: Option<ThemeBuilder>,
-    pub bg_state: BgState,
-    pub bg_path_data: BTreeMap<PathBuf, Vec<u8>>,
+    pub wallpapers: WallpaperData,
     pub xkb_config_opt: Option<XkbConfig>,
     pub time_applet_config: TimeAppletConfig,
     pub accessibility_zoom: ZoomConfig,
@@ -29,43 +30,11 @@ pub struct UserData {
 }
 
 impl UserData {
-    pub fn load_wallpapers_as_user(&mut self) {
-        //TODO: reload changed background files?
-        self.bg_path_data.retain(|path, _| {
-            self.bg_state
-                .wallpapers
-                .iter()
-                .any(|(_, source)| match source {
-                    BgSource::Path(source_path) => source_path == path,
-                    _ => false,
-                })
-        });
-        for (_, source) in self.bg_state.wallpapers.iter() {
-            match source {
-                //TODO: do not reread duplicate paths, cache data by path?
-                BgSource::Path(path) => {
-                    if !self.bg_path_data.contains_key(path) {
-                        match fs::read(path) {
-                            Ok(bytes) => {
-                                self.bg_path_data.insert(path.clone(), bytes);
-                            }
-                            Err(err) => {
-                                tracing::error!("failed to read wallpaper {:?}: {:?}", path, err);
-                            }
-                        }
-                    }
-                }
-                // Other types not supported
-                _ => {}
-            }
-        }
-    }
-
     pub fn load_config_as_user(&mut self) {
         self.icon_opt = None;
         self.theme_opt = None;
         self.theme_builder_opt = None;
-        self.bg_state = Default::default();
+        self.wallpapers = WallpaperData::default();
         self.xkb_config_opt = None;
         self.time_applet_config = Default::default();
 
@@ -142,22 +111,21 @@ impl UserData {
             }
         }
 
-        //TODO: fallback to background config if background state is not set?
         match cosmic_bg_config::state::State::state() {
             Ok(helper) => match cosmic_bg_config::state::State::get_entry(&helper) {
                 Ok(state) => {
-                    self.bg_state = state;
+                    self.wallpapers.update_bg_state(state);
                 }
                 Err((errs, state)) => {
                     tracing::error!("failed to load cosmic-bg state: {:?}", errs);
-                    self.bg_state = state;
+                    self.wallpapers.update_bg_state(state);
                 }
             },
             Err(err) => {
                 tracing::error!("failed to create cosmic-bg state helper: {:?}", err);
             }
         }
-        self.load_wallpapers_as_user();
+        self.wallpapers.load_as_user();
 
         match cosmic_config::Config::new("com.system76.CosmicComp", CosmicCompConfig::VERSION) {
             Ok(config_handler) => {
@@ -230,4 +198,82 @@ impl From<pwd::Passwd> for UserData {
             ..Default::default()
         }
     }
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct WallpaperData {
+    default_bg: BgSource,
+    bg_state: BgState,
+    bg_path_data: BTreeMap<PathBuf, Vec<u8>>,
+}
+
+impl Default for WallpaperData {
+    fn default() -> Self {
+        Self {
+            default_bg: BgConfig::default().default_background.source,
+            bg_state: BgState::default(),
+            bg_path_data: BTreeMap::default(),
+        }
+    }
+}
+
+impl WallpaperData {
+    fn iter_sources(&self) -> impl Iterator<Item = &BgSource> {
+        iter::once(&self.default_bg)
+            .chain(self.bg_state.wallpapers.iter().map(|(_, source)| source))
+    }
+
+    pub fn get<'a>(&'a self, output_name: &str) -> Result<LoadedWallpaper<'a>, &'a Path> {
+        let source = self
+            .bg_state
+            .wallpapers
+            .iter()
+            .find_map(|(name, source)| (output_name == name).then_some(source))
+            .unwrap_or(&self.default_bg);
+
+        match source {
+            BgSource::Path(path) => self
+                .bg_path_data
+                .get(path)
+                .map(|bytes| LoadedWallpaper::Bytes(bytes.as_slice()))
+                .ok_or(path),
+            BgSource::Color(color) => Ok(LoadedWallpaper::Color(color)),
+        }
+    }
+
+    pub fn update_bg_state(&mut self, state: BgState) {
+        self.bg_state = state;
+    }
+
+    pub fn load_as_user(&mut self) {
+        let source_paths = self
+            .iter_sources()
+            .filter_map(|source| match source {
+                BgSource::Path(path) => Some(path.to_owned()),
+                BgSource::Color(_) => None,
+            })
+            .collect::<Vec<_>>();
+
+        //TODO: reload changed background files?
+        self.bg_path_data
+            .retain(|path, _| source_paths.contains(path));
+
+        for path in source_paths {
+            if !self.bg_path_data.contains_key(&path) {
+                match fs::read(&path) {
+                    Ok(bytes) => {
+                        self.bg_path_data.insert(path, bytes);
+                    }
+                    Err(err) => {
+                        tracing::error!("failed to read wallpaper {:?}: {:?}", path, err);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub enum LoadedWallpaper<'a> {
+    Bytes(&'a [u8]),
+    Color(&'a Color),
 }

@@ -13,7 +13,7 @@ use cosmic::{
     widget,
 };
 use cosmic_config::{ConfigSet, CosmicConfigEntry};
-use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
+use cosmic_greeter_daemon::{CosmicCompConfig, LoadedWallpaper, UserData};
 use std::{collections::HashMap, sync::Arc};
 use wayland_client::protocol::wl_output::WlOutput;
 
@@ -160,35 +160,22 @@ impl<M: From<Message> + Send + 'static> Common<M> {
 
             tracing::info!("updating wallpaper for {:?}", output_name);
 
-            for (wallpaper_output_name, wallpaper_source) in user_data.bg_state.wallpapers.iter() {
-                if wallpaper_output_name == output_name {
-                    match wallpaper_source {
-                        BgSource::Path(path) => {
-                            match user_data.bg_path_data.get(path) {
-                                Some(bytes) => {
-                                    let image = widget::image::Handle::from_bytes(bytes.clone());
-                                    self.surface_images.insert(*surface_id, image);
-                                    //TODO: what to do about duplicates?
-                                }
-                                None => {
-                                    tracing::warn!(
-                                        "output {}: failed to find wallpaper data for source {:?}",
-                                        output_name,
-                                        path
-                                    );
-                                }
-                            }
-                            break;
-                        }
-                        BgSource::Color(color) => {
-                            //TODO: support color sources
-                            tracing::warn!(
-                                "output {}: unsupported source {:?}",
-                                output_name,
-                                color
-                            );
-                        }
-                    }
+            match user_data.wallpapers.get(&output_name) {
+                Ok(LoadedWallpaper::Bytes(bytes)) => {
+                    let image = widget::image::Handle::from_bytes(bytes.to_owned());
+                    self.surface_images.insert(*surface_id, image);
+                    //TODO: what to do about duplicates?
+                }
+                Ok(LoadedWallpaper::Color(color)) => {
+                    //TODO: support color sources
+                    tracing::warn!("output {}: unsupported source {:?}", output_name, color);
+                }
+                Err(path) => {
+                    tracing::warn!(
+                        "output {}: failed to find wallpaper data for source {:?}",
+                        output_name,
+                        path
+                    );
                 }
             }
         }

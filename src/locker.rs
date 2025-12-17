@@ -211,9 +211,7 @@ impl Conversation {
 
         futures::executor::block_on(async {
             self.msg_tx
-                .send(cosmic::Action::App(
-                    Message::Error(prompt.to_string()),
-                ))
+                .send(cosmic::Action::App(Message::Error(prompt.to_string())))
                 .await
         })
         .map_err(|err| {
@@ -1010,8 +1008,8 @@ impl cosmic::Application for App {
                 self.value_tx_opt = Some(value_tx);
             }
             Message::BackgroundState(bg_state) => {
-                self.flags.user_data.bg_state = bg_state;
-                self.flags.user_data.load_wallpapers_as_user();
+                self.flags.user_data.wallpapers.update_bg_state(bg_state);
+                self.flags.user_data.wallpapers.load_as_user();
                 self.common.surface_images.clear();
                 self.common.update_wallpapers(&self.flags.user_data);
             }
