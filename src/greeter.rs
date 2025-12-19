@@ -892,9 +892,10 @@ impl App {
                                 }
                             }
                             None => {
-                                column = column.push(
-                                    widget::button::custom("Confirm").on_press(Message::Auth(None)),
-                                );
+                                // `value_opt == None` is used for non-interactive auth messages
+                                // (e.g. PAM_TEXT_INFO via greetd). This is where fingerprint
+                                // prompts typically come through, so show the message to the user.
+                                column = column.push(widget::text(prompt));
                             }
                         }
                     }
@@ -1187,6 +1188,15 @@ impl cosmic::Application for App {
     fn update(&mut self, message: Self::Message) -> Task<Message> {
         match message {
             Message::Common(common_message) => {
+                // In greetd's IPC protocol, the greeter must acknowledge auth messages by
+                // sending PostAuthMessageResponse. For non-interactive "info" messages
+                // (fingerprint prompts typically come through here), the correct response
+                // is `None`. If we don't ACK, greetd will wait forever and the UI will
+                // appear "stuck" on the last info message.
+                if let common::Message::Prompt(_, _secret, None) = &common_message {
+                    self.send_request(Request::PostAuthMessageResponse { response: None });
+                }
+
                 return self.common.update(common_message);
             }
             Message::OutputEvent(output_event, output) => {
