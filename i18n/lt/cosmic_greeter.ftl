@@ -31,3 +31,4 @@ auth-error-credentials = Neteisingas slaptažodis. Patikrinkite savo klaviatūro
 auth-error-denied = Prieiga uždrausta.
 auth-error-maxtries = Per daug nesėkmingų autentifikavimo bandymų.
 auth-error-account = Paskyra yra neprieinama arba išjungta.
+shutdown-now = Išjungti įrenginį dabar?

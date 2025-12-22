@@ -1,7 +1,7 @@
 accessibility = Akadálymentesség
     .screen-reader = Képernyőolvasó
     .magnifier = Nagyító
-    .high-contrast = Kontrasztos megjelenítés
+    .high-contrast = Magas kontraszt
     .invert-colors = Színek invertálása
 cancel = Mégse
 caps-lock = A Caps Lock be van kapcsolva.
