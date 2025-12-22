@@ -9,7 +9,7 @@ vergen = { version = "8", features = ["git", "gitcl"] }
 [dependencies]
 anyhow = "1"
 async-fn-stream = "0.3"
-icu = { version = "2.0.0", features = ["compiled_data"] }
+icu = { version = "2.1.1", features = ["compiled_data"] }
 chrono-tz = "0.10"
 chrono = { version = "0.4", features = ["unstable-locales"] }
 cosmic-applets-config.workspace = true
@@ -19,7 +19,7 @@ cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
 dirs = "6"
-freedesktop_entry_parser = "1.3.0"
+freedesktop_entry_parser = "2.0"
 libcosmic = { workspace = true, features = [
     "autosize",
     "winit",
@@ -41,10 +41,8 @@ xdg = "3.0"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
 wayland-client = "0.31.11"
-cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
-    "accessibility",
-    "cosmic_a11y_manager",
-] }
+cosmic-settings-a11y-manager-subscription = { git = "https://github.com/pop-os/cosmic-settings" }
+cosmic-settings-accessibility-subscription = { git = "https://github.com/pop-os/cosmic-settings" }
 cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
     "greeter",
 ] }
@@ -57,8 +55,6 @@ cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default
 cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # For logind integration using logind feature
 logind-zbus = { version = "5", optional = true }
-# Fix zbus compilation by manually adding nix with user feature
-nix = { workspace = true, optional = true }
 # For power status with upower feature
 upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # Required for some features
@@ -117,13 +113,10 @@ tracing = "0.1"
 tracing-journald = { version = "0.3" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 color-eyre = "0.6.5"
-
-# Fix zbus compilation by manually adding nix with user feature
-nix = { version = "0.30", features = ["user"] }
 pwd = "1.4.0"
-ron = "0.11"
+ron = "0.12"
 serde = "1"
-tokio = "1.47.1"
+tokio = "1.48.0"
 zbus = "5"
 kdl = "6"
 cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false }

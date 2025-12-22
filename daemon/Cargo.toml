@@ -16,7 +16,6 @@ cosmic-theme.workspace = true
 tracing.workspace = true
 tracing-journald = { workspace = true, optional = true }
 color-eyre.workspace = true
-nix.workspace = true
 pwd.workspace = true
 ron.workspace = true
 serde.workspace = true
