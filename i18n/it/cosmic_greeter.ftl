@@ -27,3 +27,10 @@ shutdown-timeout =
     }
 suspend = Sospendi
 user = Utente
+
+# Authentication errors
+auth-error-default = Autenticazione non riuscita. Riprova.
+auth-error-credentials = Password errata. Controlla il layout della tastiera e riprova.
+auth-error-denied = Accesso negato.
+auth-error-maxtries = Troppi tentativi di autenticazione falliti.
+auth-error-account = L’account non è disponibile o è disabilitato.
