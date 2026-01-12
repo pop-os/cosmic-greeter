@@ -38,9 +38,7 @@ use cosmic::{
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
 use cosmic_randr_shell::{KdlParseWithError, List};
-use cosmic_settings_subscriptions::cosmic_a11y_manager::{
-    AccessibilityEvent, AccessibilityRequest,
-};
+use cosmic_settings_a11y_manager_subscription::{AccessibilityEvent, AccessibilityRequest};
 use greetd_ipc::Request;
 use kdl::KdlDocument;
 use std::process::Stdio;
@@ -224,26 +222,26 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                let name = match entry.section("Desktop Entry").attr("Name") {
-                    Some(some) => some,
-                    None => {
-                        tracing::warn!(
-                            "failed to read session file {:?}: no Desktop Entry/Name attribute",
-                            dir_entry.path()
-                        );
-                        continue;
-                    }
+                let Some(name) = entry
+                    .get("Desktop Entry", "Name")
+                    .and_then(|attr| attr.first())
+                else {
+                    tracing::warn!(
+                        "failed to read session file {:?}: No Desktop Entry/Name attribute",
+                        dir_entry.path()
+                    );
+                    continue;
                 };
 
-                let exec = match entry.section("Desktop Entry").attr("Exec") {
-                    Some(some) => some,
-                    None => {
-                        tracing::warn!(
-                            "failed to read session file {:?}: no Desktop Entry/Exec attribute",
-                            dir_entry.path()
-                        );
-                        continue;
-                    }
+                let Some(exec) = entry
+                    .get("Desktop Entry", "Exec")
+                    .and_then(|attr| attr.first())
+                else {
+                    tracing::warn!(
+                        "failed to read session file {:?}: No Desktop Entry/Exec attribute",
+                        dir_entry.path()
+                    );
+                    continue;
                 };
 
                 let mut command = Vec::new();
@@ -259,7 +257,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                if let Some(desktop_names) = entry.section("Desktop Entry").attr("DesktopNames") {
+                if let Some(desktop_names) = entry
+                    .get("Desktop Entry", "DesktopNames")
+                    .and_then(|attr| attr.first())
+                {
                     env.push(format!("XDG_CURRENT_DESKTOP={desktop_names}"));
                     if let Some(name) = desktop_names.split(':').next() {
                         env.push(format!("XDG_SESSION_DESKTOP={name}"));
@@ -1281,7 +1282,7 @@ impl cosmic::Application for App {
                                 id: surface_id,
                                 layer: Layer::Overlay,
                                 keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                                pointer_interactivity: true,
+                                input_zone: None,
                                 anchor: Anchor::TOP | Anchor::LEFT | Anchor::BOTTOM | Anchor::RIGHT,
                                 output: IcedOutput::Output(output),
                                 namespace: "cosmic-locker".into(),
