@@ -20,13 +20,13 @@ cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
 dirs = "6"
 libcosmic = { workspace = true, features = [
-    "autosize",
-    "winit",
-    "multi-window",
-    "desktop",
-    "wayland",
-    "tokio",
-    "dbus-config",
+  "autosize",
+  "winit",
+  "multi-window",
+  "desktop",
+  "wayland",
+  "tokio",
+  "dbus-config",
 ] }
 tracing.workspace = true
 tracing-journald = { workspace = true, optional = true }
@@ -41,15 +41,15 @@ xdg = "3.0"
 tokio = { workspace = true, features = ["full"] }
 wayland-client = "0.31.11"
 cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
-    "accessibility",
-    "cosmic_a11y_manager",
+  "accessibility",
+  "cosmic_a11y_manager",
 ] }
 cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
-    "greeter",
+  "greeter",
 ] }
 cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit" }
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = [
-    "client",
+  "client",
 ] }
 
 # For network status using networkmanager feature
@@ -66,8 +66,8 @@ zbus = { workspace = true }
 clap_lex = "0.7"
 # Internationalization
 i18n-embed = { version = "0.16", features = [
-    "fluent-system",
-    "desktop-requester",
+  "fluent-system",
+  "desktop-requester",
 ] }
 i18n-embed-fl = "0.10"
 rust-embed = "8"
@@ -77,11 +77,11 @@ cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
 color-eyre.workspace = true
 image = { version = "0.25", default-features = false, features = [
-    "jpeg",
-    "png",
-    "rayon",
-    "webp",
-    "hdr",
+  "jpeg",
+  "png",
+  "rayon",
+  "webp",
+  "hdr",
 ] }
 
 [dependencies.greetd_ipc]
@@ -109,7 +109,7 @@ members = ["cosmic-greeter-config", "daemon"]
 resolver = "2"
 
 [workspace.package]
-rust-version = "1.85.0"
+rust-version = "1.90.0"
 
 [workspace.dependencies]
 tracing = "0.1"
@@ -120,7 +120,7 @@ color-eyre = "0.6.5"
 # Fix zbus compilation by manually adding nix with user feature
 nix = { version = "0.30", features = ["user"] }
 pwd = "1.4.0"
-ron = "0.11"
+ron = "0.12"
 serde = "1"
 tokio = "1.47.1"
 zbus = "5"
@@ -136,7 +136,8 @@ git = "https://github.com/pop-os/cosmic-bg"
 default-features = false
 
 [workspace.dependencies.cosmic-comp-config]
-git = "https://github.com/pop-os/cosmic-comp"
+# git = "https://github.com/pop-os/cosmic-comp"
+path = "../cosmic-comp/cosmic-comp-config/"
 default-features = false
 features = ["output", "randr"]
 
