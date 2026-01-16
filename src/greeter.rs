@@ -30,12 +30,12 @@ use cosmic::iced::{
 use cosmic::surface::action::{LiveSettings, app_layer_shell};
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
+use cosmic_comp_config::output::randr::{CurrentOutput, get_matching_config};
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::{UserData, UserFilter};
-use cosmic_randr_shell::{KdlParseWithError, List};
+use cosmic_randr_shell::List;
 use cosmic_settings_a11y_manager_subscription::{AccessibilityEvent, AccessibilityRequest};
 use greetd_ipc::Request;
-use kdl::KdlDocument;
 use std::collections::{HashMap, hash_map};
 use std::error::Error;
 use std::num::NonZeroU32;
@@ -1847,59 +1847,34 @@ impl cosmic::Application for App {
                     let mut tasks = Vec::new();
                     self.randr_list = Some(outputs.clone());
 
-                    let mut list: Option<List> = None;
-
-                    let Some(cur_user_output_state) = self
+                    let Some(output_config) = self
                         .selected_username
                         .data_idx
                         .and_then(|i| self.flags.user_datas.get(i))
-                        .map(|user_data| &user_data.kdl_output_lists)
+                        .and_then(|user_data| user_data.output_config.as_ref())
                     else {
+                        tracing::warn!("No output config for selected user");
                         return Task::none();
                     };
-                    'outer: for configured_list in cur_user_output_state
-                        .iter()
-                        .filter_map(|s| match KdlDocument::parse(s) {
-                            Ok(doc) => Some(doc),
-                            Err(err) => {
-                                tracing::warn!("Invalid output KDL {err:?}");
-                                None
-                            }
-                        })
-                        .map(|kdl| match List::try_from(kdl) {
-                            Ok(list) => list,
-                            Err(KdlParseWithError { list, errors }) => {
-                                for err in errors {
-                                    tracing::warn!("KDL output error: {err:?}");
-                                }
-                                list
-                            }
-                        })
-                    {
-                        if configured_list.outputs.len() != outputs.outputs.len() {
-                            continue;
-                        }
 
-                        for o in outputs.outputs.values() {
-                            if configured_list.outputs.values().all(|configured| {
-                                configured.name != o.name
-                                    || configured.make != o.make
-                                    || configured.model != o.model
-                            }) {
-                                continue 'outer;
-                            }
-                        }
-                        if list
-                            .as_ref()
-                            .is_none_or(|old| old.outputs.len() < configured_list.outputs.len())
-                        {
-                            list = Some(configured_list);
-                        }
-                    }
-                    if let Some(list) = list {
-                        tasks.push(self.exec_randr(list))
+                    // Build CurrentOutput list from the randr outputs
+                    let current_outputs: Vec<CurrentOutput> = outputs
+                        .outputs
+                        .values()
+                        .map(|o| CurrentOutput {
+                            connector: o.name.clone(),
+                            make: o.make.clone().unwrap_or_default(),
+                            model: o.model.clone(),
+                            edid: None,
+                            serial_number: o.serial_number.clone(),
+                        })
+                        .collect();
+
+                    // Use get_matching_config to find and map the config with correct connector names
+                    if let Some(list) = get_matching_config(output_config, &current_outputs) {
+                        tasks.push(self.exec_randr(list));
                     } else {
-                        tracing::warn!("Failed to apply user display config");
+                        tracing::warn!("Failed to find matching user display config");
                     }
 
                     return Task::batch(tasks);
