@@ -33,6 +33,7 @@ use cosmic::{
 };
 use cosmic::{
     cosmic_theme::{self, CosmicPalette},
+    desktop::fde::{DesktopEntry, get_languages_from_env},
     surface,
 };
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
@@ -186,6 +187,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
     let sessions = {
         let mut sessions = HashMap::new();
+        let locales = get_languages_from_env();
         for (session_dir, session_type) in session_dirs {
             let read_dir = match fs::read_dir(&session_dir) {
                 Ok(ok) => ok,
@@ -212,7 +214,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                let entry = match freedesktop_entry_parser::parse_entry(dir_entry.path()) {
+                let entry = match DesktopEntry::from_path(dir_entry.path(), Some(&locales)) {
                     Ok(ok) => ok,
                     Err(err) => {
                         tracing::warn!(
@@ -224,7 +226,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                let name = match entry.section("Desktop Entry").attr("Name") {
+                let name = match entry.name(&locales) {
                     Some(some) => some,
                     None => {
                         tracing::warn!(
@@ -235,7 +237,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                let exec = match entry.section("Desktop Entry").attr("Exec") {
+                let exec = match entry.exec() {
                     Some(some) => some,
                     None => {
                         tracing::warn!(
@@ -259,7 +261,11 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                if let Some(desktop_names) = entry.section("Desktop Entry").attr("DesktopNames") {
+                if let Some(desktop_names) = entry
+                    .groups
+                    .desktop_entry()
+                    .and_then(|g| g.entry("DesktopNames"))
+                {
                     env.push(format!("XDG_CURRENT_DESKTOP={desktop_names}"));
                     if let Some(name) = desktop_names.split(':').next() {
                         env.push(format!("XDG_SESSION_DESKTOP={name}"));
