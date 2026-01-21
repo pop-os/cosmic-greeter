@@ -19,7 +19,6 @@ cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
 dirs = "6"
-freedesktop_entry_parser = "1.3.0"
 libcosmic = { workspace = true, features = [
     "autosize",
     "winit",
