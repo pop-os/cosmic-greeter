@@ -7,7 +7,7 @@ use cosmic::iced::{
     futures::{self, SinkExt},
     stream,
 };
-use cosmic_settings_subscriptions::cosmic_a11y_manager::{
+use cosmic_settings_a11y_manager_subscription::{
     self as thread, AccessibilityEvent, AccessibilityRequest,
 };
 use std::sync::LazyLock;
