@@ -97,7 +97,7 @@ fn user_data_fallback() -> Vec<UserData> {
     {
         pwd::Passwd::iter()
             .filter(|user| {
-                if user.uid < 1000 {
+                if user.uid < 500 {
                     // Skip system accounts
                     return false;
                 }
