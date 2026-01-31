@@ -211,9 +211,7 @@ impl Conversation {
 
         futures::executor::block_on(async {
             self.msg_tx
-                .send(cosmic::Action::App(
-                    Message::Error(prompt.to_string()),
-                ))
+                .send(cosmic::Action::App(Message::Error(prompt.to_string())))
                 .await
         })
         .map_err(|err| {
