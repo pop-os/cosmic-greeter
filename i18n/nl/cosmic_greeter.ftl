@@ -1,4 +1,4 @@
-cancel = Annuleer
+cancel = Annuleren
 caps-lock = Capslock staat aan.
 keyboard-layout = Toetsenbordindeling
 restart = Herstart
