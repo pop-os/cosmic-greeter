@@ -1,4 +1,4 @@
-accessibility = إمكانية الوصول
+accessibility = الإتاحة
     .screen-reader = قارئ الشاشة
     .magnifier = المكبر
     .high-contrast = تباين عالٍ
@@ -27,3 +27,4 @@ shutdown-timeout =
     }
 suspend = علِّق
 user = المستخدم
+authenticating = يستوثّق...
