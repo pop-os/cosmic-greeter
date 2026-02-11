@@ -141,7 +141,12 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             }
             if let Some(comp_config_handler) = &self.comp_config_handler {
                 match comp_config_handler.set("xkb_config", xkb_config) {
-                    Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
+                    Ok(()) => {
+                        tracing::info!("updated cosmic-comp xkb_config");
+                        if let Err(err) = comp_config_handler.reload() {
+                            tracing::error!("failed to reload cosmic-comp config: {}", err);
+                        }
+                    },
                     Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
                 }
             }
