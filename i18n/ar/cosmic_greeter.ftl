@@ -28,3 +28,4 @@ shutdown-timeout =
 suspend = علِّق
 user = المستخدم
 authenticating = يستوثّق...
+auth-error-maxtries = عدد كبير جدًا من محاولات الاستيثاق الفاشلة.
