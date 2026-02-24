@@ -40,13 +40,20 @@ xdg = "3.0"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
 wayland-client = "0.31.11"
-cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
-    "accessibility",
-    "cosmic_a11y_manager",
-] }
+# cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
+#     "accessibility",
+#     "cosmic_a11y_manager",
+# ] }
+
+# cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
+#     "greeter",
+# ] }
+cosmic-settings-accessibility-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false, branch = "iced-rebase" }
+cosmic-settings-a11y-manager-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false, branch = "iced-rebase" }
 cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
     "greeter",
-] }
+], branch = "iced-rebase" }
+
 cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit" }
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = [
     "client",
@@ -129,14 +136,20 @@ cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-f
 
 [workspace.dependencies.cosmic-applets-config]
 git = "https://github.com/pop-os/cosmic-applets"
+branch = "iced-rebase"
+# path = "../cosmic-applets/cosmic-applets-config"
 default-features = false
 
 [workspace.dependencies.cosmic-bg-config]
 git = "https://github.com/pop-os/cosmic-bg"
+branch = "iced-rebase"
+# path = "../cosmic-bg/config"
 default-features = false
 
 [workspace.dependencies.cosmic-comp-config]
 git = "https://github.com/pop-os/cosmic-comp"
+branch = "iced-rebase"
+# path = "../cosmic-comp/cosmic-comp-config"
 default-features = false
 features = ["output", "randr"]
 
@@ -145,14 +158,19 @@ path = "cosmic-greeter-config"
 
 [workspace.dependencies.cosmic-config]
 git = "https://github.com/pop-os/libcosmic"
+branch = "iced-rebase"
+# path = "../libcosmic/cosmic-config"
 default-features = false
 
 [workspace.dependencies.cosmic-theme]
 git = "https://github.com/pop-os/libcosmic"
+branch = "iced-rebase"
+# path = "../libcosmic/cosmic-theme"
 default-features = false
 
 [workspace.dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
+branch = "iced-rebase"
 default-features = false
 
 [patch."https://github.com/smithay/client-toolkit.git"]
@@ -162,6 +180,9 @@ sctk = { package = "smithay-client-toolkit", version = "0.20.0" }
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//" }
 cctk = { git = "https://github.com/pop-os/cosmic-protocols//", package = "cosmic-client-toolkit" }
 
-# libcosmic = { path = "../libcosmic" }
-# cosmic-config = { path = "../libcosmic/cosmic-config" }
-# cosmic-theme = { path = "../libcosmic/cosmic-theme" }
+[patch."https://github.com/pop-os/libcosmic"]
+iced_core = { git = "https://github.com/pop-os/libcosmic//", branch = "iced-rebase" }
+iced_futures = { git = "https://github.com/pop-os/libcosmic//", branch = "iced-rebase" }
+libcosmic = { git = "https://github.com/pop-os/libcosmic//", branch = "iced-rebase" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic//", branch = "iced-rebase" }
+cosmic-theme = { git = "https://github.com/pop-os/libcosmic//", branch = "iced-rebase" }

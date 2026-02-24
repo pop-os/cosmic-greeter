@@ -36,8 +36,7 @@ impl NetworkIcon {
 pub fn subscription() -> Subscription<Option<&'static str>> {
     struct NetworkSubscription;
 
-    Subscription::run_with_id(
-        TypeId::of::<NetworkSubscription>(),
+    Subscription::run_with(TypeId::of::<NetworkSubscription>(), |_| {
         cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
@@ -52,8 +51,8 @@ pub fn subscription() -> Subscription<Option<&'static str>> {
 
             //TODO: should we retry on error?
             futures_util::future::pending().await
-        }),
-    )
+        })
+    })
 }
 
 //TODO: use never type?
