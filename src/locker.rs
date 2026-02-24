@@ -211,9 +211,7 @@ impl Conversation {
 
         futures::executor::block_on(async {
             self.msg_tx
-                .send(cosmic::Action::App(
-                    Message::Error(prompt.to_string()),
-                ))
+                .send(cosmic::Action::App(Message::Error(prompt.to_string())))
                 .await
         })
         .map_err(|err| {
@@ -367,9 +365,11 @@ impl App {
                                 .width(Length::Fixed(16.0))
                                 .into()
                         } else {
-                            widget::Space::with_width(Length::Fixed(17.0)).into()
+                            widget::space::horizontal()
+                                .width(Length::Fixed(17.0))
+                                .into()
                         },
-                        widget::Space::with_width(Length::Fixed(8.0)).into(),
+                        widget::space::horizontal().width(Length::Fixed(8.0)).into(),
                         widget::text(label)
                             .align_x(iced::alignment::Horizontal::Left)
                             .into(),
@@ -477,7 +477,7 @@ impl App {
 
             // Add top spacing for better visual appearance
             // Bottom of the password text input field should align with bottom of time widget
-            column = column.push(widget::Space::with_height(Length::Fixed(space_height)));
+            column = column.push(widget::space::vertical().height(Length::Fixed(space_height)));
 
             // Display user icon or empty transparent box
             if let Some(icon_handle) = &self.flags.user_icon {
@@ -496,7 +496,7 @@ impl App {
             } else {
                 // Empty transparent box for users without icons
                 column = column.push(
-                    widget::container(widget::Space::new(Length::Fixed(78.0), Length::Fixed(78.0)))
+                    widget::container(widget::space::horizontal().width(Length::Fixed(78.0)))
                         .padding(0.0)
                         .width(Length::Fill)
                         .height(Length::Fixed(78.0))
@@ -602,7 +602,9 @@ impl App {
         };
 
         widget::container(widget::column::with_children(vec![
-            widget::Space::with_height(Length::FillPortion(1)).into(),
+            widget::space::vertical()
+                .height(Length::FillPortion(1))
+                .into(),
             widget::layer_container(
                 iced::widget::row![left_element, right_element].align_y(Alignment::Start),
             )
@@ -622,7 +624,9 @@ impl App {
             .width(Length::Fill)
             .height(Length::Shrink)
             .into(),
-            widget::Space::with_height(Length::FillPortion(4)).into(),
+            widget::space::vertical()
+                .height(Length::FillPortion(4))
+                .into(),
         ]))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -865,72 +869,77 @@ impl cosmic::Application for App {
                     }
 
                     let username = self.flags.user_data.name.clone();
-                    let (locked_task, locked_handle) = cosmic::task::stream(
-                        cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
-                            // Send heartbeat once a second to update time.
-                            let heartbeat_future = {
-                                let mut output = msg_tx.clone();
-                                async move {
-                                    let mut interval =
-                                        tokio::time::interval(Duration::from_secs(1));
+                    let (locked_task, locked_handle) =
+                        cosmic::task::stream(cosmic::iced_futures::stream::channel(
+                            16,
+                            |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
+                                // Send heartbeat once a second to update time.
+                                let heartbeat_future = {
+                                    let mut output = msg_tx.clone();
+                                    async move {
+                                        let mut interval =
+                                            tokio::time::interval(Duration::from_secs(1));
 
+                                        loop {
+                                            output
+                                                .send(cosmic::Action::App(Message::None))
+                                                .await
+                                                .unwrap();
+
+                                            interval.tick().await;
+                                        }
+                                    }
+                                };
+
+                                let pam_future = async {
                                     loop {
-                                        output
-                                            .send(cosmic::Action::App(Message::None))
+                                        let (value_tx, value_rx) = mpsc::channel(16);
+                                        msg_tx
+                                            .send(cosmic::Action::App(Message::Channel(value_tx)))
                                             .await
                                             .unwrap();
 
-                                        interval.tick().await;
-                                    }
-                                }
-                            };
+                                        let pam_res = {
+                                            let username = username.clone();
+                                            let msg_tx = msg_tx.clone();
+                                            task::spawn_blocking(move || {
+                                                pam_thread(
+                                                    username,
+                                                    Conversation { msg_tx, value_rx },
+                                                )
+                                            })
+                                            .await
+                                            .unwrap()
+                                        };
 
-                            let pam_future = async {
-                                loop {
-                                    let (value_tx, value_rx) = mpsc::channel(16);
-                                    msg_tx
-                                        .send(cosmic::Action::App(Message::Channel(value_tx)))
-                                        .await
-                                        .unwrap();
-
-                                    let pam_res = {
-                                        let username = username.clone();
-                                        let msg_tx = msg_tx.clone();
-                                        task::spawn_blocking(move || {
-                                            pam_thread(username, Conversation { msg_tx, value_rx })
-                                        })
-                                        .await
-                                        .unwrap()
-                                    };
-
-                                    match pam_res {
-                                        Ok(()) => {
-                                            tracing::info!("successfully authenticated");
-                                            msg_tx
-                                                .send(cosmic::Action::App(Message::Unlock))
-                                                .await
-                                                .unwrap();
-                                            break;
-                                        }
-                                        Err(err) => {
-                                            tracing::warn!("authentication error: {}", err);
-                                            msg_tx
-                                                .send(cosmic::Action::App(Message::Error(
-                                                    pam_error_to_message(&err),
-                                                )))
-                                                .await
-                                                .unwrap();
+                                        match pam_res {
+                                            Ok(()) => {
+                                                tracing::info!("successfully authenticated");
+                                                msg_tx
+                                                    .send(cosmic::Action::App(Message::Unlock))
+                                                    .await
+                                                    .unwrap();
+                                                break;
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!("authentication error: {}", err);
+                                                msg_tx
+                                                    .send(cosmic::Action::App(Message::Error(
+                                                        pam_error_to_message(&err),
+                                                    )))
+                                                    .await
+                                                    .unwrap();
+                                            }
                                         }
                                     }
-                                }
-                            };
+                                };
 
-                            futures::pin_mut!(heartbeat_future);
-                            futures::pin_mut!(pam_future);
-                            futures::future::select(heartbeat_future, pam_future).await;
-                        }),
-                    )
-                    .abortable();
+                                futures::pin_mut!(heartbeat_future);
+                                futures::pin_mut!(pam_future);
+                                futures::future::select(heartbeat_future, pam_future).await;
+                            },
+                        ))
+                        .abortable();
 
                     let mut commands = Vec::with_capacity(self.common.surface_ids.len() + 1);
                     commands.push(locked_task);
@@ -1046,20 +1055,22 @@ impl cosmic::Application for App {
                     Some(value_tx) => {
                         // Start spinner animation if not already running
                         if self.spinner_handle.is_none() {
-                            let (spinner_task, handle) = cosmic::task::stream(
-                                cosmic::iced_futures::stream::channel(1, |mut msg_tx| async move {
-                                    let mut interval =
-                                        tokio::time::interval(Duration::from_millis(16)); // ~60fps
-                                    loop {
-                                        msg_tx
-                                            .send(cosmic::Action::App(Message::SpinnerTick))
-                                            .await
-                                            .unwrap();
-                                        interval.tick().await;
-                                    }
-                                }),
-                            )
-                            .abortable();
+                            let (spinner_task, handle) =
+                                cosmic::task::stream(cosmic::iced_futures::stream::channel(
+                                    1,
+                                    |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
+                                        let mut interval =
+                                            tokio::time::interval(Duration::from_millis(16)); // ~60fps
+                                        loop {
+                                            msg_tx
+                                                .send(cosmic::Action::App(Message::SpinnerTick))
+                                                .await
+                                                .unwrap();
+                                            interval.tick().await;
+                                        }
+                                    },
+                                ))
+                                .abortable();
                             self.spinner_handle = Some(handle);
 
                             return Task::batch([

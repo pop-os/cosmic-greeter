@@ -46,8 +46,7 @@ async fn inhibit(manager: &ManagerProxy<'_>) -> zbus::Result<OwnedFd> {
 pub fn subscription() -> Subscription<Message> {
     struct LogindSubscription;
 
-    Subscription::run_with_id(
-        TypeId::of::<LogindSubscription>(),
+    Subscription::run_with(TypeId::of::<LogindSubscription>(), |_| {
         cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
@@ -58,8 +57,8 @@ pub fn subscription() -> Subscription<Message> {
             }
 
             std::process::exit(1);
-        }),
-    )
+        })
+    })
 }
 
 //TODO: use never type?

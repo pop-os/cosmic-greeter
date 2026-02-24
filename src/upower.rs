@@ -9,8 +9,7 @@ use zbus::{Connection, Result};
 pub fn subscription() -> Subscription<Option<(String, f64)>> {
     struct PowerSubscription;
 
-    Subscription::run_with_id(
-        TypeId::of::<PowerSubscription>(),
+    Subscription::run_with(TypeId::of::<PowerSubscription>(), |_| {
         cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
@@ -25,8 +24,8 @@ pub fn subscription() -> Subscription<Option<(String, f64)>> {
 
             //TODO: should we retry on error?
             futures_util::future::pending().await
-        }),
-    )
+        })
+    })
 }
 
 //TODO: use never type?
