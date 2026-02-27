@@ -808,12 +808,11 @@ impl cosmic::Application for App {
                         );
 
                         if matches!(self.state, State::Locked { .. }) {
-                            return Task::batch([
-                                get_lock_surface(surface_id, output),
+                            return Task::batch([get_lock_surface(surface_id, output).chain({
                                 cosmic::task::message(cosmic::Action::Cosmic(
                                     cosmic::app::Action::Surface(msg),
-                                )),
-                            ]);
+                                ))
+                            })]);
                         }
                     }
                     OutputEvent::Removed => {
