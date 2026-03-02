@@ -20,12 +20,12 @@ shutdown-timeout =
     }
 suspend = Slaapstand
 user = Gebruiker
-enter-user = Naam zelf invoeren…
+enter-user = Naam handmatig invoeren…
 type-username = Gebruikersnaam:
 auth-error-default = Authenticatie mislukt. Probeer het opnieuw.
 auth-error-credentials = Onjuist wachtwoord. Controleer de toetsenbordindeling en probeer opnieuw.
 auth-error-denied = Toegang geweigerd.
-auth-error-maxtries = Te veel mislukte authenticatie pogingen.
+auth-error-maxtries = Te veel mislukte authenticatiepogingen.
 auth-error-account = Gebruikersnaam niet beschikbaar of uitgeschakeld.
 authenticating = Verifiëren…
 accessibility = Toegankelijkheid

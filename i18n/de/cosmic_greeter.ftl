@@ -26,3 +26,7 @@ accessibility = Barrierefreiheit
     .high-contrast = Hoher Kontrast
     .invert-colors = Farben invertieren
 enter-user = Name manuell eingeben…
+type-username = Benutzername:
+auth-error-default = Authentifizierung fehlgeschlagen. Bitte versuche es erneut.
+auth-error-credentials = Falsches Passwort. Bitte überprüfe deine Tastaturbelegung und versuche es erneut.
+auth-error-denied = Zugriff verweigert.
