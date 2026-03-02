@@ -1,0 +1,12 @@
+cancel = Peru
+caps-lock = Caps Lock on päällä.
+suspend = Lepotila
+keyboard-layout = Näppäimistöasettelu
+restart = Käynnistä uudelleen
+restart-now = Käynnistetäänkö uudelleen nyt?
+session = Istunto
+shutdown = Sammuta
+shutdown-now = Sammutetaanko nyt?
+user = Käyttäjä
+auth-error-credentials = Väärä salasana. Tarkista näppäimistöasettelu ja yritä uudelleen.
+auth-error-denied = Pääsy evätty.
