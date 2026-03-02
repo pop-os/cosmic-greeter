@@ -32,3 +32,4 @@ auth-error-denied = Prieiga uždrausta.
 auth-error-maxtries = Per daug nesėkmingų autentifikavimo bandymų.
 auth-error-account = Paskyra yra neprieinama arba išjungta.
 shutdown-now = Išjungti įrenginį dabar?
+suspend = Miego režimas
