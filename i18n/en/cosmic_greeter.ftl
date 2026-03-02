@@ -11,18 +11,20 @@ type-username = Username:
 keyboard-layout = Keyboard layout
 restart = Restart
 restart-now = Restart now?
-restart-timeout = The system will restart automatically in
+restart-timeout = The system will restart automatically
   { $seconds ->
-    [1] 1 second.
-    *[other] {$seconds} seconds.
+    [0] now.
+    [1] in 1 second.
+    *[other] in {$seconds} seconds.
   }
 session = Session
 shutdown = Shut down
 shutdown-now = Shut down now?
-shutdown-timeout = The system will shut down automatically in
+shutdown-timeout = The system will shut down automatically
   { $seconds ->
-    [1] 1 second.
-    *[other] {$seconds} seconds.
+    [0] now.
+    [1] in 1 second.
+    *[other] in {$seconds} seconds.
   }
 suspend = Suspend
 user = User
