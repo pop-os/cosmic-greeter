@@ -115,8 +115,10 @@ impl GreeterProxy {
             let icon_path = accountsservice_icon_path(&user.name);
 
             //IMPORTANT: Assume the identity of the user to ensure we don't read user file data as root
-            run_as_user(&user, || user_data.load_config_as_user(icon_path.as_deref()))
-                .map_err(|err| GreeterError::RunAsUser(err.to_string()))?;
+            if let Err(err) = run_as_user(&user, || user_data.load_config_as_user(icon_path.as_deref())) {
+                tracing::error!("failed to load config for user {}: {}", user.name, err);
+                // Continue with default config rather than failing all users
+            }
 
             user_datas.push(user_data);
         }
