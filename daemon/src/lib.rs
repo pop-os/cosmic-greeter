@@ -61,7 +61,7 @@ impl UserData {
         }
     }
 
-    pub fn load_config_as_user(&mut self) {
+    pub fn load_config_as_user(&mut self, icon_path_hint: Option<&Path>) {
         self.icon_opt = None;
         self.theme_opt = None;
         self.theme_builder_opt = None;
@@ -69,13 +69,15 @@ impl UserData {
         self.xkb_config_opt = None;
         self.time_applet_config = Default::default();
 
-        //TODO: use accountsservice?
-        //IMPORTANT: This file is owned by root and safe to read (it won't be a link to /etc/shadow for example)
-        // It may not exist if the user uses one of the system icons. In that case, we should read the
-        // information in /var/lib/AccountsService/users, and then read the icon path as the user
-        let icon_path = Path::new("/var/lib/AccountsService/icons").join(&self.name);
+        // Try AccountsService-provided icon path first (read as root before seteuid,
+        // passed in via icon_path_hint), fall back to hardcoded location
+        let fallback_path = Path::new("/var/lib/AccountsService/icons").join(&self.name);
+        let icon_path = match icon_path_hint {
+            Some(hint) if hint.is_file() => hint,
+            _ => &fallback_path,
+        };
         if icon_path.is_file() {
-            match fs::read(&icon_path) {
+            match fs::read(icon_path) {
                 Ok(icon_data) => {
                     self.icon_opt = Some(icon_data);
                 }

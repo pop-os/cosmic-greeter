@@ -1,10 +1,26 @@
 use color_eyre::eyre::Context;
 use cosmic_greeter_daemon::UserData;
-use std::{env, error::Error, future::pending, io, path::Path};
+use std::{env, error::Error, fs, future::pending, io, path::{Path, PathBuf}};
 use tracing::metadata::LevelFilter;
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use zbus::{DBusError, connection::Builder};
+
+/// Read the Icon= path from the AccountsService user file.
+/// Must be called as root (before seteuid) since /var/lib/AccountsService/users/ is root-only.
+fn accountsservice_icon_path(username: &str) -> Option<PathBuf> {
+    let user_file = Path::new("/var/lib/AccountsService/users").join(username);
+    let content = fs::read_to_string(&user_file).ok()?;
+    for line in content.lines() {
+        if let Some(path) = line.strip_prefix("Icon=") {
+            let path = path.trim();
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+    }
+    None
+}
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
 // callback is executed with the permissions of the specified user id. A good test is to see if
@@ -95,8 +111,11 @@ impl GreeterProxy {
 
             let mut user_data = UserData::from(user.clone());
 
+            // Read icon path from AccountsService as root (before seteuid)
+            let icon_path = accountsservice_icon_path(&user.name);
+
             //IMPORTANT: Assume the identity of the user to ensure we don't read user file data as root
-            run_as_user(&user, || user_data.load_config_as_user())
+            run_as_user(&user, || user_data.load_config_as_user(icon_path.as_deref()))
                 .map_err(|err| GreeterError::RunAsUser(err.to_string()))?;
 
             user_datas.push(user_data);
