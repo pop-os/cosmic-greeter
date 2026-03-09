@@ -13,6 +13,7 @@ restart-now = Újraindítás most?
 restart-timeout =
     A rendszer automatikusan újraindul
     { $seconds ->
+        [0] most
         [1] 1 másodperc múlva
        *[other] { $seconds } másodperc múlva
     }
@@ -22,6 +23,7 @@ shutdown-now = Leállítás most?
 shutdown-timeout =
     A rendszer automatikusan leáll
     { $seconds ->
+        [0] most
         [1] 1 másodperc múlva
        *[other] { $seconds } másodperc múlva
     }

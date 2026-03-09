@@ -13,8 +13,9 @@ restart-now = إعادة التشغيل الآن؟
 restart-timeout =
     سيتم إعادة تشغيل النظام تلقائيًا في غضون
     { $seconds ->
-        [1] ثانية واحدة.
-       *[other] { $seconds } ثانية.
+        [0] الآن.
+        [1] في ثانية.
+       *[other] في { $seconds } ثانية.
     }
 session = الجلسة
 shutdown = أطفئ
@@ -22,8 +23,9 @@ shutdown-now = أطفئ الآن؟
 shutdown-timeout =
     سيتم إيقاف تشغيل النظام تلقائيًا في
     { $seconds ->
-        [1] 1 ثانية.
-       *[other] { $seconds } ثانية.
+        [0] الآن.
+        [1] في ثانية.
+       *[other] في { $seconds } ثانية.
     }
 suspend = علِّق
 user = المستخدم

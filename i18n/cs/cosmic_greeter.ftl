@@ -11,7 +11,8 @@ keyboard-layout = Rozložení klávesnice
 restart = Restartovat
 restart-now = Restartovat nyní?
 restart-timeout =
-    Systém se automaticky restartuje { $seconds ->
+    Systém se automaticky restartuje
+    { $seconds ->
         [0] nyní.
         [one] za 1 sekundu.
         [few] za { $seconds } sekundy.
@@ -21,7 +22,8 @@ session = Relace
 shutdown = Vypnout
 shutdown-now = Vypnout nyní?
 shutdown-timeout =
-    Systém se automaticky vypne { $seconds ->
+    Systém se automaticky vypne
+    { $seconds ->
         [0] nyní.
         [one] za 1 sekundu.
         [few] za { $seconds } sekundy.
