@@ -3,19 +3,21 @@ keyboard-layout = Tangentbordslayout
 restart = Starta om
 restart-now = Starta om nu?
 restart-timeout =
-    Systemet startar om automatiskt om
+    Systemet startar om automatiskt
     { $seconds ->
-        [1] 1 sekund.
-       *[other] { $seconds } sekunder.
+        [0] nu.
+        [1] om 1 sekund.
+       *[other] om { $seconds } sekunder.
     }
 session = Session
 shutdown = Stäng av
 shutdown-now = Stäng av nu?
 shutdown-timeout =
-    Systemet stängs av automatiskt om
+    Systemet stängs av automatiskt
     { $seconds ->
-        [1] 1 sekund.
-       *[other] { $seconds } sekunder.
+        [0] nu.
+        [1] om 1 sekund.
+       *[other] om { $seconds } sekunder.
     }
 suspend = Vänteläge
 user = Användare

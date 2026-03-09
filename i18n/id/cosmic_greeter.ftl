@@ -12,19 +12,21 @@ suspend = Hentikan
 restart = Mulai ulang
 restart-now = Mulai ulang sekarang?
 restart-timeout =
-    Sistem akan memulai ulang otomatis dalam
+    Sistem akan memulai ulang otomatis
     { $seconds ->
-        [1] 1 detik.
-       *[other] { $seconds } detik.
+        [0] sekarang.
+        [1] dalam 1 detik.
+       *[other] dalam { $seconds } detik.
     }
 session = Sesi
 shutdown = Matikan
 shutdown-now = Matikan sekarang?
 shutdown-timeout =
-    Sistem akan mati secara otomatis dalam
+    Sistem akan mati secara otomatis
     { $seconds ->
-        [1] 1 detik.
-       *[other] { $seconds } detik.
+        [0] sekarang.
+        [1] dalam 1 detik.
+       *[other] dalam { $seconds } detik.
     }
 user = Pengguna
 authenticating = Mengautentikasi...

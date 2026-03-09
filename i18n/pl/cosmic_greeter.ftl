@@ -11,19 +11,21 @@ keyboard-layout = Układ klawiatury
 restart = Uruchom Ponownie
 restart-now = Uruchomić ponownie?
 restart-timeout =
-    System uruchomi się ponownie za { $seconds ->
-        [1] 1 sekundę
-        [few] { $seconds } sekundy
-       *[other] { $seconds } sekund
+    System uruchomi się ponownie { $seconds ->
+        [0] teraz
+        [1] za 1 sekundę
+        [few] za { $seconds } sekundy
+       *[other] za { $seconds } sekund
     }
 session = Sesja
 shutdown = Wyłącz
 shutdown-now = Wyłączyć teraz?
 shutdown-timeout =
-    System wyłączy automatycznie się za { $seconds ->
-        [1] 1 sekundę
-        [few] { $seconds } sekundy
-       *[other] { $seconds } sekund
+    System wyłączy automatycznie się { $seconds ->
+        [0] teraz
+        [1] za 1 sekundę
+        [few] za { $seconds } sekundy
+       *[other] za { $seconds } sekund
     }
 suspend = Wstrzymaj
 user = Użytkownik
