@@ -3,19 +3,21 @@ keyboard-layout = Disposition du clavier
 restart = Redémarrer
 restart-now = Redémarrer maintenant ?
 restart-timeout =
-    Cet ordinateur redémarrera automatiquement dans
+    Cet ordinateur redémarrera automatiquement
     { $seconds ->
-        [1] 1 seconde.
-       *[other] { $seconds } secondes.
+        [0] maintenant.
+        [1] dans 1 seconde.
+       *[other] dans { $seconds } secondes.
     }
 session = Session
 shutdown = Éteindre
 shutdown-now = Éteindre maintenant ?
 shutdown-timeout =
-    Cet ordinateur s'éteindra automatiquement dans
+    Cet ordinateur s'éteindra automatiquement
     { $seconds ->
-        [1] 1 seconde.
-       *[other] { $seconds } secondes.
+        [0] maintenant.
+        [1] dans 1 seconde.
+       *[other] dans { $seconds } secondes.
     }
 suspend = Veille
 user = Utilisateur
