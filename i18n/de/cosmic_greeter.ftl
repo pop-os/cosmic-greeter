@@ -4,19 +4,21 @@ keyboard-layout = Tastaturbelegung
 restart = Neustart
 restart-now = Jetzt neu starten?
 restart-timeout =
-    Das System wird in
+    Das System wird
     { $seconds ->
-        [1] 1 Sekunde
-       *[other] { $seconds } Sekunden
+        [0] jetzt
+        [1] in 1 Sekunde
+       *[other] in { $seconds } Sekunden
     } automatisch neu gestartet.
 session = Sitzung
 shutdown = Herunterfahren
 shutdown-now = Jetzt herunterfahren?
 shutdown-timeout =
-    Das System wird in
+    Das System wird
     { $seconds ->
-        [1] 1 Sekunde
-       *[other] { $seconds } Sekunden
+        [0] jetzt
+        [1] in 1 Sekunde
+       *[other] in { $seconds } Sekunden
     } automatisch heruntergefahren.
 suspend = Bereitschaft
 user = Benutzer
@@ -30,3 +32,5 @@ type-username = Benutzername:
 auth-error-default = Authentifizierung fehlgeschlagen. Bitte versuche es erneut.
 auth-error-credentials = Falsches Passwort. Bitte überprüfe deine Tastaturbelegung und versuche es erneut.
 auth-error-denied = Zugriff verweigert.
+auth-error-maxtries = Zu viele fehlgeschlagene Authentifizierungsversuche.
+auth-error-account = Konto ist nicht verfügbar oder deaktiviert.

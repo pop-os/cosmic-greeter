@@ -1,6 +1,6 @@
-accessibility = Pritaikymas neįgaliesiems
+accessibility = Prieinamumas
     .screen-reader = Ekrano Skaitytuvas
-    .magnifier = Padidinimo stiklas
+    .magnifier = Didinamasis stiklas
     .high-contrast = Didelis kontrastas
     .invert-colors = Spalvų Invertavimas
 cancel = Atšaukti

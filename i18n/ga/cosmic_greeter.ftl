@@ -3,19 +3,21 @@ keyboard-layout = Leagan amach an mhéarchláir
 restart = Atosaigh
 restart-now = Atosaigh anois?
 restart-timeout =
-    Atosóidh an córas go huathoibríoch i
+    Atosóidh an córas go huathoibríoch
     { $seconds ->
-        [1] 1 soicind.
-       *[other] { $seconds } soicindí.
+        [0] anois.
+        [1] i 1 soicind.
+       *[other] i { $seconds } soicindí.
     }
 session = Seisiún
 shutdown = Múch
 shutdown-now = Múch anois?
 shutdown-timeout =
-    Múchfaidh an córas go huathoibríoch i
+    Múchfaidh an córas go huathoibríoch
     { $seconds ->
-        [1] 1 soicind.
-       *[other] { $seconds } soicindí.
+        [0] anois.
+        [1] i 1 soicind.
+       *[other] i { $seconds } soicindí.
     }
 suspend = Cuir ar fionraí
 user = Úsáideoir

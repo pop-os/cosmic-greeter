@@ -11,19 +11,21 @@ keyboard-layout = Layout do teclado
 restart = Reiniciar
 restart-now = Reiniciar agora?
 restart-timeout =
-    O sistema será reiniciado automaticamente em
+    O sistema será reiniciado automaticamente
     { $seconds ->
-        [1] 1 segundo.
-       *[other] { $seconds } segundos.
+        [0] agora.
+        [1] em 1 segundo.
+       *[other] em { $seconds } segundos.
     }
 session = Sessão
 shutdown = Desligar
 shutdown-now = Desligar agora?
 shutdown-timeout =
-    O sistema será desligado automaticamente em
+    O sistema será desligado automaticamente
     { $seconds ->
-        [1] 1 segundo.
-       *[other] { $seconds } segundos.
+        [0] agora.
+        [1] em 1 segundo.
+       *[other] em { $seconds } segundos.
     }
 suspend = Suspender
 user = Usuário
