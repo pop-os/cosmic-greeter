@@ -39,9 +39,7 @@ use cosmic::{
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::UserData;
 use cosmic_randr_shell::{KdlParseWithError, List};
-use cosmic_settings_subscriptions::cosmic_a11y_manager::{
-    AccessibilityEvent, AccessibilityRequest,
-};
+use cosmic_settings_a11y_manager_subscription::{AccessibilityEvent, AccessibilityRequest};
 use greetd_ipc::Request;
 use kdl::KdlDocument;
 use std::process::Stdio;
@@ -1297,7 +1295,7 @@ impl cosmic::Application for App {
                                 id: surface_id,
                                 layer: Layer::Overlay,
                                 keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                                pointer_interactivity: true,
+                                input_zone: None,
                                 anchor: Anchor::TOP | Anchor::LEFT | Anchor::BOTTOM | Anchor::RIGHT,
                                 output: IcedOutput::Output(output),
                                 namespace: "cosmic-locker".into(),
