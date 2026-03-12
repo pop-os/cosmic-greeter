@@ -37,7 +37,7 @@ use cosmic::{
     surface,
 };
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
-use cosmic_greeter_daemon::UserData;
+use cosmic_greeter_daemon::{UserData, UserFilter};
 use cosmic_randr_shell::{KdlParseWithError, List};
 use cosmic_settings_subscriptions::cosmic_a11y_manager::{
     AccessibilityEvent, AccessibilityRequest,
@@ -51,7 +51,6 @@ use std::{
     error::Error,
     fs, io,
     num::NonZeroU32,
-    path::Path,
     process,
     sync::Arc,
     time::{Duration, Instant},
@@ -92,24 +91,13 @@ async fn user_data_dbus() -> Result<Vec<UserData>, Box<dyn Error>> {
 }
 
 fn user_data_fallback() -> Vec<UserData> {
+    let user_filter = UserFilter::new();
+
     // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
     /* unsafe */
     {
         pwd::Passwd::iter()
-            .filter(|user| {
-                if user.uid < 1000 {
-                    // Skip system accounts
-                    return false;
-                }
-
-                match Path::new(&user.shell).file_name().and_then(|x| x.to_str()) {
-                    // Skip shell ending in false
-                    Some("false") => false,
-                    // Skip shell ending in nologin
-                    Some("nologin") => false,
-                    _ => true,
-                }
-            })
+            .filter(|user| user_filter.filter(user))
             .map(UserData::from)
             .collect()
     }
