@@ -1366,6 +1366,7 @@ dependencies = [
  "tracing",
  "tracing-journald",
  "tracing-subscriber",
+ "whitespace-conf",
  "xdg 3.0.0",
  "zbus 5.11.0",
 ]
@@ -7367,6 +7368,12 @@ dependencies = [
  "js-sys",
  "web-sys",
 ]
+
+[[package]]
+name = "whitespace-conf"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88bce969a15062afb2d34155402d78cd50d1ddeca000a42353ef0c71ddd68995"
 
 [[package]]
 name = "widestring"
