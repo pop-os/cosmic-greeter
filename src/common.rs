@@ -29,6 +29,9 @@ pub struct ActiveLayout {
 pub struct Common<M> {
     pub active_layouts: Vec<ActiveLayout>,
     pub active_surface_id_opt: Option<SurfaceId>,
+    pub on_battery: bool,
+    pub battery_percent: f64,
+    pub charging_limit: Option<bool>,
     pub caps_lock: bool,
     pub comp_config_handler: Option<cosmic_config::Config>,
     pub core: Core,
@@ -57,7 +60,7 @@ pub enum Message {
     Key(Modifiers, Key, Option<SmolStr>),
     NetworkIcon(Option<&'static str>),
     OutputEvent(OutputEvent, WlOutput),
-    PowerInfo(Option<(String, f64)>),
+    PowerInfo(Option<(f64, bool, bool)>),
     Prompt(String, bool, Option<String>),
     SessionLockEvent(SessionLockEvent),
     Tick,
@@ -117,6 +120,9 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             text_input_ids: HashMap::new(),
             time: crate::time::Time::new(),
             window_size: HashMap::new(),
+            battery_percent: 0.0,
+            on_battery: false,
+            charging_limit: None,
         };
         (
             app,
@@ -292,8 +298,11 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 }
             }
             Message::PowerInfo(power_info_opt) => {
-                self.power_info_opt = power_info_opt
-                    .map(|(name, level)| (widget::icon::from_name(name).into(), level));
+                if let Some((level, on_battery, threshold_enabled)) = power_info_opt {
+                    tracing::error!("power level: {}", level);
+                    self.charging_limit = Some(threshold_enabled);
+                    self.update_battery(level, on_battery);
+                }
             }
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
@@ -368,5 +377,46 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         }
 
         Subscription::batch(subscriptions)
+    }
+}
+
+impl<M> Common<M> {
+    fn update_battery(&mut self, mut percent: f64, on_battery: bool) {
+        percent = percent.clamp(0.0, 100.0);
+        self.on_battery = on_battery;
+        self.battery_percent = percent;
+        let battery_percent =
+            if self.battery_percent > 95.0 && !self.charging_limit.unwrap_or_default() {
+                100
+            } else if self.battery_percent > 80.0 && !self.charging_limit.unwrap_or_default() {
+                90
+            } else if self.battery_percent > 65.0 {
+                80
+            } else if self.battery_percent > 35.0 {
+                50
+            } else if self.battery_percent > 20.0 {
+                35
+            } else if self.battery_percent > 14.0 {
+                20
+            } else if self.battery_percent > 9.0 {
+                10
+            } else if self.battery_percent > 5.0 {
+                5
+            } else {
+                0
+            };
+        let limited = if self.charging_limit.unwrap_or_default() {
+            "limited-"
+        } else {
+            ""
+        };
+        let charging = if on_battery { "" } else { "charging-" };
+        self.power_info_opt = Some((
+            widget::icon::from_name(format!(
+                "cosmic-applet-battery-level-{battery_percent}-{limited}{charging}symbolic",
+            ))
+            .into(),
+            percent,
+        ));
     }
 }

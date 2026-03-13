@@ -40,13 +40,20 @@ xdg = "3.0"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
 wayland-client = "0.31.11"
-cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
-    "accessibility",
-    "cosmic_a11y_manager",
-] }
+# cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
+#     "accessibility",
+#     "cosmic_a11y_manager",
+# ] }
+
+# cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
+#     "greeter",
+# ] }
+cosmic-settings-accessibility-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false, branch = "iced-rebase" }
+cosmic-settings-a11y-manager-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false, branch = "iced-rebase" }
 cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
     "greeter",
 ] }
+
 cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit" }
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = [
     "client",
@@ -162,6 +169,9 @@ sctk = { package = "smithay-client-toolkit", version = "0.20.0" }
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//" }
 cctk = { git = "https://github.com/pop-os/cosmic-protocols//", package = "cosmic-client-toolkit" }
 
-# libcosmic = { path = "../libcosmic" }
-# cosmic-config = { path = "../libcosmic/cosmic-config" }
-# cosmic-theme = { path = "../libcosmic/cosmic-theme" }
+[patch."https://github.com/pop-os/libcosmic"]
+iced_core = { git = "https://github.com/pop-os/libcosmic//" }
+iced_futures = { git = "https://github.com/pop-os/libcosmic//" }
+libcosmic = { git = "https://github.com/pop-os/libcosmic//" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic//" }
+cosmic-theme = { git = "https://github.com/pop-os/libcosmic//" }

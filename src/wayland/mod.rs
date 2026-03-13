@@ -7,7 +7,7 @@ use cosmic::iced::{
     futures::{self, SinkExt},
     stream,
 };
-use cosmic_settings_subscriptions::cosmic_a11y_manager::{
+use cosmic_settings_a11y_manager_subscription::{
     self as thread, AccessibilityEvent, AccessibilityRequest,
 };
 use std::sync::LazyLock;
@@ -24,16 +24,15 @@ pub enum WaylandUpdate {
 }
 
 pub fn a11y_subscription() -> iced::Subscription<WaylandUpdate> {
-    Subscription::run_with_id(
-        std::any::TypeId::of::<WaylandUpdate>(),
+    Subscription::run_with(std::any::TypeId::of::<WaylandUpdate>(), |_| {
         stream::channel(50, move |mut output| async move {
             let mut state = State::Waiting;
 
             loop {
                 state = start_listening(state, &mut output).await;
             }
-        }),
-    )
+        })
+    })
 }
 
 async fn start_listening(
@@ -42,7 +41,8 @@ async fn start_listening(
 ) -> State {
     match state {
         State::Waiting => {
-            let mut guard = WAYLAND_RX.lock().await;
+            let mut guard: tokio::sync::MutexGuard<'_, Option<tokio::sync::mpsc::Receiver<_>>> =
+                WAYLAND_RX.lock().await;
             let rx = {
                 if guard.is_none() {
                     if let Ok(WaylandWatcher { rx, tx }) = WaylandWatcher::new() {

@@ -2,15 +2,15 @@ use cosmic::iced::{
     Subscription,
     futures::{SinkExt, StreamExt, channel::mpsc},
 };
+use futures_util::select;
 use std::{any::TypeId, time::Duration};
-use upower_dbus::UPowerProxy;
+use upower_dbus::{BatteryState, UPowerProxy};
 use zbus::{Connection, Result};
 
-pub fn subscription() -> Subscription<Option<(String, f64)>> {
+pub fn subscription() -> Subscription<Option<(f64, bool, bool)>> {
     struct PowerSubscription;
 
-    Subscription::run_with_id(
-        TypeId::of::<PowerSubscription>(),
+    Subscription::run_with(TypeId::of::<PowerSubscription>(), |_| {
         cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
@@ -25,35 +25,48 @@ pub fn subscription() -> Subscription<Option<(String, f64)>> {
 
             //TODO: should we retry on error?
             futures_util::future::pending().await
-        }),
-    )
+        })
+    })
 }
 
 //TODO: use never type?
-pub async fn handler(msg_tx: &mut mpsc::Sender<Option<(String, f64)>>) -> Result<()> {
+pub async fn handler(msg_tx: &mut mpsc::Sender<Option<(f64, bool, bool)>>) -> Result<()> {
     let zbus = Connection::system().await?;
     let upower = UPowerProxy::new(&zbus).await?;
     let dev = upower.get_display_device().await?;
 
-    let mut icon_name_changed = dev.receive_icon_name_changed().await;
-    let mut percentage_changed = dev.receive_percentage_changed().await;
+    let mut percentage_changed = dev.receive_percentage_changed().await.boxed().fuse();
+    let mut state_changed = dev.receive_state_changed().await.boxed().fuse();
+    let mut charge_threshold_enabled_changed = dev
+        .receive_charge_threshold_enabled_changed()
+        .await
+        .boxed()
+        .fuse();
     let mut interval = tokio::time::interval(Duration::from_secs(1));
 
     loop {
         let mut info_opt = None;
 
         if let Ok(percent) = dev.percentage().await {
-            if let Ok(icon_name) = dev.icon_name().await {
-                if !icon_name.is_empty() && !icon_name.eq("battery-missing-symbolic") {
-                    info_opt = Some((icon_name, percent));
-                }
+            if let Ok(state) = dev.state().await {
+                let threshold_enabled = dev.charge_threshold_enabled().await.unwrap_or_default();
+
+                info_opt = Some((
+                    percent,
+                    state == BatteryState::Discharging,
+                    threshold_enabled,
+                ));
             }
         }
 
         msg_tx.send(info_opt).await.unwrap();
 
         // Waits until icon or percentage have changed, and at least one second has passed.
-        futures_util::future::select(icon_name_changed.next(), percentage_changed.next()).await;
+        select! {
+            _ = state_changed.next() => {},
+            _ = percentage_changed.next() => {},
+            _ = charge_threshold_enabled_changed.next() => {}
+        }
         interval.tick().await;
     }
 }

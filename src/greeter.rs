@@ -39,9 +39,7 @@ use cosmic::{
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::{UserData, UserFilter};
 use cosmic_randr_shell::{KdlParseWithError, List};
-use cosmic_settings_subscriptions::cosmic_a11y_manager::{
-    AccessibilityEvent, AccessibilityRequest,
-};
+use cosmic_settings_a11y_manager_subscription::{AccessibilityEvent, AccessibilityRequest};
 use greetd_ipc::Request;
 use kdl::KdlDocument;
 use std::process::Stdio;
@@ -515,10 +513,13 @@ impl App {
             }
 
             if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
-                status_row = status_row.push(iced::widget::row![
-                    power_icon.clone(),
-                    widget::text(format!("{:.0}%", power_percent)),
-                ]);
+                status_row = status_row.push(
+                    iced::widget::row![
+                        power_icon.clone(),
+                        widget::text(format!("{:.0}%", power_percent)),
+                    ]
+                    .align_y(Alignment::Center),
+                );
             }
 
             //TODO: move code for custom dropdowns to libcosmic
@@ -536,9 +537,11 @@ impl App {
                                 .width(Length::Fixed(16.0))
                                 .into()
                         } else {
-                            widget::Space::with_width(Length::Fixed(17.0)).into()
+                            widget::space::horizontal()
+                                .width(Length::Fixed(17.0))
+                                .into()
                         },
-                        widget::Space::with_width(Length::Fixed(8.0)).into(),
+                        widget::space::horizontal().width(Length::Fixed(8.0)).into(),
                         widget::text(label)
                             .align_x(iced::alignment::Horizontal::Left)
                             .into(),
@@ -615,7 +618,7 @@ impl App {
                 }
                 let item_cnt = items.len();
                 let menu_button = widget::menu::menu_button(vec![
-                    Element::from(widget::Space::with_width(Length::Fixed(10.0))),
+                    Element::from(widget::space::horizontal().width(Length::Fixed(10.0))),
                     widget::text(fl!("enter-user"))
                         .align_x(iced::alignment::Horizontal::Left)
                         .into(),
@@ -767,7 +770,7 @@ impl App {
 
             // Add top spacing for better visual appearance
             // Bottom of the password text input field should align with bottom of time widget
-            column = column.push(widget::Space::with_height(Length::Fixed(space_height)));
+            column = column.push(widget::space::vertical().height(Length::Fixed(space_height)));
 
             match &self.socket_state {
                 SocketState::Pending => {
@@ -799,10 +802,9 @@ impl App {
                             } else {
                                 // Empty transparent box for users without icons
                                 column = column.push(
-                                    widget::container(widget::Space::new(
-                                        Length::Fixed(78.0),
-                                        Length::Fixed(78.0),
-                                    ))
+                                    widget::container(
+                                        widget::space::horizontal().width(Length::Fixed(78.0)),
+                                    )
                                     .padding(0.0)
                                     .width(Length::Fill)
                                     .height(Length::Fixed(78.0))
@@ -942,7 +944,9 @@ impl App {
                 .width(Length::Fill)
         };
         let menu = widget::container(widget::column::with_children(vec![
-            widget::Space::with_height(Length::FillPortion(1)).into(),
+            widget::space::vertical()
+                .height(Length::FillPortion(1))
+                .into(),
             widget::layer_container(
                 iced::widget::row![left_element, right_element].align_y(Alignment::Start),
             )
@@ -962,7 +966,9 @@ impl App {
             .class(cosmic::theme::Container::Background)
             .width(Length::Fixed(800.0))
             .into(),
-            widget::Space::with_height(Length::FillPortion(4)).into(),
+            widget::space::vertical()
+                .height(Length::FillPortion(4))
+                .into(),
         ]))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -1285,7 +1291,7 @@ impl cosmic::Application for App {
                                 id: surface_id,
                                 layer: Layer::Overlay,
                                 keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                                pointer_interactivity: true,
+                                input_zone: None,
                                 anchor: Anchor::TOP | Anchor::LEFT | Anchor::BOTTOM | Anchor::RIGHT,
                                 output: IcedOutput::Output(output),
                                 namespace: "cosmic-locker".into(),
@@ -1484,19 +1490,21 @@ impl cosmic::Application for App {
 
                 // Start spinner animation if not already running
                 if self.spinner_handle.is_none() {
-                    let (spinner_task, handle) = cosmic::task::stream(
-                        cosmic::iced_futures::stream::channel(1, |mut msg_tx| async move {
-                            let mut interval = time::interval(Duration::from_millis(16)); // ~60fps
-                            loop {
-                                msg_tx
-                                    .send(cosmic::Action::App(Message::SpinnerTick))
-                                    .await
-                                    .unwrap();
-                                interval.tick().await;
-                            }
-                        }),
-                    )
-                    .abortable();
+                    let (spinner_task, handle) =
+                        cosmic::task::stream(cosmic::iced_futures::stream::channel(
+                            1,
+                            |mut msg_tx: iced::futures::channel::mpsc::Sender<_>| async move {
+                                let mut interval = time::interval(Duration::from_millis(16)); // ~60fps
+                                loop {
+                                    msg_tx
+                                        .send(cosmic::Action::App(Message::SpinnerTick))
+                                        .await
+                                        .unwrap();
+                                    interval.tick().await;
+                                }
+                            },
+                        ))
+                        .abortable();
                     self.spinner_handle = Some(handle);
                     return spinner_task;
                 }
@@ -1606,22 +1614,24 @@ impl cosmic::Application for App {
                 });
 
                 if self.heartbeat_handle.is_none() {
-                    let (heartbeat, handle) = cosmic::task::stream(
-                        cosmic::iced_futures::stream::channel(1, |mut msg_tx| async move {
-                            let mut interval = time::interval(Duration::from_secs(1));
+                    let (heartbeat, handle) =
+                        cosmic::task::stream(cosmic::iced_futures::stream::channel(
+                            1,
+                            |mut msg_tx: iced::futures::channel::mpsc::Sender<_>| async move {
+                                let mut interval = time::interval(Duration::from_secs(1));
 
-                            loop {
-                                // Send heartbeat once a second to update time
-                                msg_tx
-                                    .send(cosmic::Action::App(Message::Heartbeat))
-                                    .await
-                                    .unwrap();
+                                loop {
+                                    // Send heartbeat once a second to update time
+                                    msg_tx
+                                        .send(cosmic::Action::App(Message::Heartbeat))
+                                        .await
+                                        .unwrap();
 
-                                interval.tick().await;
-                            }
-                        }),
-                    )
-                    .abortable();
+                                    interval.tick().await;
+                                }
+                            },
+                        ))
+                        .abortable();
 
                     self.heartbeat_handle = Some(handle);
                     return heartbeat;
