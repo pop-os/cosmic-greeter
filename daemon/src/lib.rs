@@ -4,6 +4,8 @@ use kdl::KdlDocument;
 use std::{
     collections::BTreeMap,
     fs,
+    io::Read,
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
 
@@ -11,6 +13,43 @@ pub use cosmic_applets_config::time::TimeAppletConfig;
 pub use cosmic_bg_config::{Color, Source as BgSource, state::State as BgState};
 pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig, ZoomConfig};
 pub use cosmic_theme::{Theme, ThemeBuilder};
+
+pub struct UserFilter {
+    uid_min: u32,
+    uid_max: u32,
+}
+
+impl UserFilter {
+    pub fn new() -> Self {
+        let login_defs_data = fs::read_to_string("/etc/login.defs").unwrap_or_default();
+        let login_defs = whitespace_conf::parse(&login_defs_data);
+        Self {
+            uid_min: login_defs
+                .get("UID_MIN")
+                .and_then(|x| x.parse::<u32>().ok())
+                .unwrap_or(1000),
+            uid_max: login_defs
+                .get("UID_MAX")
+                .and_then(|x| x.parse::<u32>().ok())
+                .unwrap_or(65000),
+        }
+    }
+
+    pub fn filter(&self, user: &pwd::Passwd) -> bool {
+        if user.uid < self.uid_min || user.uid > self.uid_max {
+            // Skip system accounts
+            return false;
+        }
+
+        match Path::new(&user.shell).file_name().and_then(|x| x.to_str()) {
+            // Skip shell ending in false
+            Some("false") => false,
+            // Skip shell ending in nologin
+            Some("nologin") => false,
+            _ => true,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 pub struct UserData {
@@ -74,14 +113,26 @@ impl UserData {
         // It may not exist if the user uses one of the system icons. In that case, we should read the
         // information in /var/lib/AccountsService/users, and then read the icon path as the user
         let icon_path = Path::new("/var/lib/AccountsService/icons").join(&self.name);
-        if icon_path.is_file() {
-            match fs::read(&icon_path) {
-                Ok(icon_data) => {
-                    self.icon_opt = Some(icon_data);
+        match fs::OpenOptions::new()
+            .read(true)
+            // Do not follow symlinks
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&icon_path)
+        {
+            Ok(mut icon_file) => {
+                let mut icon_data = Vec::new();
+                match icon_file.read_to_end(&mut icon_data) {
+                    Ok(count) => {
+                        icon_data.truncate(count);
+                        self.icon_opt = Some(icon_data);
+                    }
+                    Err(err) => {
+                        tracing::error!("failed to read icon data {:?}: {:?}", icon_path, err);
+                    }
                 }
-                Err(err) => {
-                    tracing::error!("failed to read icon {:?}: {:?}", icon_path, err);
-                }
+            }
+            Err(err) => {
+                tracing::error!("failed to open icon {:?}: {:?}", icon_path, err);
             }
         }
 

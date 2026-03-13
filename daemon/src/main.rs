@@ -1,6 +1,6 @@
 use color_eyre::eyre::Context;
-use cosmic_greeter_daemon::UserData;
-use std::{env, error::Error, future::pending, io, path::Path};
+use cosmic_greeter_daemon::{UserData, UserFilter};
+use std::{env, error::Error, ffi::CString, future::pending, io};
 use tracing::metadata::LevelFilter;
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -10,25 +10,34 @@ use zbus::{DBusError, connection::Builder};
 // callback is executed with the permissions of the specified user id. A good test is to see if
 // the /etc/shadow file can be read with a non-root user, it should fail with EPERM.
 fn run_as_user<F: FnOnce() -> T, T>(user: &pwd::Passwd, f: F) -> Result<T, io::Error> {
+    use nix::unistd::{Gid, Uid, getgroups, initgroups, setegid, seteuid, setgroups};
+
     // Save root HOME
     let root_home_opt = env::var_os("HOME");
+
+    // Save root groups
+    let root_groups = getgroups().expect("failed to get root groups");
 
     // Switch to user HOME
     unsafe {
         env::set_var("HOME", &user.dir);
     }
 
-    // Switch to user UID
-    if unsafe { libc::seteuid(user.uid) } != 0 {
-        return Err(io::Error::last_os_error());
+    // Switch to user identity
+    {
+        let name_c = CString::new(&*user.name).expect("invalid username");
+        initgroups(&name_c, Gid::from_raw(user.gid))
+            .expect("failed to set user supplementary groups");
     }
+    setegid(Gid::from_raw(user.gid)).expect("failed to set user gid");
+    seteuid(Uid::from_raw(user.uid)).expect("failed to set user uid");
 
     let t = f();
 
-    // Restore root UID
-    if unsafe { libc::seteuid(0) } != 0 {
-        panic!("failed to restore root user id")
-    }
+    // Restore root identity
+    seteuid(Uid::from_raw(0)).expect("failed to restore root uid");
+    setegid(Gid::from_raw(0)).expect("failed to restore root gid");
+    setgroups(&root_groups).expect("failed to restore root supplementary groups");
 
     // Restore root HOME
     match root_home_opt {
@@ -57,42 +66,18 @@ struct GreeterProxy;
 #[zbus::interface(name = "com.system76.CosmicGreeter")]
 impl GreeterProxy {
     fn get_user_data(&mut self) -> Result<String, GreeterError> {
+        let user_filter = UserFilter::new();
+
         // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
         // To prevent issues, this should only be called once in the entire process space at a time
         let users: Vec<_> = /* unsafe */ {
              pwd::Passwd::iter()
-                .filter(|user| {
-                    if user.uid < 1000 {
-                        // Skip system accounts
-                        return false;
-                    }
-
-                    match Path::new(&user.shell).file_name().and_then(|x| x.to_str()) {
-                        // Skip shell ending in false
-                        Some("false") => false,
-                        // Skip shell ending in nologin
-                        Some("nologin") => false,
-                        _ => true,
-                    }
-                })
+                .filter(|user| user_filter.filter(user))
                 .collect()
             };
 
         let mut user_datas = Vec::new();
         for user in users {
-            if user.uid < 1000 {
-                // Skip system accounts
-                continue;
-            }
-
-            match Path::new(&user.shell).file_name().and_then(|x| x.to_str()) {
-                // Skip shell ending in false
-                Some("false") => continue,
-                // Skip shell ending in nologin
-                Some("nologin") => continue,
-                _ => (),
-            }
-
             let mut user_data = UserData::from(user.clone());
 
             //IMPORTANT: Assume the identity of the user to ensure we don't read user file data as root
