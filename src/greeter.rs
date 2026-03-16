@@ -11,7 +11,6 @@ use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity
 use cosmic::iced::event::listen_with;
 use cosmic::iced::{Point, Size, window};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::iced_runtime::task::widget;
 use cosmic::widget::text;
 use cosmic::{
     Element,
@@ -514,10 +513,13 @@ impl App {
             }
 
             if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
-                status_row = status_row.push(iced::widget::row![
-                    power_icon.clone(),
-                    widget::text(format!("{:.0}%", power_percent)),
-                ]);
+                status_row = status_row.push(
+                    iced::widget::row![
+                        power_icon.clone(),
+                        widget::text(format!("{:.0}%", power_percent)),
+                    ]
+                    .align_y(Alignment::Center),
+                );
             }
 
             //TODO: move code for custom dropdowns to libcosmic
