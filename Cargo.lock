@@ -1103,7 +1103,7 @@ dependencies = [
 [[package]]
 name = "cosmic-applets-config"
 version = "1.0.2"
-source = "git+https://github.com/pop-os/cosmic-applets?branch=iced-rebase#7db8b111ae3f6e82957292a737ea836ac575e9b5"
+source = "git+https://github.com/pop-os/cosmic-applets#a91fc32edb63011d5cf3e4fec55990386dfb35a5"
 dependencies = [
  "cosmic-config",
  "serde",
@@ -1112,7 +1112,7 @@ dependencies = [
 [[package]]
 name = "cosmic-bg-config"
 version = "1.0.3"
-source = "git+https://github.com/pop-os/cosmic-bg?branch=iced-rebase#80ec0e08ef51ce28dc4f9b61b8bb5cddb32c3a07"
+source = "git+https://github.com/pop-os/cosmic-bg#644993abd84bf04d7b3f2211e3656002c2a6f00b"
 dependencies = [
  "cosmic-config",
  "derive_setters",
@@ -1137,7 +1137,7 @@ dependencies = [
 [[package]]
 name = "cosmic-comp-config"
 version = "1.0.0"
-source = "git+https://github.com/pop-os/cosmic-comp?branch=iced-rebase#e7843332b34b430ae2f1e6c0570bfd82bea767d5"
+source = "git+https://github.com/pop-os/cosmic-comp#b28a435b18a3c1a8dfb8dbf781b40610aca03604"
 dependencies = [
  "cosmic-config",
  "cosmic-randr-shell",
@@ -1375,7 +1375,7 @@ dependencies = [
 [[package]]
 name = "cosmic-settings-daemon-config"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/cosmic-settings-daemon?branch=iced-rebase#4e98c993f7284e5f565fdd1385c51f9ce1084d91"
+source = "git+https://github.com/pop-os/cosmic-settings-daemon#e37160f14d1e7ee428f973cd2848b4e95f83dfe1"
 dependencies = [
  "cosmic-config",
  "cosmic-theme",
