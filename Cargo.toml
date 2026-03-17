@@ -48,8 +48,8 @@ wayland-client = "0.31.11"
 # cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
 #     "greeter",
 # ] }
-cosmic-settings-accessibility-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false, branch = "iced-rebase" }
-cosmic-settings-a11y-manager-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false, branch = "iced-rebase" }
+cosmic-settings-accessibility-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false }
+cosmic-settings-a11y-manager-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false }
 cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
     "greeter",
 ] }
@@ -169,9 +169,9 @@ sctk = { package = "smithay-client-toolkit", version = "0.20.0" }
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//" }
 cctk = { git = "https://github.com/pop-os/cosmic-protocols//", package = "cosmic-client-toolkit" }
 
-[patch."https://github.com/pop-os/libcosmic"]
-iced_core = { git = "https://github.com/pop-os/libcosmic//" }
-iced_futures = { git = "https://github.com/pop-os/libcosmic//" }
-libcosmic = { git = "https://github.com/pop-os/libcosmic//" }
-cosmic-config = { git = "https://github.com/pop-os/libcosmic//" }
-cosmic-theme = { git = "https://github.com/pop-os/libcosmic//" }
+# [patch."https://github.com/pop-os/libcosmic"]
+# iced_core = { git = "https://github.com/pop-os/libcosmic//" }
+# iced_futures = { git = "https://github.com/pop-os/libcosmic//" }
+# libcosmic = { git = "https://github.com/pop-os/libcosmic//" }
+# cosmic-config = { git = "https://github.com/pop-os/libcosmic//" }
+# cosmic-theme = { git = "https://github.com/pop-os/libcosmic//" }
