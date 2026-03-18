@@ -11,7 +11,7 @@ use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity
 use cosmic::iced::event::listen_with;
 use cosmic::iced::{Point, Size, window};
 use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::widget::text;
+use cosmic::widget::{id_container, text};
 use cosmic::{
     Element,
     cosmic_config::{self, ConfigSet},
@@ -939,9 +939,16 @@ impl App {
                 column = column.push(widget::text(""));
             }
 
-            widget::container(column)
-                .align_x(Alignment::Center)
-                .width(Length::Fill)
+            id_container(
+                widget::container(column)
+                    .align_x(Alignment::Center)
+                    .width(Length::Fill),
+                if self.entering_name {
+                    iced::id::Id::new("entering_name")
+                } else {
+                    iced::id::Id::new("main_menu")
+                },
+            )
         };
         let menu = widget::container(widget::column::with_children(vec![
             widget::space::vertical()
