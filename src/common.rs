@@ -299,7 +299,6 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             }
             Message::PowerInfo(power_info_opt) => {
                 if let Some((level, on_battery, threshold_enabled)) = power_info_opt {
-                    tracing::error!("power level: {}", level);
                     self.charging_limit = Some(threshold_enabled);
                     self.update_battery(level, on_battery);
                 }
