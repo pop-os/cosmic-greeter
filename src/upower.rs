@@ -54,12 +54,14 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<(f64, bool, bool)>>) -> Re
         if let Ok(mut percent) = dev.percentage().await {
             if let Ok(state) = dev.state().await {
                 let threshold_enabled = dev.charge_threshold_enabled().await.unwrap_or_default();
-
-                let capacity = dev.capacity().await.unwrap_or(100.);
+                let mut capacity = dev.capacity().await.unwrap_or(100.);
+                if capacity <= 1. {
+                    capacity = 100.;
+                }
 
                 // compensate for declining battery capacity
                 percent = percent * 100. / capacity;
-                if matches!(state, BatteryState::FullyCharged) || percent > 100. {
+                if matches!(state, BatteryState::FullyCharged) || percent >= 100. {
                     percent = 100.;
                 }
 
