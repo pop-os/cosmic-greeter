@@ -1159,7 +1159,10 @@ impl cosmic::Application for App {
             })
             .or_else(|| session_names.first().cloned())
             .unwrap_or_default();
-        let data_idx = Some(0);
+        let data_idx = flags
+            .user_datas
+            .iter()
+            .position(|d| d.name == username);
         let selected_username = NameIndexPair { username, data_idx };
         let accessibility = Accessibility {
             helper: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config()
