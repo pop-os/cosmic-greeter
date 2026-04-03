@@ -161,6 +161,7 @@ default-features = false
 [workspace.dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
+features = ["advanced-shaping"]
 
 [patch."https://github.com/smithay/client-toolkit.git"]
 sctk = { package = "smithay-client-toolkit", version = "0.20.0" }
