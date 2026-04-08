@@ -1,5 +1,6 @@
 use cosmic::{
     app::{Core, Task},
+    iced::runtime::core::window::Id as SurfaceId,
     iced::{
         self, Rectangle, Size, Subscription,
         core::SmolStr,
@@ -9,7 +10,6 @@ use cosmic::{
         },
         keyboard::{Event as KeyEvent, Key, Modifiers},
     },
-    iced_runtime::core::window::Id as SurfaceId,
     widget,
 };
 use cosmic_config::{ConfigSet, CosmicConfigEntry};

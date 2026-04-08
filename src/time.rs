@@ -2,9 +2,7 @@ use anyhow::bail;
 use async_fn_stream::StreamEmitter;
 use chrono::{Datelike, Timelike};
 use cosmic::{
-    Task,
-    iced_core::Element,
-    style,
+    Element, Task, style,
     widget::{column, text},
 };
 use futures_util::StreamExt;
@@ -125,7 +123,7 @@ impl Time {
 
     pub fn date_time_widget<'a, M: 'a>(&self, military_time: bool) -> cosmic::Element<'a, M> {
         Element::from(
-            column()
+            column::with_capacity(2)
                 .padding(16.)
                 .spacing(12.0)
                 .push(text::title2(self.format_date(&self.now)).class(style::Text::Accent))
