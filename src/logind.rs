@@ -47,7 +47,7 @@ pub fn subscription() -> Subscription<Message> {
     struct LogindSubscription;
 
     Subscription::run_with(TypeId::of::<LogindSubscription>(), |_| {
-        cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
+        cosmic::iced::stream::channel(16, |mut msg_tx| async move {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
                 Err(err) => {
