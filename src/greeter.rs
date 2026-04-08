@@ -9,13 +9,14 @@ use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
 use cosmic::iced::event::listen_with;
+use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{Point, Size, window};
-use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::widget::{id_container, text};
 use cosmic::{
     Element,
     cosmic_config::{self, ConfigSet},
     executor,
+    iced::runtime::core::window::Id as SurfaceId,
     iced::{
         self, Alignment, Background, Border, Length, Subscription,
         event::wayland::OutputEvent,
@@ -28,7 +29,6 @@ use cosmic::{
             shell::wayland::commands::subsurface::reposition_subsurface,
         },
     },
-    iced_runtime::core::window::Id as SurfaceId,
     theme, widget,
 };
 use cosmic::{
@@ -1159,10 +1159,7 @@ impl cosmic::Application for App {
             })
             .or_else(|| session_names.first().cloned())
             .unwrap_or_default();
-        let data_idx = flags
-            .user_datas
-            .iter()
-            .position(|d| d.name == username);
+        let data_idx = flags.user_datas.iter().position(|d| d.name == username);
         let selected_username = NameIndexPair { username, data_idx };
         let accessibility = Accessibility {
             helper: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config()
@@ -1501,7 +1498,7 @@ impl cosmic::Application for App {
                 // Start spinner animation if not already running
                 if self.spinner_handle.is_none() {
                     let (spinner_task, handle) =
-                        cosmic::task::stream(cosmic::iced_futures::stream::channel(
+                        cosmic::task::stream(cosmic::iced::stream::channel(
                             1,
                             |mut msg_tx: iced::futures::channel::mpsc::Sender<_>| async move {
                                 let mut interval = time::interval(Duration::from_millis(16)); // ~60fps
@@ -1624,24 +1621,23 @@ impl cosmic::Application for App {
                 });
 
                 if self.heartbeat_handle.is_none() {
-                    let (heartbeat, handle) =
-                        cosmic::task::stream(cosmic::iced_futures::stream::channel(
-                            1,
-                            |mut msg_tx: iced::futures::channel::mpsc::Sender<_>| async move {
-                                let mut interval = time::interval(Duration::from_secs(1));
+                    let (heartbeat, handle) = cosmic::task::stream(cosmic::iced::stream::channel(
+                        1,
+                        |mut msg_tx: iced::futures::channel::mpsc::Sender<_>| async move {
+                            let mut interval = time::interval(Duration::from_secs(1));
 
-                                loop {
-                                    // Send heartbeat once a second to update time
-                                    msg_tx
-                                        .send(cosmic::Action::App(Message::Heartbeat))
-                                        .await
-                                        .unwrap();
+                            loop {
+                                // Send heartbeat once a second to update time
+                                msg_tx
+                                    .send(cosmic::Action::App(Message::Heartbeat))
+                                    .await
+                                    .unwrap();
 
-                                    interval.tick().await;
-                                }
-                            },
-                        ))
-                        .abortable();
+                                interval.tick().await;
+                            }
+                        },
+                    ))
+                    .abortable();
 
                     self.heartbeat_handle = Some(handle);
                     return heartbeat;

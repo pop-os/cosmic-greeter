@@ -4,11 +4,12 @@
 use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
+use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{Point, Rectangle, Size};
-use cosmic::iced_runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::surface;
 use cosmic::{
     Element, executor,
+    iced::runtime::core::window::Id as SurfaceId,
     iced::{
         self, Alignment, Background, Border, Length, Subscription,
         event::wayland::{OutputEvent, SessionLockEvent},
@@ -17,7 +18,6 @@ use cosmic::{
             destroy_lock_surface, get_lock_surface, lock, unlock,
         },
     },
-    iced_runtime::core::window::Id as SurfaceId,
     theme, widget,
 };
 use cosmic_config::CosmicConfigEntry;
@@ -872,7 +872,7 @@ impl cosmic::Application for App {
 
                     let username = self.flags.user_data.name.clone();
                     let (locked_task, locked_handle) =
-                        cosmic::task::stream(cosmic::iced_futures::stream::channel(
+                        cosmic::task::stream(cosmic::iced::stream::channel(
                             16,
                             |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
                                 // Send heartbeat once a second to update time.
@@ -1058,7 +1058,7 @@ impl cosmic::Application for App {
                         // Start spinner animation if not already running
                         if self.spinner_handle.is_none() {
                             let (spinner_task, handle) =
-                                cosmic::task::stream(cosmic::iced_futures::stream::channel(
+                                cosmic::task::stream(cosmic::iced::stream::channel(
                                     1,
                                     |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
                                         let mut interval =

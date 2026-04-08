@@ -39,7 +39,7 @@ fn greetd_error_to_message(error_type: greetd_ipc::ErrorType, description: &str)
 pub fn subscription() -> Subscription<Message> {
     struct GreetdSubscription;
     Subscription::run_with(std::any::TypeId::of::<GreetdSubscription>(), |_| {
-        cosmic::iced_futures::stream::channel(
+        cosmic::iced::stream::channel(
             1,
             |mut sender: cosmic::iced::futures::channel::mpsc::Sender<_>| async move {
                 let (tx, mut rx) = mpsc::channel::<greetd_ipc::Request>(1);

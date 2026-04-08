@@ -1,6 +1,7 @@
 use cosmic::iced::{
     Subscription,
     futures::{SinkExt, StreamExt, channel::mpsc},
+    stream,
 };
 use futures_util::select;
 use std::{any::TypeId, time::Duration};
@@ -11,7 +12,7 @@ pub fn subscription() -> Subscription<Option<(f64, bool, bool)>> {
     struct PowerSubscription;
 
     Subscription::run_with(TypeId::of::<PowerSubscription>(), |_| {
-        cosmic::iced_futures::stream::channel(16, |mut msg_tx| async move {
+        stream::channel(16, |mut msg_tx| async move {
             match handler(&mut msg_tx).await {
                 Ok(()) => {}
                 Err(err) => {
