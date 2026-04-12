@@ -1,6 +1,6 @@
 cancel = Отмена
 keyboard-layout = Раскладка клавиатуры
-restart = Перезагрузить
+restart = Перезагрузка
 restart-now = Перезагрузить сейчас?
 restart-timeout =
     Система автоматически перезагрузится
@@ -10,7 +10,7 @@ restart-timeout =
        *[other] через { $seconds } сек.
     }
 session = Сеанс
-shutdown = Выключить
+shutdown = Выключение
 shutdown-now = Выключить сейчас?
 shutdown-timeout =
     Система автоматически выключится

@@ -12,18 +12,20 @@ keyboard-layout = Klaviatūros išdėstymas
 restart = Paleisti iš naujo
 restart-now = Perkrauti įrenginį dabar?
 restart-timeout =
-    Sistema restartuosis po
+    Sistema restartuosis
     { $seconds ->
-        [1] 1 sekundės.
-       *[other] { $seconds } sekundžių.
+        [0] dabar
+        [1] po 1 sekundės.
+       *[other] po { $seconds } sekundžių.
     }
 session = Sesija
 shutdown = Išjungti
 shutdown-timeout =
-    Sistema automatiškai išsijungs po
+    Sistema automatiškai išsijungs
     { $seconds ->
-        [1] 1 sekundės.
-       *[other] { $seconds } sekundžių.
+        [0] dabar.
+        [1] po 1 sekundės.
+       *[other] po { $seconds } sekundžių.
     }
 user = Naudotojas
 auth-error-default = Autentifikacijos klaida. Bandykite dar karta.

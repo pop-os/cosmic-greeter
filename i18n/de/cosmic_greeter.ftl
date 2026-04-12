@@ -1,5 +1,5 @@
 cancel = Abbrechen
-caps-lock = Feststelltaste ist eingeschaltet.
+caps-lock = Feststelltaste ist aktiviert.
 keyboard-layout = Tastaturbelegung
 restart = Neustart
 restart-now = Jetzt neu starten?
@@ -34,3 +34,4 @@ auth-error-credentials = Falsches Passwort. Bitte überprüfe deine Tastaturbele
 auth-error-denied = Zugriff verweigert.
 auth-error-maxtries = Zu viele fehlgeschlagene Authentifizierungsversuche.
 auth-error-account = Konto ist nicht verfügbar oder deaktiviert.
+authenticating = Authentifizierung...
