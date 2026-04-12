@@ -5,7 +5,7 @@ accessibility = 无障碍功能
     .invert-colors = 颜色反转
 cancel = 取消
 caps-lock = 大写锁定已开启。
-enter-user = 手动输入用户名...
+enter-user = 手动输入用户名…
 type-username = 用户名：
 keyboard-layout = 键盘布局
 restart = 重启
@@ -29,7 +29,7 @@ shutdown-timeout =
     } 自动关机
 suspend = 待机
 user = 用户
-authenticating = 正在验证...
+authenticating = 正在验证…
 auth-error-default = 验证失败。请重试。
 auth-error-credentials = 密码错误。请检查您的键盘布局并重试。
 auth-error-denied = 访问被拒绝。
