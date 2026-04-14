@@ -1,7 +1,11 @@
 type-username = 사용자 이름:
 keyboard-layout = 키보드 레이아웃
 restart = 재시작
-restart-timeout = { $seconds }초 후 시스템이 자동으로 재시작됩니다.
+restart-timeout =
+    { $seconds ->
+        [0] 지금
+       *[other] { $seconds }초 후
+    } 시스템이 자동으로 재시작됩니다.
 session = 세션
 shutdown = 종료
 user = 사용자
@@ -14,7 +18,11 @@ accessibility = 접근성
 caps-lock = Caps Lock이 활성화되어 있습니다.
 auth-error-default = 인증에 실패했습니다. 재시도 해주세요.
 shutdown-now = 지금 종료할까요?
-shutdown-timeout = { $seconds } 초 후 시스템이 자동으로 종료됩니다.
+shutdown-timeout =
+    { $seconds ->
+        [0] 지금
+       *[other] { $seconds }초 후
+    } 시스템이 자동으로 종료됩니다.
 auth-error-credentials = 올바르지 않은 암호입니다. 키보드 레이아웃을 확인하고 다시 시도해주세요.
 suspend = 절전
 restart-now = 지금 재시작할까요?

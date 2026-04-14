@@ -12,7 +12,7 @@ restart-timeout =
        *[other] { $seconds } sekunder.
     }
 shutdown = Slå av
-suspend = Dvalemodus
+suspend = Hvilemodus
 accessibility = TIlgjengelighet
     .screen-reader = Skjermleser
     .magnifier = Forstørrelsesglass

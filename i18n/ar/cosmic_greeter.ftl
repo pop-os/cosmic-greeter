@@ -31,3 +31,6 @@ suspend = علِّق
 user = المستخدم
 authenticating = يستوثّق...
 auth-error-maxtries = عدد كبير جدًا من محاولات الاستيثاق الفاشلة.
+auth-error-credentials = كلمة السر غير صحيحة. يُرجى التحقق من تخطيط لوحة المفاتيح والمحاولة مرة أخرى.
+auth-error-denied = رُفض الوصول.
+auth-error-account = الحساب غير متاح أو مُعطّل.
