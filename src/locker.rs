@@ -406,8 +406,36 @@ impl App {
                     .width(Length::Fixed(240.0))
             };
 
+            let layout_label = self.common.active_layouts.first().map(|l| {
+                // Layout codes like "us", "ru", "de" become "US"/"RU"/"DE".
+                // Cap at 2 chars so exotic codes like "latam"/"epo" don't
+                // make the button jump width between switches.
+                l.layout.chars().take(2).collect::<String>().to_uppercase()
+            });
+            // Match sibling bare-icon buttons in height (libcosmic icon default).
+            const ICON_SIZE: u16 = 16;
+            // Fixed width so "RU"/"EN" don't resize the button between switches.
+            const LABEL_WIDTH: f32 = 20.0;
+            let keyboard_button_content: Element<Message> = match layout_label {
+                Some(label) => widget::container(
+                    iced::widget::row![
+                        widget::icon::from_name("input-keyboard-symbolic").size(ICON_SIZE),
+                        widget::container(widget::text(label).size(12))
+                            .width(iced::Length::Fixed(LABEL_WIDTH))
+                            .align_x(iced::Alignment::Center),
+                    ]
+                    .spacing(4.0)
+                    .align_y(iced::Alignment::Center),
+                )
+                .height(iced::Length::Fixed(f32::from(ICON_SIZE)))
+                .align_y(iced::Alignment::Center)
+                .into(),
+                None => widget::icon::from_name("input-keyboard-symbolic")
+                    .size(ICON_SIZE)
+                    .into(),
+            };
             let mut input_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
+                widget::button::custom(keyboard_button_content)
                     .padding(12.0)
                     .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
             )
