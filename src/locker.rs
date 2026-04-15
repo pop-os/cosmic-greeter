@@ -414,8 +414,44 @@ impl App {
                     .width(Length::Fixed(240.0))
             };
 
+            let layout_label = self.common.active_layouts.first().map(|l| {
+                // Layout codes like "us", "ru", "de" become "US"/"RU"/"DE".
+                // Cap at 2 chars so exotic codes like "latam"/"epo" don't
+                // make the button jump width between switches.
+                l.layout.chars().take(2).collect::<String>().to_uppercase()
+            });
+            // Match the bare-icon sibling buttons (suspend, etc.) in height.
+            // libcosmic's default icon size is 16 (see cosmic::widget::icon),
+            // so a plain `button::custom(icon)` renders at 16 + 2*padding.
+            // Our icon+text row would otherwise be taller because text at
+            // its default body size has a line-box that exceeds 16 px.
+            // Pinning the container to the icon height and using a text
+            // size whose line-box fits inside 16 keeps the keyboard button
+            // flush with the adjacent circular buttons.
+            const ICON_SIZE: u16 = 16;
+            // Fixed label width so the button doesn't resize when switching
+            // between layout codes of different character widths ("RU" vs "EN").
+            const LABEL_WIDTH: f32 = 20.0;
+            let keyboard_button_content: Element<Message> = match layout_label {
+                Some(label) => widget::container(
+                    iced::widget::row![
+                        widget::icon::from_name("input-keyboard-symbolic").size(ICON_SIZE),
+                        widget::container(widget::text(label).size(12))
+                            .width(iced::Length::Fixed(LABEL_WIDTH))
+                            .align_x(iced::Alignment::Center),
+                    ]
+                    .spacing(4.0)
+                    .align_y(iced::Alignment::Center),
+                )
+                .height(iced::Length::Fixed(f32::from(ICON_SIZE)))
+                .align_y(iced::Alignment::Center)
+                .into(),
+                None => widget::icon::from_name("input-keyboard-symbolic")
+                    .size(ICON_SIZE)
+                    .into(),
+            };
             let mut input_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
+                widget::button::custom(keyboard_button_content)
                     .padding(12.0)
                     .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
             )
