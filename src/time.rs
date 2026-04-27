@@ -1,6 +1,5 @@
 use anyhow::bail;
 use async_fn_stream::StreamEmitter;
-use chrono::{Datelike, Timelike};
 use cosmic::{
     Element, Task, style,
     widget::{column, text},
@@ -8,12 +7,13 @@ use cosmic::{
 use futures_util::StreamExt;
 use icu::{
     datetime::{
-        DateTimeFormatter, DateTimeFormatterPreferences, fieldsets,
-        input::{Date, DateTime, Time as IcuTime},
+        DateTimeFormatter, DateTimeFormatterPreferences, fieldsets, input::DateTime,
         options::TimePrecision,
     },
     locale::{Locale, preferences::extensions::unicode::keywords::HourCycle},
 };
+use jiff::tz::TimeZone;
+use jiff_icu::ConvertFrom;
 use std::time::Duration;
 use timedate_zbus::TimeDateProxy;
 use tokio::time;
@@ -21,8 +21,8 @@ use tokio::time;
 #[derive(Debug, Clone)]
 pub struct Time {
     locale: Locale,
-    timezone: Option<chrono_tz::Tz>,
-    now: chrono::DateTime<chrono::FixedOffset>,
+    timezone: Option<TimeZone>,
+    now: jiff::Zoned,
 }
 
 impl Time {
@@ -53,7 +53,7 @@ impl Time {
         }
 
         let locale = get_local();
-        let now = chrono::Local::now().fixed_offset();
+        let now = jiff::Zoned::now();
 
         Self {
             locale,
@@ -62,7 +62,7 @@ impl Time {
         }
     }
 
-    pub fn set_tz(&mut self, tz: chrono_tz::Tz) {
+    pub fn set_tz(&mut self, tz: TimeZone) {
         self.timezone = Some(tz);
         self.tick();
     }
@@ -70,30 +70,19 @@ impl Time {
     pub fn tick(&mut self) {
         self.now = self
             .timezone
-            .map(|tz| chrono::Local::now().with_timezone(&tz).fixed_offset())
-            .unwrap_or_else(|| chrono::Local::now().into());
+            .as_ref()
+            .map(|tz| jiff::Timestamp::now().to_zoned(tz.clone()))
+            .unwrap_or_else(|| jiff::Zoned::now());
     }
 
-    pub fn format_date<D: Datelike>(&self, date: &D) -> String {
+    pub fn format_date(&self) -> String {
         let prefs = DateTimeFormatterPreferences::from(&self.locale);
         let dtf = DateTimeFormatter::try_new(prefs, fieldsets::MDE::long()).unwrap();
-
-        let datetime = DateTime {
-            date: Date::try_new_gregorian(date.year(), date.month() as u8, date.day() as u8)
-                .unwrap(),
-            time: IcuTime::try_new(
-                self.now.hour() as u8,
-                self.now.minute() as u8,
-                self.now.second() as u8,
-                0,
-            )
-            .unwrap(),
-        };
-
-        dtf.format(&datetime).to_string()
+        dtf.format(&DateTime::convert_from(self.now.datetime()))
+            .to_string()
     }
 
-    pub fn format_time<D: Datelike>(&self, date: &D, military_time: bool) -> String {
+    pub fn format_time(&self, military_time: bool) -> String {
         let mut prefs = DateTimeFormatterPreferences::from(&self.locale);
         prefs.hour_cycle = Some(if military_time {
             HourCycle::H23
@@ -105,30 +94,18 @@ impl Time {
             fieldsets::T::medium().with_time_precision(TimePrecision::Minute),
         )
         .unwrap();
-
-        let datetime = DateTime {
-            date: Date::try_new_gregorian(date.year(), date.month() as u8, date.day() as u8)
-                .unwrap(),
-            time: IcuTime::try_new(
-                self.now.hour() as u8,
-                self.now.minute() as u8,
-                self.now.second() as u8,
-                0,
-            )
-            .unwrap(),
-        };
-
-        dtf.format(&datetime).to_string()
+        dtf.format(&DateTime::convert_from(self.now.datetime()))
+            .to_string()
     }
 
-    pub fn date_time_widget<'a, M: 'a>(&self, military_time: bool) -> cosmic::Element<'a, M> {
+    pub fn date_time_widget<'a, M: 'a>(&self, military_time: bool) -> Element<'a, M> {
         Element::from(
             column::with_capacity(2)
                 .padding(16.)
                 .spacing(12.0)
-                .push(text::title2(self.format_date(&self.now)).class(style::Text::Accent))
+                .push(text::title2(self.format_date()).class(style::Text::Accent))
                 .push(
-                    text(self.format_time(&self.now, military_time))
+                    text(self.format_time(military_time))
                         .size(if military_time { 112. } else { 75. })
                         .class(style::Text::Accent),
                 ),
@@ -136,7 +113,7 @@ impl Time {
     }
 }
 
-pub fn tz_updates() -> Task<chrono_tz::Tz> {
+pub fn tz_updates() -> Task<TimeZone> {
     Task::stream(async_fn_stream::fn_stream(|emitter| async move {
         loop {
             if let Err(err) = tz_stream(&emitter).await {
@@ -159,7 +136,7 @@ pub fn tick() -> Task<()> {
 
             // Calculate a delta if we're ticking per minute to keep ticks stable
             // Based on i3status-rust
-            let current = chrono::Local::now().second() as u64 % 60;
+            let current = jiff::Zoned::now().second() as u64 % 60;
             if current != 0 {
                 timer.reset_after(time::Duration::from_secs(60 - current));
             }
@@ -167,7 +144,7 @@ pub fn tick() -> Task<()> {
     }))
 }
 
-pub async fn tz_stream(emitter: &StreamEmitter<chrono_tz::Tz>) -> anyhow::Result<()> {
+pub async fn tz_stream(emitter: &StreamEmitter<TimeZone>) -> anyhow::Result<()> {
     let Ok(conn) = zbus::Connection::system().await else {
         bail!("No zbus system connection.");
     };
@@ -184,7 +161,7 @@ pub async fn tz_stream(emitter: &StreamEmitter<chrono_tz::Tz>) -> anyhow::Result
         let Ok(tz) = property.get().await else {
             bail!("Failed to get property");
         };
-        let Ok(tz) = tz.parse::<chrono_tz::Tz>() else {
+        let Ok(tz) = TimeZone::get(&tz) else {
             bail!("Failed to parse timezone.");
         };
         emitter.emit(tz).await;

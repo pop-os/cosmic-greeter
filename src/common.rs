@@ -64,7 +64,7 @@ pub enum Message {
     Prompt(String, bool, Option<String>),
     SessionLockEvent(SessionLockEvent),
     Tick,
-    Tz(chrono_tz::Tz),
+    Tz(jiff::tz::TimeZone),
 }
 
 impl<M: From<Message> + Send + 'static> Common<M> {
