@@ -41,10 +41,10 @@ impl Time {
                     }
 
                     // Try language-only fallback (e.g., "en" from "en-US")
-                    if let Some(lang) = cleaned_locale.split('-').next() {
-                        if let Ok(locale) = Locale::try_from_str(lang) {
-                            return locale;
-                        }
+                    if let Some(lang) = cleaned_locale.split('-').next()
+                        && let Ok(locale) = Locale::try_from_str(lang)
+                    {
+                        return locale;
                     }
                 }
             }
@@ -72,7 +72,7 @@ impl Time {
             .timezone
             .as_ref()
             .map(|tz| jiff::Timestamp::now().to_zoned(tz.clone()))
-            .unwrap_or_else(|| jiff::Zoned::now());
+            .unwrap_or_else(jiff::Zoned::now);
     }
 
     pub fn format_date(&self) -> String {
