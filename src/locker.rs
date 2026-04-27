@@ -325,7 +325,7 @@ pub struct App {
 }
 
 impl App {
-    fn menu(&self, surface_id: SurfaceId) -> Element<Message> {
+    fn menu(&self, surface_id: SurfaceId) -> Element<'_, Message> {
         let window_width = self
             .common
             .window_size
@@ -1132,10 +1132,10 @@ impl cosmic::Application for App {
                     }
                     self.spinner_rotation = 0.0;
                     // Try to create lockfile when locking
-                    if let Some(ref lockfile) = self.flags.lockfile_opt {
-                        if let Err(err) = fs::File::create(lockfile) {
-                            tracing::warn!("failed to create lockfile {:?}: {}", lockfile, err);
-                        }
+                    if let Some(ref lockfile) = self.flags.lockfile_opt
+                        && let Err(err) = fs::File::create(lockfile)
+                    {
+                        tracing::warn!("failed to create lockfile {:?}: {}", lockfile, err);
                     }
                     // Tell compositor to lock
                     return lock();
@@ -1165,10 +1165,10 @@ impl cosmic::Application for App {
                         }
                         self.spinner_rotation = 0.0;
                         // Try to delete lockfile when unlocking
-                        if let Some(ref lockfile) = self.flags.lockfile_opt {
-                            if let Err(err) = fs::remove_file(lockfile) {
-                                tracing::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
-                            }
+                        if let Some(ref lockfile) = self.flags.lockfile_opt
+                            && let Err(err) = fs::remove_file(lockfile)
+                        {
+                            tracing::warn!("failed to remove lockfile {:?}: {}", lockfile, err);
                         }
 
                         // Destroy lock surfaces
@@ -1204,12 +1204,12 @@ impl cosmic::Application for App {
     }
 
     // Not used for layer surface window
-    fn view(&self) -> Element<Self::Message> {
+    fn view(&self) -> Element<'_, Self::Message> {
         unimplemented!()
     }
 
     /// Creates a view after each update.
-    fn view_window(&self, surface_id: SurfaceId) -> Element<Self::Message> {
+    fn view_window(&self, surface_id: SurfaceId) -> Element<'_, Self::Message> {
         let img = self
             .common
             .surface_images

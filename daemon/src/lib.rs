@@ -19,8 +19,8 @@ pub struct UserFilter {
     uid_max: u32,
 }
 
-impl UserFilter {
-    pub fn new() -> Self {
+impl Default for UserFilter {
+    fn default() -> Self {
         let login_defs_data = fs::read_to_string("/etc/login.defs").unwrap_or_default();
         let login_defs = whitespace_conf::parse(&login_defs_data);
         Self {
@@ -33,6 +33,12 @@ impl UserFilter {
                 .and_then(|x| x.parse::<u32>().ok())
                 .unwrap_or(65000),
         }
+    }
+}
+
+impl UserFilter {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn filter(&self, user: &pwd::Passwd) -> bool {
@@ -80,22 +86,18 @@ impl UserData {
                 })
         });
         for (_, source) in self.bg_state.wallpapers.iter() {
-            match source {
-                //TODO: do not reread duplicate paths, cache data by path?
-                BgSource::Path(path) => {
-                    if !self.bg_path_data.contains_key(path) {
-                        match fs::read(path) {
-                            Ok(bytes) => {
-                                self.bg_path_data.insert(path.clone(), bytes);
-                            }
-                            Err(err) => {
-                                tracing::error!("failed to read wallpaper {:?}: {:?}", path, err);
-                            }
-                        }
+            //TODO: do not reread duplicate paths, cache data by path?
+            if let BgSource::Path(path) = source
+                && !self.bg_path_data.contains_key(path)
+            {
+                match fs::read(path) {
+                    Ok(bytes) => {
+                        self.bg_path_data.insert(path.clone(), bytes);
+                    }
+                    Err(err) => {
+                        tracing::error!("failed to read wallpaper {:?}: {:?}", path, err);
                     }
                 }
-                // Other types not supported
-                _ => {}
             }
         }
     }
