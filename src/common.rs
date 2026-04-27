@@ -204,48 +204,48 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         self.update_wallpapers(user_data);
 
         // From cosmic-applet-input-sources
-        if let Some(keyboard_layouts) = &self.layouts_opt {
-            if let Some(xkb_config) = &user_data.xkb_config_opt {
-                self.active_layouts.clear();
-                let config_layouts = xkb_config.layout.split_terminator(',');
-                let config_variants = xkb_config
-                    .variant
-                    .split_terminator(',')
-                    .chain(std::iter::repeat(""));
-                'outer: for (config_layout, config_variant) in config_layouts.zip(config_variants) {
-                    for xkb_layout in keyboard_layouts.layouts() {
-                        if config_layout != xkb_layout.name() {
-                            continue;
-                        }
-                        if config_variant.is_empty() {
-                            let active_layout = ActiveLayout {
-                                description: xkb_layout.description().to_owned(),
-                                layout: config_layout.to_owned(),
-                                variant: config_variant.to_owned(),
-                            };
-                            self.active_layouts.push(active_layout);
-                            continue 'outer;
-                        }
-
-                        let Some(xkb_variants) = xkb_layout.variants() else {
-                            continue;
+        if let Some(keyboard_layouts) = &self.layouts_opt
+            && let Some(xkb_config) = &user_data.xkb_config_opt
+        {
+            self.active_layouts.clear();
+            let config_layouts = xkb_config.layout.split_terminator(',');
+            let config_variants = xkb_config
+                .variant
+                .split_terminator(',')
+                .chain(std::iter::repeat(""));
+            'outer: for (config_layout, config_variant) in config_layouts.zip(config_variants) {
+                for xkb_layout in keyboard_layouts.layouts() {
+                    if config_layout != xkb_layout.name() {
+                        continue;
+                    }
+                    if config_variant.is_empty() {
+                        let active_layout = ActiveLayout {
+                            description: xkb_layout.description().to_owned(),
+                            layout: config_layout.to_owned(),
+                            variant: config_variant.to_owned(),
                         };
-                        for xkb_variant in xkb_variants {
-                            if config_variant != xkb_variant.name() {
-                                continue;
-                            }
-                            let active_layout = ActiveLayout {
-                                description: xkb_variant.description().to_owned(),
-                                layout: config_layout.to_owned(),
-                                variant: config_variant.to_owned(),
-                            };
-                            self.active_layouts.push(active_layout);
-                            continue 'outer;
+                        self.active_layouts.push(active_layout);
+                        continue 'outer;
+                    }
+
+                    let Some(xkb_variants) = xkb_layout.variants() else {
+                        continue;
+                    };
+                    for xkb_variant in xkb_variants {
+                        if config_variant != xkb_variant.name() {
+                            continue;
                         }
+                        let active_layout = ActiveLayout {
+                            description: xkb_variant.description().to_owned(),
+                            layout: config_layout.to_owned(),
+                            variant: config_variant.to_owned(),
+                        };
+                        self.active_layouts.push(active_layout);
+                        continue 'outer;
                     }
                 }
-                tracing::info!("{:?}", self.active_layouts);
             }
+            tracing::info!("{:?}", self.active_layouts);
         }
     }
 
@@ -271,20 +271,19 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                     && !modifiers.alt()
                     && matches!(key, Key::Character(_))
                 {
-                    if let Some(text) = text {
-                        if let Some((_, _, Some(value))) = &mut self.prompt_opt {
-                            value.push_str(&text);
-                        }
+                    if let Some(text) = text
+                        && let Some((_, _, Some(value))) = &mut self.prompt_opt
+                    {
+                        value.push_str(&text);
                     }
 
-                    if let Some(surface_id) = self.active_surface_id_opt {
-                        if let Some(text_input_id) = self
+                    if let Some(surface_id) = self.active_surface_id_opt
+                        && let Some(text_input_id) = self
                             .surface_names
                             .get(&surface_id)
                             .and_then(|id| self.text_input_ids.get(id))
-                        {
-                            return widget::text_input::focus(text_input_id.clone());
-                        }
+                    {
+                        return widget::text_input::focus(text_input_id.clone());
                     }
                 }
             }
@@ -306,17 +305,15 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
                 self.prompt_opt = Some((prompt, secret, value_opt));
-                if prompt_was_none {
-                    if let Some(surface_id) = self.active_surface_id_opt {
-                        if let Some(text_input_id) = self
-                            .surface_names
-                            .get(&surface_id)
-                            .and_then(|id| self.text_input_ids.get(id))
-                        {
-                            tracing::info!("focus surface found id {:?}", text_input_id);
-                            return widget::text_input::focus(text_input_id.clone());
-                        }
-                    }
+                if prompt_was_none
+                    && let Some(surface_id) = self.active_surface_id_opt
+                    && let Some(text_input_id) = self
+                        .surface_names
+                        .get(&surface_id)
+                        .and_then(|id| self.text_input_ids.get(id))
+                {
+                    tracing::info!("focus surface found id {:?}", text_input_id);
+                    return widget::text_input::focus(text_input_id.clone());
                 }
             }
             Message::SessionLockEvent(lock_event) => {

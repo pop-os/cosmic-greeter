@@ -77,16 +77,16 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Option<&'static str>>) -> Result<
                         };
                     }
                     Some(SpecificDevice::Wireless(wireless)) => {
-                        if let Ok(ap) = wireless.active_access_point().await {
-                            if let Ok(strength) = ap.strength().await {
-                                // Wireless always overrides with the highest strength
-                                icon = match icon {
-                                    NetworkIcon::Wireless(other_strength) => {
-                                        NetworkIcon::Wireless(cmp::max(strength, other_strength))
-                                    }
-                                    _ => NetworkIcon::Wireless(strength),
-                                };
-                            }
+                        if let Ok(ap) = wireless.active_access_point().await
+                            && let Ok(strength) = ap.strength().await
+                        {
+                            // Wireless always overrides with the highest strength
+                            icon = match icon {
+                                NetworkIcon::Wireless(other_strength) => {
+                                    NetworkIcon::Wireless(cmp::max(strength, other_strength))
+                                }
+                                _ => NetworkIcon::Wireless(strength),
+                            };
                         }
                     }
                     _ => {}
