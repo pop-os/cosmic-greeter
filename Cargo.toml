@@ -10,8 +10,8 @@ vergen = { version = "8", features = ["git", "gitcl"] }
 anyhow = "1"
 async-fn-stream = "0.3"
 icu = { version = "2.0.0", features = ["compiled_data"] }
-chrono-tz = "0.10"
-chrono = { version = "0.4", features = ["unstable-locales"] }
+jiff = "0.2"
+jiff-icu = "0.2"
 cosmic-applets-config.workspace = true
 cosmic-bg-config.workspace = true
 cosmic-comp-config.workspace = true
