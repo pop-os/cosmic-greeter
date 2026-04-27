@@ -9,7 +9,7 @@ vergen = { version = "8", features = ["git", "gitcl"] }
 [dependencies]
 anyhow = "1"
 async-fn-stream = "0.3"
-icu = { version = "2.0.0", features = ["compiled_data"] }
+icu = { version = "2.2.0", features = ["compiled_data"] }
 jiff = "0.2"
 jiff-icu = "0.2"
 cosmic-applets-config.workspace = true
@@ -39,15 +39,12 @@ xkb-data = "0.2"
 xdg = "3.0"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
-wayland-client = "0.31.11"
+wayland-client = "0.31.14"
 # cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
 #     "accessibility",
 #     "cosmic_a11y_manager",
 # ] }
 
-# cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
-#     "greeter",
-# ] }
 cosmic-settings-accessibility-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false }
 cosmic-settings-a11y-manager-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false }
 cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
@@ -63,14 +60,12 @@ cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default
 cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # For logind integration using logind feature
 logind-zbus = { version = "5", optional = true }
-# Fix zbus compilation by manually adding nix with user feature
-nix = { workspace = true, optional = true }
 # For power status with upower feature
 upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # Required for some features
 zbus = { workspace = true }
 # CLI arguments
-clap_lex = "0.7"
+clap_lex = "1.1"
 # Internationalization
 i18n-embed = { version = "0.16", features = [
     "fluent-system",
@@ -78,7 +73,7 @@ i18n-embed = { version = "0.16", features = [
 ] }
 i18n-embed-fl = "0.10"
 rust-embed = "8"
-futures-util = "0.3.31"
+futures-util = "0.3.32"
 timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
 cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
@@ -113,23 +108,20 @@ opt-level = 2
 
 [workspace]
 members = ["cosmic-greeter-config", "daemon"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
-rust-version = "1.85.0"
+rust-version = "1.93"
 
 [workspace.dependencies]
 tracing = "0.1"
 tracing-journald = { version = "0.3" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 color-eyre = "0.6.5"
-
-# Fix zbus compilation by manually adding nix with user feature
-nix = { version = "0.30", features = ["user"] }
 pwd = "1.4.0"
-ron = "0.11"
+ron = "0.12"
 serde = "1"
-tokio = "1.47.1"
+tokio = "1.52.1"
 zbus = "5"
 kdl = "6"
 cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false }
@@ -162,9 +154,6 @@ default-features = false
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
 features = ["advanced-shaping"]
-
-[patch."https://github.com/smithay/client-toolkit.git"]
-sctk = { package = "smithay-client-toolkit", version = "0.20.0" }
 
 [patch."https://github.com/pop-os/cosmic-protocols"]
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//" }

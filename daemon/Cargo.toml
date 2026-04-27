@@ -8,6 +8,7 @@ edition = "2024"
 [dependencies]
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 libc = "0.2"
+nix = { version = "0.31", features = ["user"] }
 cosmic-applets-config.workspace = true
 cosmic-bg-config.workspace = true
 cosmic-comp-config.workspace = true
@@ -16,7 +17,6 @@ cosmic-theme.workspace = true
 tracing.workspace = true
 tracing-journald = { workspace = true, optional = true }
 color-eyre.workspace = true
-nix.workspace = true
 pwd.workspace = true
 ron.workspace = true
 serde.workspace = true
