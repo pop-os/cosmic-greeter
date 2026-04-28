@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use cctk::sctk::reexports::calloop;
-use cosmic::iced::{
-    self, Subscription,
-    futures::{self, SinkExt},
-    stream,
-};
+use cosmic::iced::futures::{self, SinkExt};
+use cosmic::iced::{self, Subscription, stream};
 use cosmic_settings_a11y_manager_subscription::{
     self as thread, AccessibilityEvent, AccessibilityRequest,
 };

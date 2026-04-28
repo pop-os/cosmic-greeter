@@ -8,63 +8,51 @@ use cctk::sctk::reexports::calloop;
 use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
+use cosmic::cosmic_config::{self, ConfigSet};
+use cosmic::cosmic_theme::{self, CosmicPalette};
+use cosmic::desktop::fde::{DesktopEntry, get_languages_from_env};
 use cosmic::iced::event::listen_with;
+use cosmic::iced::event::wayland::OutputEvent;
+use cosmic::iced::futures::SinkExt;
+use cosmic::iced::platform_specific::runtime::wayland::layer_surface::{
+    IcedMargin, IcedOutput, SctkLayerSurfaceSettings,
+};
+use cosmic::iced::platform_specific::shell::wayland::commands::layer_surface::{
+    Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, get_layer_surface,
+};
+use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::reposition_subsurface;
+use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
-use cosmic::iced::{Point, Size, window};
+use cosmic::iced::{
+    self, Alignment, Background, Border, Length, Point, Size, Subscription, window,
+};
 use cosmic::widget::{id_container, text};
-use cosmic::{
-    Element,
-    cosmic_config::{self, ConfigSet},
-    executor,
-    iced::runtime::core::window::Id as SurfaceId,
-    iced::{
-        self, Alignment, Background, Border, Length, Subscription,
-        event::wayland::OutputEvent,
-        futures::SinkExt,
-        platform_specific::{
-            runtime::wayland::layer_surface::{IcedMargin, IcedOutput, SctkLayerSurfaceSettings},
-            shell::wayland::commands::layer_surface::{
-                Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, get_layer_surface,
-            },
-            shell::wayland::commands::subsurface::reposition_subsurface,
-        },
-    },
-    theme, widget,
-};
-use cosmic::{
-    cosmic_theme::{self, CosmicPalette},
-    desktop::fde::{DesktopEntry, get_languages_from_env},
-    surface,
-};
+use cosmic::{Element, executor, surface, theme, widget};
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
 use cosmic_greeter_daemon::{UserData, UserFilter};
 use cosmic_randr_shell::{KdlParseWithError, List};
 use cosmic_settings_a11y_manager_subscription::{AccessibilityEvent, AccessibilityRequest};
 use greetd_ipc::Request;
 use kdl::KdlDocument;
+use std::collections::{HashMap, hash_map};
+use std::error::Error;
+use std::num::NonZeroU32;
 use std::process::Stdio;
-use std::sync::LazyLock;
-use std::{
-    collections::{HashMap, hash_map},
-    error::Error,
-    fs, io,
-    num::NonZeroU32,
-    process,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
+use std::{fs, io, process};
 use tokio::process::Child;
 use tokio::time;
 use tracing::metadata::LevelFilter;
 use tracing::warn;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use wayland_client::{Proxy, protocol::wl_output::WlOutput};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{EnvFilter, fmt};
+use wayland_client::Proxy;
+use wayland_client::protocol::wl_output::WlOutput;
 use zbus::{Connection, proxy};
 
-use crate::{
-    common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT},
-    fl,
-};
+use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT};
+use crate::fl;
 
 static USERNAME_ID: LazyLock<iced::id::Id> = LazyLock::new(|| iced::id::Id::new("username-id"));
 

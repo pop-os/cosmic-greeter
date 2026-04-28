@@ -1,10 +1,15 @@
 use color_eyre::eyre::Context;
 use cosmic_greeter_daemon::{UserData, UserFilter};
-use std::{env, error::Error, ffi::CString, future::pending, io};
+use std::error::Error;
+use std::ffi::CString;
+use std::future::pending;
+use std::{env, io};
 use tracing::metadata::LevelFilter;
 use tracing::warn;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use zbus::{DBusError, connection::Builder};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{EnvFilter, fmt};
+use zbus::DBusError;
+use zbus::connection::Builder;
 
 //IMPORTANT: this function is critical to the security of this proxy. It must ensure that the
 // callback is executed with the permissions of the specified user id. A good test is to see if

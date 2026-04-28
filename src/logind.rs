@@ -1,15 +1,17 @@
-use cosmic::iced::{
-    Subscription,
-    futures::{SinkExt, StreamExt, channel::mpsc},
-};
-use logind_zbus::{
-    manager::{InhibitType, ManagerProxy},
-    session::SessionProxy,
-};
-use std::{any::TypeId, error::Error, os::fd::OwnedFd, sync::Arc, time::Duration};
+use cosmic::iced::Subscription;
+use cosmic::iced::futures::channel::mpsc;
+use cosmic::iced::futures::{SinkExt, StreamExt};
+use logind_zbus::manager::{InhibitType, ManagerProxy};
+use logind_zbus::session::SessionProxy;
+use std::any::TypeId;
+use std::error::Error;
+use std::os::fd::OwnedFd;
+use std::sync::Arc;
+use std::time::Duration;
 use zbus::Connection;
 
-use crate::{common, locker::Message};
+use crate::common;
+use crate::locker::Message;
 
 pub async fn power_off() -> zbus::Result<()> {
     let connection = Connection::system().await?;
