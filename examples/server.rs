@@ -1,4 +1,5 @@
-use greetd_ipc::{AuthMessageType, ErrorType, Request, Response, codec::TokioCodec};
+use greetd_ipc::codec::TokioCodec;
+use greetd_ipc::{AuthMessageType, ErrorType, Request, Response};
 use std::{env, fs, io, thread};
 use tokio::net::UnixListener;
 

@@ -1,20 +1,15 @@
-use cosmic::{
-    app::{Core, Task},
-    iced::runtime::core::window::Id as SurfaceId,
-    iced::{
-        self, Rectangle, Size, Subscription,
-        core::SmolStr,
-        event::{
-            self,
-            wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent},
-        },
-        keyboard::{Event as KeyEvent, Key, Modifiers},
-    },
-    widget,
-};
+use cosmic::app::{Core, Task};
+use cosmic::iced::core::SmolStr;
+use cosmic::iced::event::wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent};
+use cosmic::iced::event::{self};
+use cosmic::iced::keyboard::{Event as KeyEvent, Key, Modifiers};
+use cosmic::iced::runtime::core::window::Id as SurfaceId;
+use cosmic::iced::{self, Rectangle, Size, Subscription};
+use cosmic::widget;
 use cosmic_config::{ConfigSet, CosmicConfigEntry};
 use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 use wayland_client::protocol::wl_output::WlOutput;
 
 pub const DEFAULT_MENU_ITEM_HEIGHT: f32 = 36.;

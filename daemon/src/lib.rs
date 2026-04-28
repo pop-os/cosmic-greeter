@@ -1,16 +1,15 @@
 use cosmic_comp_config::output::randr;
 use cosmic_config::CosmicConfigEntry;
 use kdl::KdlDocument;
-use std::{
-    collections::BTreeMap,
-    fs,
-    io::Read,
-    os::unix::fs::OpenOptionsExt,
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
+use std::fs;
+use std::io::Read;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 
 pub use cosmic_applets_config::time::TimeAppletConfig;
-pub use cosmic_bg_config::{Color, Source as BgSource, state::State as BgState};
+pub use cosmic_bg_config::state::State as BgState;
+pub use cosmic_bg_config::{Color, Source as BgSource};
 pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig, ZoomConfig};
 pub use cosmic_theme::{Theme, ThemeBuilder};
 

@@ -1,17 +1,13 @@
 use anyhow::bail;
 use async_fn_stream::StreamEmitter;
-use cosmic::{
-    Element, Task, style,
-    widget::{column, text},
-};
+use cosmic::widget::{column, text};
+use cosmic::{Element, Task, style};
 use futures_util::StreamExt;
-use icu::{
-    datetime::{
-        DateTimeFormatter, DateTimeFormatterPreferences, fieldsets, input::DateTime,
-        options::TimePrecision,
-    },
-    locale::{Locale, preferences::extensions::unicode::keywords::HourCycle},
-};
+use icu::datetime::input::DateTime;
+use icu::datetime::options::TimePrecision;
+use icu::datetime::{DateTimeFormatter, DateTimeFormatterPreferences, fieldsets};
+use icu::locale::Locale;
+use icu::locale::preferences::extensions::unicode::keywords::HourCycle;
 use jiff::tz::TimeZone;
 use jiff_icu::ConvertFrom;
 use std::time::Duration;
