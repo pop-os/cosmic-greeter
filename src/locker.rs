@@ -390,7 +390,7 @@ impl App {
                     //TODO: move style to libcosmic
                     .class(theme::Container::custom(|theme| {
                         let cosmic = theme.cosmic();
-                        let component = &cosmic.background.component;
+                        let component = &cosmic.background(theme.transparent).component;
                         widget::container::Style {
                             icon_color: Some(component.on.into()),
                             text_color: Some(component.on.into()),
@@ -612,6 +612,11 @@ impl App {
                         theme,
                         &cosmic::theme::Container::Background,
                     );
+                    appearance.background = Some(iced::Background::Color(
+                        // TODO if we can use popups instead of subsurfaces for the greeter and the lockscreen
+                        // then we can allow transparency
+                        theme.cosmic().background(false).base.into(),
+                    ));
                     appearance.border = iced::Border::default().rounded(16.0);
                     appearance
                 },
@@ -654,7 +659,8 @@ impl cosmic::Application for App {
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
+        core.set_app_type(cosmic::core::AppType::System);
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
