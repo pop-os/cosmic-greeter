@@ -112,6 +112,48 @@ impl UserData {
         }
     }
 
+    fn load_icon_as_user(&mut self) {
+        //TODO: use accountsservice?
+        let icon_paths = [
+            //IMPORTANT: This file is owned by root and safe to read (it won't be a link to /etc/shadow for example)
+            // It may not exist if the user uses one of the system icons. In that case, we should read the
+            // information in /var/lib/AccountsService/users, and then read the icon path as the user
+            Path::new("/var/lib/AccountsService/icons").join(&self.name),
+            // systemd-homed cache
+            Path::new("/var/cache/systemd/home")
+                .join(&self.name)
+                .join("avatar"),
+        ];
+
+        for icon_path in icon_paths {
+            match fs::OpenOptions::new()
+                .read(true)
+                // Do not follow symlinks
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&icon_path)
+            {
+                Ok(mut icon_file) => {
+                    let mut icon_data = Vec::new();
+                    match icon_file.read_to_end(&mut icon_data) {
+                        Ok(count) => {
+                            icon_data.truncate(count);
+                            self.icon_opt = Some(icon_data);
+                            return;
+                        }
+                        Err(err) => {
+                            tracing::error!("failed to read icon data {:?}: {:?}", icon_path, err);
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!("failed to open icon {:?}: {:?}", icon_path, err);
+                }
+            }
+        }
+
+        tracing::error!("failed to load icon for user {:?}", self.name)
+    }
+
     pub fn load_config_as_user(&mut self) {
         self.icon_opt = None;
         self.theme_opt = None;
@@ -120,33 +162,7 @@ impl UserData {
         self.xkb_config_opt = None;
         self.time_applet_config = Default::default();
 
-        //TODO: use accountsservice?
-        //IMPORTANT: This file is owned by root and safe to read (it won't be a link to /etc/shadow for example)
-        // It may not exist if the user uses one of the system icons. In that case, we should read the
-        // information in /var/lib/AccountsService/users, and then read the icon path as the user
-        let icon_path = Path::new("/var/lib/AccountsService/icons").join(&self.name);
-        match fs::OpenOptions::new()
-            .read(true)
-            // Do not follow symlinks
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&icon_path)
-        {
-            Ok(mut icon_file) => {
-                let mut icon_data = Vec::new();
-                match icon_file.read_to_end(&mut icon_data) {
-                    Ok(count) => {
-                        icon_data.truncate(count);
-                        self.icon_opt = Some(icon_data);
-                    }
-                    Err(err) => {
-                        tracing::error!("failed to read icon data {:?}: {:?}", icon_path, err);
-                    }
-                }
-            }
-            Err(err) => {
-                tracing::error!("failed to open icon {:?}: {:?}", icon_path, err);
-            }
-        }
+        self.load_icon_as_user();
 
         let mut is_dark = true;
         match cosmic_theme::ThemeMode::config() {
@@ -219,6 +235,16 @@ impl UserData {
             Err(err) => {
                 tracing::error!("failed to create cosmic-bg state helper: {:?}", err);
             }
+        }
+        if self.bg_state.wallpapers.is_empty() {
+            self.bg_state.wallpapers.push((
+                String::new(),
+                BgSource::Path(
+                    Path::new("/var/cache/systemd/home")
+                        .join(&self.name)
+                        .join("login-background"),
+                ),
+            ));
         }
         self.load_wallpapers_as_user();
 
