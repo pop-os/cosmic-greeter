@@ -1,11 +1,13 @@
 use cosmic_comp_config::output::randr;
 use cosmic_config::CosmicConfigEntry;
 use kdl::KdlDocument;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use zbus::Connection;
+use zbus_systemd::home1::ManagerProxy;
 
 pub use cosmic_applets_config::time::TimeAppletConfig;
 pub use cosmic_bg_config::state::State as BgState;
@@ -16,13 +18,25 @@ pub use cosmic_theme::{Theme, ThemeBuilder};
 pub struct UserFilter {
     uid_min: u32,
     uid_max: u32,
+    homed_uids: BTreeSet<u32>,
 }
 
-impl Default for UserFilter {
-    fn default() -> Self {
+impl UserFilter {
+    pub async fn new() -> Result<Self, zbus::Error> {
         let login_defs_data = fs::read_to_string("/etc/login.defs").unwrap_or_default();
         let login_defs = whitespace_conf::parse(&login_defs_data);
-        Self {
+
+        let connection = Connection::system().await?;
+        let homed = ManagerProxy::new(&connection).await?;
+
+        let homed_uids = homed
+            .list_homes()
+            .await?
+            .iter()
+            .map(|(_, uid, ..)| *uid)
+            .collect();
+
+        Ok(Self {
             uid_min: login_defs
                 .get("UID_MIN")
                 .and_then(|x| x.parse::<u32>().ok())
@@ -31,17 +45,14 @@ impl Default for UserFilter {
                 .get("UID_MAX")
                 .and_then(|x| x.parse::<u32>().ok())
                 .unwrap_or(65000),
-        }
-    }
-}
-
-impl UserFilter {
-    pub fn new() -> Self {
-        Self::default()
+            homed_uids,
+        })
     }
 
     pub fn filter(&self, user: &pwd::Passwd) -> bool {
-        if user.uid < self.uid_min || user.uid > self.uid_max {
+        if (user.uid < self.uid_min || user.uid > self.uid_max)
+            && !self.homed_uids.contains(&user.uid)
+        {
             // Skip system accounts
             return false;
         }
