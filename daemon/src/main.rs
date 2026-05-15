@@ -70,8 +70,8 @@ struct GreeterProxy;
 
 #[zbus::interface(name = "com.system76.CosmicGreeter")]
 impl GreeterProxy {
-    fn get_user_data(&mut self) -> Result<String, GreeterError> {
-        let user_filter = UserFilter::new();
+    async fn get_user_data(&mut self) -> Result<String, GreeterError> {
+        let user_filter = UserFilter::new().await?;
 
         // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
         // To prevent issues, this should only be called once in the entire process space at a time

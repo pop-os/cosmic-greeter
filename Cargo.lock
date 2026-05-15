@@ -1321,6 +1321,7 @@ dependencies = [
  "whitespace-conf",
  "xdg",
  "zbus",
+ "zbus_systemd",
 ]
 
 [[package]]
@@ -8353,6 +8354,16 @@ dependencies = [
  "serde",
  "winnow 1.0.3",
  "zvariant",
+]
+
+[[package]]
+name = "zbus_systemd"
+version = "0.26000.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40c8310483ff4a77492d04a90bef30f40938059b4a4b4f7e456dda335d816cb6"
+dependencies = [
+ "serde",
+ "zbus",
 ]
 
 [[package]]

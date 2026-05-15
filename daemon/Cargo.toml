@@ -28,6 +28,7 @@ whitespace-conf = "1"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
 xdg = "3.0"
+zbus_systemd = { version = "0.26000.0", features = ["home1"] }
 
 [features]
 default = ["systemd"]
