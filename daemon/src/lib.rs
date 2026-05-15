@@ -1,11 +1,13 @@
 use cosmic_comp_config::output::randr;
 use cosmic_config::CosmicConfigEntry;
 use kdl::KdlDocument;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use zbus::Connection;
+use zbus_systemd::home1::ManagerProxy;
 
 pub use cosmic_applets_config::time::TimeAppletConfig;
 pub use cosmic_bg_config::state::State as BgState;
@@ -16,13 +18,25 @@ pub use cosmic_theme::{Theme, ThemeBuilder};
 pub struct UserFilter {
     uid_min: u32,
     uid_max: u32,
+    homed_uids: BTreeSet<u32>,
 }
 
-impl Default for UserFilter {
-    fn default() -> Self {
+impl UserFilter {
+    pub async fn new() -> Result<Self, zbus::Error> {
         let login_defs_data = fs::read_to_string("/etc/login.defs").unwrap_or_default();
         let login_defs = whitespace_conf::parse(&login_defs_data);
-        Self {
+
+        let connection = Connection::system().await?;
+        let homed = ManagerProxy::new(&connection).await?;
+
+        let homed_uids = homed
+            .list_homes()
+            .await?
+            .iter()
+            .map(|(_, uid, ..)| *uid)
+            .collect();
+
+        Ok(Self {
             uid_min: login_defs
                 .get("UID_MIN")
                 .and_then(|x| x.parse::<u32>().ok())
@@ -31,17 +45,14 @@ impl Default for UserFilter {
                 .get("UID_MAX")
                 .and_then(|x| x.parse::<u32>().ok())
                 .unwrap_or(65000),
-        }
-    }
-}
-
-impl UserFilter {
-    pub fn new() -> Self {
-        Self::default()
+            homed_uids,
+        })
     }
 
     pub fn filter(&self, user: &pwd::Passwd) -> bool {
-        if user.uid < self.uid_min || user.uid > self.uid_max {
+        if (user.uid < self.uid_min || user.uid > self.uid_max)
+            && !self.homed_uids.contains(&user.uid)
+        {
             // Skip system accounts
             return false;
         }
@@ -101,6 +112,48 @@ impl UserData {
         }
     }
 
+    fn load_icon_as_user(&mut self) {
+        //TODO: use accountsservice?
+        let icon_paths = [
+            //IMPORTANT: This file is owned by root and safe to read (it won't be a link to /etc/shadow for example)
+            // It may not exist if the user uses one of the system icons. In that case, we should read the
+            // information in /var/lib/AccountsService/users, and then read the icon path as the user
+            Path::new("/var/lib/AccountsService/icons").join(&self.name),
+            // systemd-homed cache
+            Path::new("/var/cache/systemd/home")
+                .join(&self.name)
+                .join("avatar"),
+        ];
+
+        for icon_path in icon_paths {
+            match fs::OpenOptions::new()
+                .read(true)
+                // Do not follow symlinks
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(&icon_path)
+            {
+                Ok(mut icon_file) => {
+                    let mut icon_data = Vec::new();
+                    match icon_file.read_to_end(&mut icon_data) {
+                        Ok(count) => {
+                            icon_data.truncate(count);
+                            self.icon_opt = Some(icon_data);
+                            return;
+                        }
+                        Err(err) => {
+                            tracing::error!("failed to read icon data {:?}: {:?}", icon_path, err);
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!("failed to open icon {:?}: {:?}", icon_path, err);
+                }
+            }
+        }
+
+        tracing::error!("failed to load icon for user {:?}", self.name)
+    }
+
     pub fn load_config_as_user(&mut self) {
         self.icon_opt = None;
         self.theme_opt = None;
@@ -109,33 +162,7 @@ impl UserData {
         self.xkb_config_opt = None;
         self.time_applet_config = Default::default();
 
-        //TODO: use accountsservice?
-        //IMPORTANT: This file is owned by root and safe to read (it won't be a link to /etc/shadow for example)
-        // It may not exist if the user uses one of the system icons. In that case, we should read the
-        // information in /var/lib/AccountsService/users, and then read the icon path as the user
-        let icon_path = Path::new("/var/lib/AccountsService/icons").join(&self.name);
-        match fs::OpenOptions::new()
-            .read(true)
-            // Do not follow symlinks
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&icon_path)
-        {
-            Ok(mut icon_file) => {
-                let mut icon_data = Vec::new();
-                match icon_file.read_to_end(&mut icon_data) {
-                    Ok(count) => {
-                        icon_data.truncate(count);
-                        self.icon_opt = Some(icon_data);
-                    }
-                    Err(err) => {
-                        tracing::error!("failed to read icon data {:?}: {:?}", icon_path, err);
-                    }
-                }
-            }
-            Err(err) => {
-                tracing::error!("failed to open icon {:?}: {:?}", icon_path, err);
-            }
-        }
+        self.load_icon_as_user();
 
         let mut is_dark = true;
         match cosmic_theme::ThemeMode::config() {
@@ -208,6 +235,16 @@ impl UserData {
             Err(err) => {
                 tracing::error!("failed to create cosmic-bg state helper: {:?}", err);
             }
+        }
+        if self.bg_state.wallpapers.is_empty() {
+            self.bg_state.wallpapers.push((
+                String::new(),
+                BgSource::Path(
+                    Path::new("/var/cache/systemd/home")
+                        .join(&self.name)
+                        .join("login-background"),
+                ),
+            ));
         }
         self.load_wallpapers_as_user();
 
