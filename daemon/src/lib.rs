@@ -7,7 +7,6 @@ use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use zbus::Connection;
-use zbus_systemd::home1::ManagerProxy;
 
 pub use cosmic_applets_config::time::TimeAppletConfig;
 pub use cosmic_bg_config::state::State as BgState;
@@ -22,12 +21,12 @@ pub struct UserFilter {
 }
 
 impl UserFilter {
-    pub async fn new() -> Result<Self, zbus::Error> {
-        let login_defs_data = fs::read_to_string("/etc/login.defs").unwrap_or_default();
-        let login_defs = whitespace_conf::parse(&login_defs_data);
+    #[cfg(feature = "systemd")]
+    async fn get_homed_uids() -> Result<BTreeSet<u32>, zbus::Error> {
+        use zbus_systemd::home1;
 
         let connection = Connection::system().await?;
-        let homed = ManagerProxy::new(&connection).await?;
+        let homed = home1::ManagerProxy::new(&connection).await?;
 
         let homed_uids = homed
             .list_homes()
@@ -36,7 +35,24 @@ impl UserFilter {
             .map(|(_, uid, ..)| *uid)
             .collect();
 
-        Ok(Self {
+        Ok(homed_uids)
+    }
+
+    pub async fn new() -> Self {
+        let login_defs_data = fs::read_to_string("/etc/login.defs").unwrap_or_default();
+        let login_defs = whitespace_conf::parse(&login_defs_data);
+
+        #[cfg(feature = "systemd")]
+        let homed_uids = Self::get_homed_uids()
+            .await
+            .inspect_err(|e| {
+                tracing::warn!("failed to list dynamic UIDs from systemd-homed: {e:?}")
+            })
+            .unwrap_or_default();
+        #[cfg(not(feature = "systemd"))]
+        let homed_uids = BTreeSet::new();
+
+        Self {
             uid_min: login_defs
                 .get("UID_MIN")
                 .and_then(|x| x.parse::<u32>().ok())
@@ -46,7 +62,7 @@ impl UserFilter {
                 .and_then(|x| x.parse::<u32>().ok())
                 .unwrap_or(65000),
             homed_uids,
-        })
+        }
     }
 
     pub fn filter(&self, user: &pwd::Passwd) -> bool {
