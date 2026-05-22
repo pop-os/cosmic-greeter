@@ -28,8 +28,8 @@ whitespace-conf = "1"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
 xdg = "3.0"
-zbus_systemd = { version = "0.26000.0", features = ["home1"] }
+zbus_systemd = { version = "0.26000.0", features = ["home1"], optional = true }
 
 [features]
 default = ["systemd"]
-systemd = ["tracing-journald"]
+systemd = ["tracing-journald", "zbus_systemd"]
