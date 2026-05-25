@@ -4,7 +4,7 @@ accessibility = Akadálymentesség
     .high-contrast = Magas kontraszt
     .invert-colors = Színek invertálása
 cancel = Mégse
-caps-lock = A Caps Lock be van kapcsolva
+caps-lock = A Caps Lock be van kapcsolva.
 enter-user = Név megadása kézzel…
 type-username = Felhasználónév:
 keyboard-layout = Billentyűzetkiosztás
@@ -13,9 +13,9 @@ restart-now = Újraindítás most?
 restart-timeout =
     A rendszer automatikusan újraindul
     { $seconds ->
-        [0] most
-        [1] 1 másodperc múlva
-       *[other] { $seconds } másodperc múlva
+        [0] most.
+        [1] 1 másodperc múlva.
+       *[other] { $seconds } másodperc múlva.
     }
 session = Munkamenet
 shutdown = Leállítás
@@ -30,8 +30,8 @@ shutdown-timeout =
 suspend = Felfüggesztés
 user = Felhasználó
 authenticating = Hitelesítés…
-auth-error-default = Hitelesítés sikertelen, próbáld újra.
+auth-error-default = Hitelesítés sikertelen. Próbáld újra.
 auth-error-credentials = Hibás jelszó. Ellenőrizd a billentyűzetkiosztást és próbáld újra.
-auth-error-denied = Hozzáférés megtagadva
+auth-error-denied = Hozzáférés megtagadva.
 auth-error-account = A fiók nem érhető el vagy le van tiltva.
-auth-error-maxtries = Túl sok sikertelen bejelentkezési kísérlet
+auth-error-maxtries = Túl sok sikertelen bejelentkezési kísérlet.
