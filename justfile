@@ -92,15 +92,15 @@ vendor:
     echo 'directory = "vendor"' >> .cargo/config.toml
     echo >> .cargo/config.toml
     echo '[env]' >> .cargo/config.toml
-    if [ -n "${SOURCE_DATE_EPOCH}" ]
-    then
-        source_date="$(date -d "@${SOURCE_DATE_EPOCH}" "+%Y-%m-%d")"
-        echo "VERGEN_GIT_COMMIT_DATE = \"${source_date}\"" >> .cargo/config.toml
+    if [ -z "${SOURCE_DATE_EPOCH}" ]; then
+        SOURCE_DATE_EPOCH=$(git log -1 --format='%ct')
     fi
-    if [ -n "${SOURCE_GIT_HASH}" ]
-    then
-        echo "VERGEN_GIT_SHA = \"${SOURCE_GIT_HASH}\"" >> .cargo/config.toml
+    if [ -z "${SOURCE_GIT_HASH}"]; then
+        SOURCE_GIT_HASH=$(git rev-parse HEAD)
     fi
+    source_date="$(date -d "@${SOURCE_DATE_EPOCH}" "+%Y-%m-%d")"
+    echo "VERGEN_GIT_COMMIT_DATE = \"${source_date}\"" >> .cargo/config.toml
+    echo "VERGEN_GIT_SHA = \"${SOURCE_GIT_HASH}\"" >> .cargo/config.toml
     tar pcf vendor.tar .cargo vendor
     rm -rf .cargo vendor
 
