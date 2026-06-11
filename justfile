@@ -95,7 +95,7 @@ vendor:
     if [ -z "${SOURCE_DATE_EPOCH}" ]; then
         SOURCE_DATE_EPOCH=$(git log -1 --format='%ct')
     fi
-    if [ -z "${SOURCE_GIT_HASH}"]; then
+    if [ -z "${SOURCE_GIT_HASH}" ]; then
         SOURCE_GIT_HASH=$(git rev-parse HEAD)
     fi
     source_date="$(date -d "@${SOURCE_DATE_EPOCH}" "+%Y-%m-%d")"
