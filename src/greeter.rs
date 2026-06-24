@@ -20,7 +20,9 @@ use cosmic::iced::platform_specific::runtime::wayland::layer_surface::{
 use cosmic::iced::platform_specific::shell::wayland::commands::layer_surface::{
     Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, get_layer_surface,
 };
-use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::reposition_subsurface;
+use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::{
+    destroy_subsurface, reposition_subsurface,
+};
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{
@@ -468,6 +470,233 @@ impl App {
             }
         })
         .discard()
+    }
+
+    fn primary_output_name(&self) -> Option<&str> {
+        let outputs = self.randr_list.as_ref()?;
+
+        outputs
+            .outputs
+            .values()
+            .find(|output| output.enabled && output.xwayland_primary == Some(true))
+            .or_else(|| {
+                outputs
+                    .outputs
+                    .values()
+                    .filter(|output| output.enabled)
+                    .min_by_key(|output| (output.position.1, output.position.0))
+            })
+            .map(|output| output.name.as_str())
+    }
+
+    fn should_create_login_for_output(&self, output_name: Option<&str>) -> bool {
+        match self.primary_output_name() {
+            Some(primary_output_name) => output_name == Some(primary_output_name),
+            None => false,
+        }
+    }
+
+    fn login_geometry(size: Size) -> (Point, Size) {
+        if size.width > 800. {
+            (
+                Point::new(size.width / 2. - 400., 32.),
+                Size::new(800., size.height - 32.),
+            )
+        } else {
+            (
+                Point::new(0., 32.),
+                Size::new(size.width, size.height - 32.),
+            )
+        }
+    }
+
+    fn create_output_surface(
+        &mut self,
+        output: WlOutput,
+        output_name: Option<String>,
+        logical_size: Option<(i32, i32)>,
+    ) -> Task<Message> {
+        if self.common.surface_ids.contains_key(&output) {
+            tracing::info!("output {}: surface already exists", output.id());
+            return Task::none();
+        }
+
+        let surface_id = SurfaceId::unique();
+        self.common.surface_ids.insert(output.clone(), surface_id);
+
+        match output_name {
+            Some(output_name) => {
+                self.common
+                    .surface_names
+                    .insert(surface_id, output_name.clone());
+                self.common.surface_images.remove(&surface_id);
+            }
+            None => {
+                tracing::warn!("output {}: no output name", output.id());
+            }
+        }
+
+        let (width, height) = logical_size.map_or((1920., 1080.), |(w, h)| (w as f32, h as f32));
+        self.common
+            .window_size
+            .insert(surface_id, Size::new(width, height));
+
+        let mut tasks = vec![
+            self.update_user_data(),
+            get_layer_surface(SctkLayerSurfaceSettings {
+                id: surface_id,
+                layer: Layer::Overlay,
+                keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                input_zone: None,
+                anchor: Anchor::TOP | Anchor::LEFT | Anchor::BOTTOM | Anchor::RIGHT,
+                output: IcedOutput::Output(output),
+                namespace: "cosmic-locker".into(),
+                size: Some((None, None)),
+                margin: IcedMargin {
+                    top: 0,
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                },
+                exclusive_zone: -1,
+                size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
+            }),
+        ];
+
+        if self.should_create_login_for_output(
+            self.common
+                .surface_names
+                .get(&surface_id)
+                .map(String::as_str),
+        ) {
+            tasks.push(self.create_login_subsurface(surface_id));
+        }
+
+        Task::batch(tasks)
+    }
+
+    fn create_login_subsurface(&mut self, surface_id: SurfaceId) -> Task<Message> {
+        if self
+            .surface_id_pairs
+            .iter()
+            .any(|(parent, _)| *parent == surface_id)
+        {
+            tracing::info!("surface {:?}: login subsurface already exists", surface_id);
+            return Task::none();
+        }
+
+        let Some(size) = self.common.window_size.get(&surface_id).copied() else {
+            tracing::warn!("surface {:?}: no size for login subsurface", surface_id);
+            return Task::none();
+        };
+        let (loc, sub_size) = Self::login_geometry(size);
+
+        let subsurface_id = SurfaceId::unique();
+        self.surface_id_pairs.push((surface_id, subsurface_id));
+
+        if let Some(output_name) = self.common.surface_names.get(&surface_id).cloned() {
+            self.common
+                .surface_names
+                .insert(subsurface_id, output_name.clone());
+            let text_input_id = widget::Id::new(format!("input-{output_name}",));
+            self.common
+                .text_input_ids
+                .insert(output_name, text_input_id.clone());
+        }
+
+        let msg = cosmic::surface::action::subsurface(
+            move |_: &mut App| SctkSubsurfaceSettings {
+                parent: surface_id,
+                id: subsurface_id,
+                loc,
+                size: Some(sub_size),
+                z: 10,
+                steal_keyboard_focus: true,
+                gravity: Gravity::BottomRight,
+                offset: (0, 0),
+                input_zone: None,
+            },
+            Some(Box::new(move |app: &App| {
+                app.menu(subsurface_id).map(cosmic::Action::App)
+            })),
+        );
+
+        cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(msg)))
+    }
+
+    fn create_fallback_login_subsurface(&mut self) -> Task<Message> {
+        if !self.surface_id_pairs.is_empty() {
+            return Task::none();
+        }
+
+        let Some(surface_id) = self.common.surface_ids.values().next().copied() else {
+            return Task::none();
+        };
+
+        tracing::warn!(
+            "creating fallback login subsurface because primary output could not be determined"
+        );
+        self.create_login_subsurface(surface_id)
+    }
+
+    fn destroy_login_subsurface(&mut self, surface_id: SurfaceId) -> Option<Task<Message>> {
+        let pair_i = self
+            .surface_id_pairs
+            .iter()
+            .position(|(parent, _)| *parent == surface_id)?;
+        let (_, subsurface_id) = self.surface_id_pairs.remove(pair_i);
+
+        self.common.surface_names.remove(&subsurface_id);
+        if let Some(output_name) = self.common.surface_names.get(&surface_id) {
+            self.common.text_input_ids.remove(output_name);
+        }
+
+        Some(destroy_subsurface(subsurface_id))
+    }
+
+    fn destroy_output_surface(&mut self, output: &WlOutput) -> Option<Task<Message>> {
+        let surface_id = self.common.surface_ids.remove(output)?;
+        let mut tasks = Vec::new();
+
+        if let Some(task) = self.destroy_login_subsurface(surface_id) {
+            tasks.push(task);
+        }
+
+        self.common.surface_images.remove(&surface_id);
+        self.common.window_size.remove(&surface_id);
+        if let Some(n) = self.common.surface_names.remove(&surface_id) {
+            self.common.text_input_ids.remove(&n);
+        }
+        tasks.push(destroy_layer_surface(surface_id));
+
+        Some(Task::batch(tasks))
+    }
+
+    fn reconcile_primary_login_subsurface(&mut self) -> Task<Message> {
+        if !self.surface_id_pairs.is_empty() {
+            return Task::none();
+        }
+
+        let Some(primary_output_name) = self.primary_output_name().map(str::to_owned) else {
+            return Task::none();
+        };
+
+        tracing::info!("primary output for login subsurface: {primary_output_name}");
+
+        let surface_id = self
+            .common
+            .surface_names
+            .iter()
+            .find(|(_, output_name)| output_name.as_str() == primary_output_name)
+            .map(|(surface_id, _)| *surface_id);
+
+        match surface_id {
+            Some(surface_id) => {
+                tracing::info!("creating primary login subsurface on {:?}", surface_id);
+                self.create_login_subsurface(surface_id)
+            }
+            None => Task::none(),
+        }
     }
 
     fn menu(&self, id: SurfaceId) -> Element<'_, Message> {
@@ -1194,138 +1423,73 @@ impl cosmic::Application for App {
 
                 return self.common.update(common_message);
             }
-            Message::OutputEvent(output_event, output) => {
-                match output_event {
-                    OutputEvent::Created(output_info_opt) => {
-                        tracing::info!("output {}: created", output.id());
+            Message::OutputEvent(output_event, output) => match output_event {
+                OutputEvent::Created(output_info_opt) => {
+                    tracing::info!("output {}: created", output.id());
 
-                        let surface_id = SurfaceId::unique();
-                        let subsurface_id = SurfaceId::unique();
-                        self.surface_id_pairs.push((surface_id, subsurface_id));
+                    let (output_name, logical_size) = match output_info_opt {
+                        Some(output_info) => {
+                            let output_name = output_info.name;
+                            let logical_size = output_info.logical_size;
 
-                        if let Some(old_surface_id) =
-                            self.common.surface_ids.insert(output.clone(), surface_id)
-                        {
-                            //TODO: remove old surface?
-                            tracing::warn!(
-                                "output {}: already had surface ID {:?}",
-                                output.id(),
-                                old_surface_id
-                            );
-                        }
-                        let size = if let Some((w, h)) =
-                            output_info_opt.as_ref().and_then(|info| info.logical_size)
-                        {
-                            Some((Some(w as u32), Some(h as u32)))
-                        } else {
-                            Some((None, None))
-                        };
-                        match output_info_opt {
-                            Some(output_info) => match output_info.name {
-                                Some(output_name) => {
-                                    self.common
-                                        .surface_names
-                                        .insert(surface_id, output_name.clone());
-                                    self.common
-                                        .surface_names
-                                        .insert(subsurface_id, output_name.clone());
-                                    self.common.surface_images.remove(&surface_id);
-                                    let text_input_id =
-                                        widget::Id::new(format!("input-{output_name}",));
-                                    self.common
-                                        .text_input_ids
-                                        .insert(output_name.clone(), text_input_id.clone());
-                                }
-                                None => {
-                                    tracing::warn!("output {}: no output name", output.id());
-                                }
-                            },
-                            None => {
-                                tracing::warn!("output {}: no output info", output.id());
+                            if let Some(output_name) = output_name.as_ref() {
+                                self.common
+                                    .output_names
+                                    .insert(output.clone(), output_name.clone());
+                            } else {
+                                tracing::warn!("output {}: no output name", output.id());
                             }
-                        }
 
-                        let unwrapped_size = size
-                            .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
-                            .unwrap_or((1920, 1080));
-                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
-                            (
-                                Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
-                                Size::new(800., unwrapped_size.1 as f32 - 32.),
-                            )
-                        } else {
-                            (
-                                Point::new(0., 32.),
-                                Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32 - 32.),
-                            )
-                        };
-                        self.common.window_size.insert(
-                            surface_id,
-                            Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
-                        );
-
-                        let msg = cosmic::surface::action::subsurface(
-                            move |_: &mut App| SctkSubsurfaceSettings {
-                                parent: surface_id,
-                                id: subsurface_id,
-                                loc,
-                                size: Some(sub_size),
-                                z: 10,
-                                steal_keyboard_focus: true,
-                                gravity: Gravity::BottomRight,
-                                offset: (0, 0),
-                                input_zone: None,
-                            },
-                            Some(Box::new(move |app: &App| {
-                                app.menu(subsurface_id).map(cosmic::Action::App)
-                            })),
-                        );
-                        return Task::batch([
-                            self.update_user_data(),
-                            get_layer_surface(SctkLayerSurfaceSettings {
-                                id: surface_id,
-                                layer: Layer::Overlay,
-                                keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                                input_zone: None,
-                                anchor: Anchor::TOP | Anchor::LEFT | Anchor::BOTTOM | Anchor::RIGHT,
-                                output: IcedOutput::Output(output),
-                                namespace: "cosmic-locker".into(),
-                                size: Some((None, None)),
-                                margin: IcedMargin {
-                                    top: 0,
-                                    bottom: 0,
-                                    left: 0,
-                                    right: 0,
-                                },
-                                exclusive_zone: -1,
-                                size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
-                            }),
-                            cosmic::task::message(cosmic::Action::Cosmic(
-                                cosmic::app::Action::Surface(msg),
-                            )),
-                        ]);
-                    }
-                    OutputEvent::Removed => {
-                        tracing::info!("output {}: removed", output.id());
-                        match self.common.surface_ids.remove(&output) {
-                            Some(surface_id) => {
-                                self.common.surface_images.remove(&surface_id);
-                                self.common.window_size.remove(&surface_id);
-                                if let Some(n) = self.common.surface_names.remove(&surface_id) {
-                                    self.common.text_input_ids.remove(&n);
-                                }
-                                return destroy_layer_surface(surface_id);
-                            }
-                            None => {
-                                tracing::warn!("output {}: no surface found", output.id());
-                            }
+                            (output_name, logical_size)
                         }
-                    }
-                    OutputEvent::InfoUpdate(_output_info) => {
-                        tracing::info!("output {}: info update", output.id());
-                    }
+                        None => {
+                            tracing::warn!("output {}: no output info", output.id());
+                            (None, None)
+                        }
+                    };
+
+                    return self.create_output_surface(output, output_name, logical_size);
                 }
-            }
+                OutputEvent::Removed => {
+                    tracing::info!("output {}: removed", output.id());
+                    self.common.output_names.remove(&output);
+                    if let Some(task) = self.destroy_output_surface(&output) {
+                        return task;
+                    }
+                    tracing::warn!("output {}: no surface found", output.id());
+                }
+                OutputEvent::InfoUpdate(output_info) => {
+                    tracing::info!("output {}: info update", output.id());
+
+                    let output_name = output_info
+                        .name
+                        .or_else(|| self.common.output_names.get(&output).cloned());
+                    let logical_size = output_info.logical_size;
+
+                    if let Some(output_name) = output_name.as_ref() {
+                        self.common
+                            .output_names
+                            .insert(output.clone(), output_name.clone());
+                        if let Some(surface_id) = self.common.surface_ids.get(&output).copied() {
+                            self.common
+                                .surface_names
+                                .insert(surface_id, output_name.clone());
+                        }
+                    }
+
+                    if let Some(surface_id) = self.common.surface_ids.get(&output).copied() {
+                        if let Some((w, h)) = logical_size {
+                            self.common
+                                .window_size
+                                .insert(surface_id, Size::new(w as f32, h as f32));
+                        }
+
+                        return self.reconcile_primary_login_subsurface();
+                    }
+
+                    return self.create_output_surface(output, output_name, logical_size);
+                }
+            },
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
                 if let SocketState::Open = &self.socket_state {
@@ -1794,7 +1958,7 @@ impl cosmic::Application for App {
                         .and_then(|i| self.flags.user_datas.get(i))
                         .map(|user_data| &user_data.kdl_output_lists)
                     else {
-                        return Task::none();
+                        return self.reconcile_primary_login_subsurface();
                     };
                     'outer: for configured_list in cur_user_output_state
                         .iter()
@@ -1840,11 +2004,13 @@ impl cosmic::Application for App {
                     } else {
                         tracing::warn!("Failed to apply user display config");
                     }
+                    tasks.push(self.reconcile_primary_login_subsurface());
 
                     return Task::batch(tasks);
                 }
                 Err(err) => {
                     tracing::error!("Randr error: {err}");
+                    return self.create_fallback_login_subsurface();
                 }
             },
             Message::RepositionMenu(id, size) => {
@@ -1853,7 +2019,7 @@ impl cosmic::Application for App {
                     .iter()
                     .find_map(|(p, s)| (*p == id).then_some(s))
                 else {
-                    tracing::error!("Failed to find subsurface menu id");
+                    tracing::debug!("surface {:?}: no login subsurface to reposition", id);
                     return Task::none();
                 };
                 let loc = if size.width > 800. {
