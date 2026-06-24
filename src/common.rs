@@ -7,7 +7,7 @@ use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::{self, Rectangle, Size, Subscription};
 use cosmic::widget;
 use cosmic_config::{ConfigSet, CosmicConfigEntry};
-use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
+use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData, XkbConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use wayland_client::protocol::wl_output::WlOutput;
@@ -60,6 +60,7 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Tick,
     Tz(jiff::tz::TimeZone),
+    XkbConfigChanged(XkbConfig),
 }
 
 impl<M: From<Message> + Send + 'static> Common<M> {
@@ -195,52 +196,55 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         }
     }
 
+    pub fn refresh_active_layouts(&mut self, xkb_config: &XkbConfig) {
+        let Some(keyboard_layouts) = self.layouts_opt.as_ref() else {
+            return;
+        };
+
+        self.active_layouts.clear();
+        let config_layouts = xkb_config.layout.split_terminator(',');
+        let config_variants = xkb_config
+            .variant
+            .split_terminator(',')
+            .chain(std::iter::repeat(""));
+        'outer: for (config_layout, config_variant) in config_layouts.zip(config_variants) {
+            for xkb_layout in keyboard_layouts.layouts() {
+                if config_layout != xkb_layout.name() {
+                    continue;
+                }
+                if config_variant.is_empty() {
+                    self.active_layouts.push(ActiveLayout {
+                        description: xkb_layout.description().to_owned(),
+                        layout: config_layout.to_owned(),
+                        variant: config_variant.to_owned(),
+                    });
+                    continue 'outer;
+                }
+
+                let Some(xkb_variants) = xkb_layout.variants() else {
+                    continue;
+                };
+                for xkb_variant in xkb_variants {
+                    if config_variant != xkb_variant.name() {
+                        continue;
+                    }
+                    self.active_layouts.push(ActiveLayout {
+                        description: xkb_variant.description().to_owned(),
+                        layout: config_layout.to_owned(),
+                        variant: config_variant.to_owned(),
+                    });
+                    continue 'outer;
+                }
+            }
+        }
+    }
+
     pub fn update_user_data(&mut self, user_data: &UserData) {
         self.update_wallpapers(user_data);
 
         // From cosmic-applet-input-sources
-        if let Some(keyboard_layouts) = &self.layouts_opt
-            && let Some(xkb_config) = &user_data.xkb_config_opt
-        {
-            self.active_layouts.clear();
-            let config_layouts = xkb_config.layout.split_terminator(',');
-            let config_variants = xkb_config
-                .variant
-                .split_terminator(',')
-                .chain(std::iter::repeat(""));
-            'outer: for (config_layout, config_variant) in config_layouts.zip(config_variants) {
-                for xkb_layout in keyboard_layouts.layouts() {
-                    if config_layout != xkb_layout.name() {
-                        continue;
-                    }
-                    if config_variant.is_empty() {
-                        let active_layout = ActiveLayout {
-                            description: xkb_layout.description().to_owned(),
-                            layout: config_layout.to_owned(),
-                            variant: config_variant.to_owned(),
-                        };
-                        self.active_layouts.push(active_layout);
-                        continue 'outer;
-                    }
-
-                    let Some(xkb_variants) = xkb_layout.variants() else {
-                        continue;
-                    };
-                    for xkb_variant in xkb_variants {
-                        if config_variant != xkb_variant.name() {
-                            continue;
-                        }
-                        let active_layout = ActiveLayout {
-                            description: xkb_variant.description().to_owned(),
-                            layout: config_layout.to_owned(),
-                            variant: config_variant.to_owned(),
-                        };
-                        self.active_layouts.push(active_layout);
-                        continue 'outer;
-                    }
-                }
-            }
-            tracing::info!("{:?}", self.active_layouts);
+        if let Some(xkb_config) = &user_data.xkb_config_opt {
+            self.refresh_active_layouts(xkb_config);
         }
     }
 
@@ -322,12 +326,33 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             Message::Tz(tz) => {
                 self.time.set_tz(tz);
             }
+            Message::XkbConfigChanged(xkb_config) => {
+                self.refresh_active_layouts(&xkb_config);
+            }
         }
         Task::none()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let mut subscriptions = Vec::with_capacity(3);
+        let mut subscriptions = Vec::with_capacity(4);
+
+        struct XkbConfigSubscription;
+        subscriptions.push(
+            cosmic_config::config_subscription(
+                std::any::TypeId::of::<XkbConfigSubscription>(),
+                "com.system76.CosmicComp".into(),
+                CosmicCompConfig::VERSION,
+            )
+            .map(|update: cosmic_config::Update<CosmicCompConfig>| {
+                if !update.errors.is_empty() {
+                    tracing::warn!(
+                        errors = ?update.errors,
+                        "errors loading com.system76.CosmicComp"
+                    );
+                }
+                Message::XkbConfigChanged(update.config.xkb_config)
+            }),
+        );
 
         subscriptions.push(event::listen_with(|event, status, id| match event {
             iced::Event::Keyboard(KeyEvent::KeyPressed {
