@@ -390,7 +390,6 @@ pub enum Message {
     HighContrast(bool),
     InvertColors(bool),
     WaylandUpdate(WaylandUpdate),
-    SpinnerTick,
 }
 
 impl From<common::Message> for Message {
@@ -420,8 +419,6 @@ pub struct App {
 
     accessibility: Accessibility,
     authenticating: bool,
-    spinner_rotation: f32,
-    spinner_handle: Option<cosmic::iced::task::Handle>,
 }
 
 #[derive(Default)]
@@ -902,14 +899,7 @@ impl App {
                         widget::row::with_capacity(2)
                             .spacing(8.0)
                             .align_y(Alignment::Center)
-                            .push(
-                                widget::icon::from_name("process-working-symbolic")
-                                    .size(16)
-                                    .icon()
-                                    .rotation(iced::Rotation::Floating(iced::Radians(
-                                        self.spinner_rotation.to_radians(),
-                                    ))),
-                            )
+                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
                             .push(widget::text(fl!("authenticating"))),
                     )
                     .width(Length::Fill)
@@ -1173,8 +1163,6 @@ impl cosmic::Application for App {
             randr_list: None,
             surface_id_pairs: Vec::new(),
             authenticating: false,
-            spinner_rotation: 0.0,
-            spinner_handle: None,
         };
         (app, Task::batch(tasks))
     }
@@ -1482,38 +1470,11 @@ impl cosmic::Application for App {
                 self.common.error_opt = None;
                 self.authenticating = true;
                 self.send_request(Request::PostAuthMessageResponse { response });
-
-                // Start spinner animation if not already running
-                if self.spinner_handle.is_none() {
-                    let (spinner_task, handle) =
-                        cosmic::task::stream(cosmic::iced::stream::channel(
-                            1,
-                            |mut msg_tx: iced::futures::channel::mpsc::Sender<_>| async move {
-                                let mut interval = time::interval(Duration::from_millis(16)); // ~60fps
-                                loop {
-                                    msg_tx
-                                        .send(cosmic::Action::App(Message::SpinnerTick))
-                                        .await
-                                        .unwrap();
-                                    interval.tick().await;
-                                }
-                            },
-                        ))
-                        .abortable();
-                    self.spinner_handle = Some(handle);
-                    return spinner_task;
-                }
             }
             Message::Login => {
                 self.common.prompt_opt = None;
                 self.common.error_opt = None;
                 self.authenticating = false;
-
-                // Stop spinner animation
-                if let Some(handle) = self.spinner_handle.take() {
-                    handle.abort();
-                }
-                self.spinner_rotation = 0.0;
 
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
@@ -1526,12 +1487,6 @@ impl cosmic::Application for App {
             Message::Error(error) => {
                 self.common.error_opt = Some(error);
                 self.authenticating = false;
-
-                // Stop spinner animation
-                if let Some(handle) = self.spinner_handle.take() {
-                    handle.abort();
-                }
-                self.spinner_rotation = 0.0;
 
                 self.send_request(Request::CancelSession);
             }
@@ -1862,10 +1817,6 @@ impl cosmic::Application for App {
                     Point::new(0., 32.)
                 };
                 return reposition_subsurface(*subsurface_id, loc.x as i32, loc.y as i32);
-            }
-            Message::SpinnerTick => {
-                // Update spinner rotation angle (360 degrees per second = 6 degrees per frame at 60fps)
-                self.spinner_rotation = (self.spinner_rotation + 6.0) % 360.0;
             }
         }
         Task::none()
