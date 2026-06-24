@@ -274,7 +274,6 @@ pub enum Message {
     Error(String),
     Lock,
     Unlock,
-    SpinnerTick,
 }
 
 impl From<common::Message> for Message {
@@ -312,8 +311,6 @@ pub struct App {
     inhibit_opt: Option<Arc<OwnedFd>>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     authenticating: bool,
-    spinner_rotation: f32,
-    spinner_handle: Option<cosmic::iced::task::Handle>,
 }
 
 impl App {
@@ -566,14 +563,7 @@ impl App {
                         widget::row::with_capacity(2)
                             .spacing(8.0)
                             .align_y(Alignment::Center)
-                            .push(
-                                widget::icon::from_name("process-working-symbolic")
-                                    .size(16)
-                                    .icon()
-                                    .rotation(iced::Rotation::Floating(iced::Radians(
-                                        self.spinner_rotation.to_radians(),
-                                    ))),
-                            )
+                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
                             .push(widget::text(fl!("authenticating"))),
                     )
                     .width(Length::Fill)
@@ -675,8 +665,6 @@ impl cosmic::Application for App {
             inhibit_opt: None,
             value_tx_opt: None,
             authenticating: false,
-            spinner_rotation: 0.0,
-            spinner_handle: None,
         };
 
         let task = if cfg!(feature = "logind") {
@@ -1047,39 +1035,10 @@ impl cosmic::Application for App {
                 self.authenticating = true;
                 match self.value_tx_opt.take() {
                     Some(value_tx) => {
-                        // Start spinner animation if not already running
-                        if self.spinner_handle.is_none() {
-                            let (spinner_task, handle) =
-                                cosmic::task::stream(cosmic::iced::stream::channel(
-                                    1,
-                                    |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
-                                        let mut interval =
-                                            tokio::time::interval(Duration::from_millis(16)); // ~60fps
-                                        loop {
-                                            msg_tx
-                                                .send(cosmic::Action::App(Message::SpinnerTick))
-                                                .await
-                                                .unwrap();
-                                            interval.tick().await;
-                                        }
-                                    },
-                                ))
-                                .abortable();
-                            self.spinner_handle = Some(handle);
-
-                            return Task::batch([
-                                spinner_task,
-                                cosmic::task::future(async move {
-                                    value_tx.send(value).await.unwrap();
-                                    Message::Channel(value_tx)
-                                }),
-                            ]);
-                        } else {
-                            return cosmic::task::future(async move {
-                                value_tx.send(value).await.unwrap();
-                                Message::Channel(value_tx)
-                            });
-                        }
+                        return cosmic::task::future(async move {
+                            value_tx.send(value).await.unwrap();
+                            Message::Channel(value_tx)
+                        });
                     }
                     None => tracing::warn!("tried to submit when value_tx_opt not set"),
                 }
@@ -1098,16 +1057,6 @@ impl cosmic::Application for App {
             Message::Error(error) => {
                 self.common.error_opt = Some(error);
                 self.authenticating = false;
-
-                // Stop spinner animation
-                if let Some(handle) = self.spinner_handle.take() {
-                    handle.abort();
-                }
-                self.spinner_rotation = 0.0;
-            }
-            Message::SpinnerTick => {
-                // Update spinner rotation angle (360 degrees per second = 6 degrees per frame at 60fps)
-                self.spinner_rotation = (self.spinner_rotation + 6.0) % 360.0;
             }
             Message::Lock => match self.state {
                 State::Unlocked => {
@@ -1119,10 +1068,6 @@ impl cosmic::Application for App {
                     self.value_tx_opt = None;
                     // Reset authenticating state
                     self.authenticating = false;
-                    if let Some(handle) = self.spinner_handle.take() {
-                        handle.abort();
-                    }
-                    self.spinner_rotation = 0.0;
                     // Try to create lockfile when locking
                     if let Some(ref lockfile) = self.flags.lockfile_opt
                         && let Err(err) = fs::File::create(lockfile)
@@ -1151,11 +1096,6 @@ impl cosmic::Application for App {
                         // Stop authenticating
                         self.authenticating = false;
 
-                        // Stop spinner animation
-                        if let Some(handle) = self.spinner_handle.take() {
-                            handle.abort();
-                        }
-                        self.spinner_rotation = 0.0;
                         // Try to delete lockfile when unlocking
                         if let Some(ref lockfile) = self.flags.lockfile_opt
                             && let Err(err) = fs::remove_file(lockfile)
