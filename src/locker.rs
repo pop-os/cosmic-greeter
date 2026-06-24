@@ -704,6 +704,16 @@ impl cosmic::Application for App {
         match message {
             Message::None => {}
             Message::Common(common_message) => {
+                if self.authenticating
+                    && matches!(common_message, common::Message::Prompt(_, _, Some(_)))
+                {
+                    self.authenticating = false;
+                    if let Some(handle) = self.spinner_handle.take() {
+                        handle.abort();
+                    }
+                    self.spinner_rotation = 0.0;
+                }
+
                 return self.common.update(common_message);
             }
             Message::OutputEvent(output_event, output) => {
@@ -1044,9 +1054,9 @@ impl cosmic::Application for App {
             }
             Message::Submit(value) => {
                 self.common.error_opt = None;
-                self.authenticating = true;
                 match self.value_tx_opt.take() {
                     Some(value_tx) => {
+                        self.authenticating = true;
                         // Start spinner animation if not already running
                         if self.spinner_handle.is_none() {
                             let (spinner_task, handle) =
@@ -1081,7 +1091,10 @@ impl cosmic::Application for App {
                             });
                         }
                     }
-                    None => tracing::warn!("tried to submit when value_tx_opt not set"),
+                    None => {
+                        self.authenticating = false;
+                        tracing::warn!("tried to submit when value_tx_opt not set");
+                    }
                 }
             }
             Message::Suspend => {

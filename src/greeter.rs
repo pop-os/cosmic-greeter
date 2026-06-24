@@ -1183,6 +1183,16 @@ impl cosmic::Application for App {
     fn update(&mut self, message: Self::Message) -> Task<Message> {
         match message {
             Message::Common(common_message) => {
+                if self.authenticating
+                    && matches!(common_message, common::Message::Prompt(_, _, Some(_)))
+                {
+                    self.authenticating = false;
+                    if let Some(handle) = self.spinner_handle.take() {
+                        handle.abort();
+                    }
+                    self.spinner_rotation = 0.0;
+                }
+
                 // In greetd's IPC protocol, the greeter must acknowledge auth messages by
                 // sending PostAuthMessageResponse. For non-interactive "info" messages
                 // (fingerprint prompts typically come through here), the correct response

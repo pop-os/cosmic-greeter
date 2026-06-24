@@ -23,6 +23,8 @@ fn main() {
                 let (socket, _addr) = listener.accept().await.unwrap();
                 println!("new connection");
 
+                let mut empty_password_reprompted = false;
+
                 loop {
                     let request = {
                         socket.readable().await.unwrap();
@@ -48,13 +50,23 @@ fn main() {
                     println!("{:?}", request);
 
                     let response = match request {
-                        Request::CreateSession { .. } => Response::AuthMessage {
-                            auth_message_type: AuthMessageType::Secret,
-                            auth_message: "MOCKING:".to_string(),
-                        },
+                        Request::CreateSession { .. } => {
+                            empty_password_reprompted = false;
+                            Response::AuthMessage {
+                                auth_message_type: AuthMessageType::Secret,
+                                auth_message: "MOCKING:".to_string(),
+                            }
+                        }
                         Request::PostAuthMessageResponse { response } => {
                             match response.as_deref() {
                                 Some("password") => Response::Success,
+                                Some("") if !empty_password_reprompted => {
+                                    empty_password_reprompted = true;
+                                    Response::AuthMessage {
+                                        auth_message_type: AuthMessageType::Secret,
+                                        auth_message: "MOCKING:".to_string(),
+                                    }
+                                }
                                 _ => {
                                     // Add 1 second delay to simulate real PAM authentication failure behavior
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -66,7 +78,10 @@ fn main() {
                             }
                         }
                         Request::StartSession { .. } => Response::Success,
-                        Request::CancelSession => Response::Success,
+                        Request::CancelSession => {
+                            empty_password_reprompted = false;
+                            Response::Success
+                        }
                     };
 
                     let mut bytes = Vec::with_capacity(4096);
