@@ -8,6 +8,8 @@ mod wayland;
 
 mod common;
 
+mod input_source;
+
 mod localize;
 
 #[cfg(feature = "logind")]
