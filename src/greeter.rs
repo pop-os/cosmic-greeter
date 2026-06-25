@@ -372,6 +372,8 @@ pub enum Message {
         randr: Arc<Result<List, cosmic_randr_shell::Error>>,
     },
     Heartbeat,
+    /// Cycle to the next keyboard layout (cosmic-comp `Super+Space` shortcut).
+    InputSourceSwitch,
     KeyboardLayout(usize),
     Login,
     Reconnect,
@@ -1533,6 +1535,14 @@ impl cosmic::Application for App {
                     self.dropdown_opt = Some(dropdown);
                 }
             }
+            Message::InputSourceSwitch => {
+                // Cycle to the next layout, matching cosmic-settings-daemon's
+                // behaviour (move the active layout to the back of the list).
+                if self.common.active_layouts.len() > 1 {
+                    self.common.active_layouts.rotate_left(1);
+                    self.set_xkb_config();
+                }
+            }
             Message::KeyboardLayout(layout_i) => {
                 if layout_i < self.common.active_layouts.len() {
                     self.common.active_layouts.swap(0, layout_i);
@@ -1844,6 +1854,7 @@ impl cosmic::Application for App {
     fn subscription(&self) -> Subscription<Self::Message> {
         Subscription::batch([
             self.common.subscription().map(Message::from),
+            crate::input_source::subscription().map(|()| Message::InputSourceSwitch),
             ipc::subscription(),
             wayland::a11y_subscription().map(Message::WaylandUpdate),
             listen_with(|event, _status, id| match event {
