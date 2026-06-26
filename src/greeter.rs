@@ -63,6 +63,23 @@ static USERNAME_ID: LazyLock<iced::id::Id> = LazyLock::new(|| iced::id::Id::new(
 )]
 trait Greeter {
     async fn get_user_data(&self) -> Result<String, zbus::Error>;
+    async fn set_xkb_config(
+        &self,
+        username: &str,
+        xkb_config_ron: &str,
+    ) -> Result<(), zbus::Error>;
+}
+
+// Ask the root daemon to persist a greeter-selected keyboard layout into the
+// target user's cosmic-comp config, so it carries over into their session.
+async fn set_user_xkb_config_dbus(
+    username: String,
+    xkb_config_ron: String,
+) -> Result<(), Box<dyn Error>> {
+    let connection = Connection::system().await?;
+    let proxy = GreeterProxy::new(&connection).await?;
+    proxy.set_xkb_config(&username, &xkb_config_ron).await?;
+    Ok(())
 }
 
 async fn user_data_dbus() -> Result<Vec<UserData>, Box<dyn Error>> {
@@ -372,6 +389,8 @@ pub enum Message {
         randr: Arc<Result<List, cosmic_randr_shell::Error>>,
     },
     Heartbeat,
+    /// Cycle to the next keyboard layout (cosmic-comp `Super+Space` shortcut).
+    InputSourceSwitch,
     KeyboardLayout(usize),
     Login,
     Reconnect,
@@ -419,6 +438,12 @@ pub struct App {
 
     accessibility: Accessibility,
     authenticating: bool,
+    /// `data_idx` of the user whose stored `xkb_config` was last loaded into
+    /// `active_layouts`. Used to avoid clobbering a greeter-selected layout when
+    /// `update_user_data` runs again for the *same* user (e.g. on the socket
+    /// reconnect that follows a failed login), while still loading a different
+    /// user's layout when the selection actually changes.
+    xkb_loaded_user: Option<usize>,
 }
 
 #[derive(Default)]
@@ -1023,7 +1048,70 @@ impl App {
             None => return,
         };
 
+        // Apply the layout to the greeter's own compositor so the password
+        // field types in the selected layout. The choice is persisted into the
+        // user's own config only after authentication succeeds; see
+        // `persist_xkb_config`.
         self.common.set_xkb_config(user_data);
+    }
+
+    /// Persist the greeter-selected layout into the authenticated user's config
+    /// via the root daemon, then start the session, so the choice carries over
+    /// into the started session instead of reverting to whatever was last saved.
+    /// The greeter cannot write the user's home directory itself.
+    ///
+    /// `StartSession` is sent only after the daemon call resolves: greetd tears
+    /// down this greeter process as soon as the session starts, so sending it
+    /// first would kill the persist future mid-call and silently drop the layout
+    /// (issue #258). The call is bounded by a timeout so an unresponsive daemon
+    /// cannot block login; on persist failure or timeout the session still
+    /// starts (with the user's previously saved layout).
+    ///
+    /// This must only be called after authentication has succeeded (i.e. from
+    /// `Message::Login`): otherwise an unauthenticated person at the greeter
+    /// could rewrite any listed user's saved `xkb_config`.
+    fn persist_xkb_config_and_start(&self, cmd: Vec<String>, env: Vec<String>) -> Task<Message> {
+        // Build the payload to persist. This may be None (no user_data, empty
+        // active_layouts, or serialization failure), in which case we persist
+        // nothing but must still start the session.
+        let payload = self
+            .selected_username
+            .data_idx
+            .and_then(|i| self.flags.user_datas.get(i))
+            .and_then(|user_data| {
+                let xkb_config = self.common.build_xkb_config(user_data)?;
+                match ron::to_string(&xkb_config) {
+                    Ok(ron) => Some((user_data.name.clone(), ron)),
+                    Err(err) => {
+                        tracing::error!("failed to serialize xkb_config: {}", err);
+                        None
+                    }
+                }
+            });
+
+        let sender = self.greetd_sender.clone();
+
+        cosmic::Task::future(async move {
+            if let Some((username, xkb_config_ron)) = payload {
+                let call = set_user_xkb_config_dbus(username, xkb_config_ron);
+                match tokio::time::timeout(std::time::Duration::from_secs(3), call).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        tracing::error!("failed to persist user xkb_config via daemon: {}", err)
+                    }
+                    Err(_) => tracing::error!(
+                        "timed out persisting user xkb_config via daemon; starting session anyway"
+                    ),
+                }
+            }
+
+            // Start the session only after the persist attempt has resolved, so
+            // greetd does not tear down this greeter process mid-call (#258).
+            if let Some(sender) = sender {
+                _ = sender.send(Request::StartSession { cmd, env }).await;
+            }
+        })
+        .discard()
     }
 
     fn update_user_data(&mut self) -> Task<Message> {
@@ -1038,10 +1126,21 @@ impl App {
             }
         };
 
-        self.common.update_user_data(user_data);
+        // Only (re)load the user's stored keyboard layout when the selected
+        // user has changed. This path also runs on the greetd socket reconnect
+        // that follows a failed login; refreshing there would discard a layout
+        // the user picked in the greeter and switch cosmic-comp back to the
+        // stored config mid-login (issue #258).
+        let selected_idx = self.selected_username.data_idx;
+        if self.xkb_loaded_user != selected_idx {
+            self.xkb_loaded_user = selected_idx;
+            self.common.update_user_data(user_data);
 
-        // Ensure that user's xkb config is used
-        self.common.set_xkb_config(user_data);
+            // Ensure that user's xkb config is used
+            self.common.set_xkb_config(user_data);
+        } else {
+            self.common.update_wallpapers(user_data);
+        }
 
         if let Some(builder) = &user_data.theme_builder_opt {
             self.theme_builder = builder.clone();
@@ -1163,6 +1262,7 @@ impl cosmic::Application for App {
             randr_list: None,
             surface_id_pairs: Vec::new(),
             authenticating: false,
+            xkb_loaded_user: None,
         };
         (app, Task::batch(tasks))
     }
@@ -1478,8 +1578,20 @@ impl cosmic::Application for App {
 
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
-                        self.send_request(Request::StartSession { cmd, env });
-                        return self.update(Message::ConfigUpdateUser);
+                        // Authentication has succeeded, so it is now safe to
+                        // persist the greeter-selected layout into this user's
+                        // own config. The persist call must finish *before*
+                        // StartSession: greetd tears down this greeter process
+                        // as soon as the session starts, which would kill an
+                        // in-flight async persist future and silently drop the
+                        // layout (issue #258). So StartSession is sent from
+                        // inside the persist future, only after the daemon call
+                        // resolves.
+                        let persist_and_start = self.persist_xkb_config_and_start(cmd, env);
+                        return Task::batch([
+                            persist_and_start,
+                            self.update(Message::ConfigUpdateUser),
+                        ]);
                     }
                     None => todo!("session {:?} not found", self.selected_session),
                 }
@@ -1531,6 +1643,14 @@ impl cosmic::Application for App {
                     self.dropdown_opt = None;
                 } else {
                     self.dropdown_opt = Some(dropdown);
+                }
+            }
+            Message::InputSourceSwitch => {
+                // Cycle to the next layout, matching cosmic-settings-daemon's
+                // behaviour (move the active layout to the back of the list).
+                if self.common.active_layouts.len() > 1 {
+                    self.common.active_layouts.rotate_left(1);
+                    self.set_xkb_config();
                 }
             }
             Message::KeyboardLayout(layout_i) => {
@@ -1844,6 +1964,7 @@ impl cosmic::Application for App {
     fn subscription(&self) -> Subscription<Self::Message> {
         Subscription::batch([
             self.common.subscription().map(Message::from),
+            crate::input_source::subscription().map(|()| Message::InputSourceSwitch),
             ipc::subscription(),
             wayland::a11y_subscription().map(Message::WaylandUpdate),
             listen_with(|event, _status, id| match event {

@@ -7,7 +7,7 @@ use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::{self, Rectangle, Size, Subscription};
 use cosmic::widget;
 use cosmic_config::{ConfigSet, CosmicConfigEntry};
-use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
+use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData, XkbConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use wayland_client::protocol::wl_output::WlOutput;
@@ -60,6 +60,7 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Tick,
     Tz(jiff::tz::TimeZone),
+    XkbConfigChanged(XkbConfig),
 }
 
 impl<M: From<Message> + Send + 'static> Common<M> {
@@ -128,23 +129,42 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         )
     }
 
-    pub fn set_xkb_config(&self, user_data: &UserData) {
-        if let Some(mut xkb_config) = user_data.xkb_config_opt.clone() {
-            xkb_config.layout = String::new();
-            xkb_config.variant = String::new();
-            for (i, layout) in self.active_layouts.iter().enumerate() {
-                if i > 0 {
-                    xkb_config.layout.push(',');
-                    xkb_config.variant.push(',');
-                }
-                xkb_config.layout.push_str(&layout.layout);
-                xkb_config.variant.push_str(&layout.variant);
+    /// Build the cosmic-comp `xkb_config` for the current `active_layouts`
+    /// ordering, based on `user_data`'s existing config.
+    ///
+    /// Returns `None` when there is nothing safe to write: an empty layout list
+    /// would blank out `layout` (and `variant`) in the user's cosmic-comp
+    /// config, dropping every configured keyboard layout and leaving them with
+    /// the default US layout. `active_layouts` is empty whenever the xkb-data
+    /// database failed to load (`layouts_opt == None`, so `refresh_active_layouts`
+    /// bails out early) or none of the configured layouts matched it.
+    pub fn build_xkb_config(&self, user_data: &UserData) -> Option<XkbConfig> {
+        if self.active_layouts.is_empty() {
+            tracing::warn!("refusing to write empty xkb_config layout list");
+            return None;
+        }
+        let mut xkb_config = user_data.xkb_config_opt.clone()?;
+        xkb_config.layout = String::new();
+        xkb_config.variant = String::new();
+        for (i, layout) in self.active_layouts.iter().enumerate() {
+            if i > 0 {
+                xkb_config.layout.push(',');
+                xkb_config.variant.push(',');
             }
-            if let Some(comp_config_handler) = &self.comp_config_handler {
-                match comp_config_handler.set("xkb_config", xkb_config) {
-                    Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
-                    Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
-                }
+            xkb_config.layout.push_str(&layout.layout);
+            xkb_config.variant.push_str(&layout.variant);
+        }
+        Some(xkb_config)
+    }
+
+    pub fn set_xkb_config(&self, user_data: &UserData) {
+        let Some(xkb_config) = self.build_xkb_config(user_data) else {
+            return;
+        };
+        if let Some(comp_config_handler) = &self.comp_config_handler {
+            match comp_config_handler.set("xkb_config", xkb_config) {
+                Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
+                Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
             }
         }
     }
@@ -195,52 +215,68 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         }
     }
 
+    // From cosmic-applet-input-sources
+    pub fn refresh_active_layouts(&mut self, xkb_config: &XkbConfig) {
+        let Some(keyboard_layouts) = &self.layouts_opt else {
+            return;
+        };
+
+        self.active_layouts.clear();
+        let config_layouts = xkb_config.layout.split_terminator(',');
+        let config_variants = xkb_config
+            .variant
+            .split_terminator(',')
+            .chain(std::iter::repeat(""));
+        'outer: for (config_layout, config_variant) in config_layouts.zip(config_variants) {
+            for xkb_layout in keyboard_layouts.layouts() {
+                if config_layout != xkb_layout.name() {
+                    continue;
+                }
+                if config_variant.is_empty() {
+                    let active_layout = ActiveLayout {
+                        description: xkb_layout.description().to_owned(),
+                        layout: config_layout.to_owned(),
+                        variant: config_variant.to_owned(),
+                    };
+                    self.active_layouts.push(active_layout);
+                    continue 'outer;
+                }
+
+                let Some(xkb_variants) = xkb_layout.variants() else {
+                    continue;
+                };
+                for xkb_variant in xkb_variants {
+                    if config_variant != xkb_variant.name() {
+                        continue;
+                    }
+                    let active_layout = ActiveLayout {
+                        description: xkb_variant.description().to_owned(),
+                        layout: config_layout.to_owned(),
+                        variant: config_variant.to_owned(),
+                    };
+                    self.active_layouts.push(active_layout);
+                    continue 'outer;
+                }
+            }
+
+            // The configured layout isn't present in the xkb-data database.
+            // Keep it anyway (using the raw code as its description) so it is
+            // still shown and, crucially, survives the next `set_xkb_config`
+            // write instead of being silently removed from the user's config.
+            self.active_layouts.push(ActiveLayout {
+                description: config_layout.to_owned(),
+                layout: config_layout.to_owned(),
+                variant: config_variant.to_owned(),
+            });
+        }
+        tracing::info!("{:?}", self.active_layouts);
+    }
+
     pub fn update_user_data(&mut self, user_data: &UserData) {
         self.update_wallpapers(user_data);
 
-        // From cosmic-applet-input-sources
-        if let Some(keyboard_layouts) = &self.layouts_opt
-            && let Some(xkb_config) = &user_data.xkb_config_opt
-        {
-            self.active_layouts.clear();
-            let config_layouts = xkb_config.layout.split_terminator(',');
-            let config_variants = xkb_config
-                .variant
-                .split_terminator(',')
-                .chain(std::iter::repeat(""));
-            'outer: for (config_layout, config_variant) in config_layouts.zip(config_variants) {
-                for xkb_layout in keyboard_layouts.layouts() {
-                    if config_layout != xkb_layout.name() {
-                        continue;
-                    }
-                    if config_variant.is_empty() {
-                        let active_layout = ActiveLayout {
-                            description: xkb_layout.description().to_owned(),
-                            layout: config_layout.to_owned(),
-                            variant: config_variant.to_owned(),
-                        };
-                        self.active_layouts.push(active_layout);
-                        continue 'outer;
-                    }
-
-                    let Some(xkb_variants) = xkb_layout.variants() else {
-                        continue;
-                    };
-                    for xkb_variant in xkb_variants {
-                        if config_variant != xkb_variant.name() {
-                            continue;
-                        }
-                        let active_layout = ActiveLayout {
-                            description: xkb_variant.description().to_owned(),
-                            layout: config_layout.to_owned(),
-                            variant: config_variant.to_owned(),
-                        };
-                        self.active_layouts.push(active_layout);
-                        continue 'outer;
-                    }
-                }
-            }
-            tracing::info!("{:?}", self.active_layouts);
+        if let Some(xkb_config) = &user_data.xkb_config_opt {
+            self.refresh_active_layouts(xkb_config);
         }
     }
 
@@ -322,12 +358,33 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             Message::Tz(tz) => {
                 self.time.set_tz(tz);
             }
+            Message::XkbConfigChanged(xkb_config) => {
+                self.refresh_active_layouts(&xkb_config);
+            }
         }
         Task::none()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let mut subscriptions = Vec::with_capacity(3);
+        let mut subscriptions = Vec::with_capacity(4);
+
+        struct XkbConfigSubscription;
+        subscriptions.push(
+            cosmic_config::config_subscription(
+                std::any::TypeId::of::<XkbConfigSubscription>(),
+                "com.system76.CosmicComp".into(),
+                CosmicCompConfig::VERSION,
+            )
+            .map(|update: cosmic_config::Update<CosmicCompConfig>| {
+                if !update.errors.is_empty() {
+                    tracing::warn!(
+                        "errors loading com.system76.CosmicComp config: {:?}",
+                        update.errors
+                    );
+                }
+                Message::XkbConfigChanged(update.config.xkb_config)
+            }),
+        );
 
         subscriptions.push(event::listen_with(|event, status, id| match event {
             iced::Event::Keyboard(KeyEvent::KeyPressed {
