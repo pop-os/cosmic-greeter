@@ -129,23 +129,42 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         )
     }
 
-    pub fn set_xkb_config(&self, user_data: &UserData) {
-        if let Some(mut xkb_config) = user_data.xkb_config_opt.clone() {
-            xkb_config.layout = String::new();
-            xkb_config.variant = String::new();
-            for (i, layout) in self.active_layouts.iter().enumerate() {
-                if i > 0 {
-                    xkb_config.layout.push(',');
-                    xkb_config.variant.push(',');
-                }
-                xkb_config.layout.push_str(&layout.layout);
-                xkb_config.variant.push_str(&layout.variant);
+    /// Build the cosmic-comp `xkb_config` for the current `active_layouts`
+    /// ordering, based on `user_data`'s existing config.
+    ///
+    /// Returns `None` when there is nothing safe to write: an empty layout list
+    /// would blank out `layout` (and `variant`) in the user's cosmic-comp
+    /// config, dropping every configured keyboard layout and leaving them with
+    /// the default US layout. `active_layouts` is empty whenever the xkb-data
+    /// database failed to load (`layouts_opt == None`, so `refresh_active_layouts`
+    /// bails out early) or none of the configured layouts matched it.
+    pub fn build_xkb_config(&self, user_data: &UserData) -> Option<XkbConfig> {
+        if self.active_layouts.is_empty() {
+            tracing::warn!("refusing to write empty xkb_config layout list");
+            return None;
+        }
+        let mut xkb_config = user_data.xkb_config_opt.clone()?;
+        xkb_config.layout = String::new();
+        xkb_config.variant = String::new();
+        for (i, layout) in self.active_layouts.iter().enumerate() {
+            if i > 0 {
+                xkb_config.layout.push(',');
+                xkb_config.variant.push(',');
             }
-            if let Some(comp_config_handler) = &self.comp_config_handler {
-                match comp_config_handler.set("xkb_config", xkb_config) {
-                    Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
-                    Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
-                }
+            xkb_config.layout.push_str(&layout.layout);
+            xkb_config.variant.push_str(&layout.variant);
+        }
+        Some(xkb_config)
+    }
+
+    pub fn set_xkb_config(&self, user_data: &UserData) {
+        let Some(xkb_config) = self.build_xkb_config(user_data) else {
+            return;
+        };
+        if let Some(comp_config_handler) = &self.comp_config_handler {
+            match comp_config_handler.set("xkb_config", xkb_config) {
+                Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
+                Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
             }
         }
     }
@@ -239,6 +258,16 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                     continue 'outer;
                 }
             }
+
+            // The configured layout isn't present in the xkb-data database.
+            // Keep it anyway (using the raw code as its description) so it is
+            // still shown and, crucially, survives the next `set_xkb_config`
+            // write instead of being silently removed from the user's config.
+            self.active_layouts.push(ActiveLayout {
+                description: config_layout.to_owned(),
+                layout: config_layout.to_owned(),
+                variant: config_variant.to_owned(),
+            });
         }
         tracing::info!("{:?}", self.active_layouts);
     }
