@@ -8,6 +8,10 @@ mod wayland;
 
 mod common;
 
+mod fprintd;
+
+pub mod pam_worker;
+
 mod localize;
 
 #[cfg(feature = "logind")]

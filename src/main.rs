@@ -24,6 +24,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 return Ok(());
             }
+            // Internal. Not a public interface.
+            Some("--pam-conversation") => {
+                let service = raw_args
+                    .next_os(&mut cursor)
+                    .and_then(|s| s.to_str())
+                    .ok_or("missing PAM service argument")?
+                    .to_owned();
+                let username = raw_args
+                    .next_os(&mut cursor)
+                    .and_then(|s| s.to_str())
+                    .ok_or("missing username argument")?
+                    .to_owned();
+                cosmic_greeter::pam_worker::run(&service, &username);
+            }
             _ => {}
         }
     }

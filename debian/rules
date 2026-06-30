@@ -19,6 +19,7 @@ override_dh_auto_install:
 
 execute_after_dh_install:
 	dh_installpam
+	dh_installpam --name=cosmic-greeter-fingerprint
 	dh_installsysusers
 
 override_dh_installsystemd:
