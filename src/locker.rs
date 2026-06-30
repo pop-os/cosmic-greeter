@@ -18,14 +18,12 @@ use cosmic::{Element, executor, surface, theme, widget};
 use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{TimeAppletConfig, UserData};
 use std::any::TypeId;
-use std::ffi::{CStr, CString};
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fs, process};
 use tokio::sync::mpsc;
-use tokio::task;
 use tracing::level_filters::LevelFilter;
 use tracing::warn;
 use tracing_subscriber::prelude::*;
@@ -79,6 +77,9 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     // We are already the user at this point
     user_data.load_config_as_user();
 
+    // Read the fingerprint gate from the user's greeter config. Defaults to off.
+    let (greeter_config, _greeter_config_handler) = cosmic_greeter_config::Config::load();
+
     let flags = Flags {
         user_icon: user_data
             .icon_opt
@@ -86,6 +87,7 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
             .map(widget::image::Handle::from_bytes),
         user_data,
         lockfile_opt: lockfile_opt(),
+        fingerprint_enabled: greeter_config.enable_fingerprint_authentication,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -95,151 +97,137 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Convert PAM errors to user-friendly localized messages
-fn pam_error_to_message(error: &pam_client::Error) -> String {
-    use pam_client::ErrorCode;
-
-    // Use the structured error code instead of string matching for reliability
-    match error.code() {
-        ErrorCode::AUTH_ERR | ErrorCode::CRED_INSUFFICIENT => {
-            fl!("auth-error-credentials")
-        }
-        ErrorCode::PERM_DENIED => {
-            fl!("auth-error-denied")
-        }
-        ErrorCode::MAXTRIES => {
-            fl!("auth-error-maxtries")
-        }
-        ErrorCode::ACCT_EXPIRED | ErrorCode::USER_UNKNOWN => {
-            fl!("auth-error-account")
-        }
-        _ => {
-            // For any other error, show a generic message
-            fl!("auth-error-default")
-        }
-    }
+/// Outcome of running one out-of-process PAM stack.
+enum WorkerOutcome {
+    /// The stack authenticated successfully.
+    Success,
+    /// The stack rejected the attempt; carries an already-localized message.
+    Failure(String),
+    /// The worker was killed or its pipe closed before producing a verdict
+    /// (e.g. the other stack won the race, or the UI went away).
+    Aborted,
 }
 
-pub fn pam_thread(username: String, conversation: Conversation) -> Result<(), pam_client::Error> {
-    //TODO: send errors to GUI, restart process
+/// Spawn one PAM stack as a child process and drive its conversation, relaying
+/// prompts/messages to the UI through `msg_tx` and feeding typed input from
+/// `value_rx` (password stack only; `None` for fingerprint). The child is
+/// `kill_on_drop`, so dropping this future SIGKILLs the worker.
+async fn run_pam_worker(
+    service: &str,
+    username: &str,
+    msg_tx: &mut futures::channel::mpsc::Sender<cosmic::Action<Message>>,
+    mut value_rx: Option<mpsc::Receiver<String>>,
+    is_fingerprint: bool,
+) -> WorkerOutcome {
+    use crate::pam_worker::WorkerMsg;
+    use tokio::io::{AsyncBufReadExt, BufReader};
 
-    // Create PAM context
-    let mut context = pam_client::Context::new("cosmic-greeter", Some(&username), conversation)?;
+    let mut child = match tokio::process::Command::new("/proc/self/exe")
+        .arg("--pam-conversation")
+        .arg(service)
+        .arg(username)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            tracing::error!("failed to spawn PAM worker for {service}: {err}");
+            return WorkerOutcome::Aborted;
+        }
+    };
 
-    // Authenticate the user (ask for password, 2nd-factor token, fingerprint, etc.)
-    tracing::info!("authenticate");
-    context.authenticate(pam_client::Flag::NONE)?;
+    let stdout = child.stdout.take().expect("worker stdout piped");
+    let mut stdin = child.stdin.take().expect("worker stdin piped");
+    let mut lines = BufReader::new(stdout).lines();
 
-    // Validate the account (is not locked, expired, etc.)
-    tracing::info!("acct_mgmt");
-    context.acct_mgmt(pam_client::Flag::NONE)?;
-
-    Ok(())
-}
-
-pub struct Conversation {
-    msg_tx: futures::channel::mpsc::Sender<cosmic::Action<Message>>,
-    value_rx: mpsc::Receiver<String>,
-}
-
-impl Conversation {
-    fn prompt_value(
-        &mut self,
-        prompt_c: &CStr,
-        secret: bool,
-    ) -> Result<CString, pam_client::ErrorCode> {
-        let prompt = prompt_c.to_str().map_err(|err| {
-            tracing::error!("failed to convert prompt to UTF-8: {:?}", err);
-            pam_client::ErrorCode::CONV_ERR
-        })?;
-
-        futures::executor::block_on(async {
-            self.msg_tx
-                .send(cosmic::Action::App(
-                    common::Message::Prompt(prompt.to_string(), secret, Some(String::new())).into(),
-                ))
-                .await
-        })
-        .map_err(|err| {
-            tracing::error!("failed to send prompt: {:?}", err);
-            pam_client::ErrorCode::CONV_ERR
-        })?;
-
-        let value = self.value_rx.blocking_recv().ok_or_else(|| {
-            tracing::error!("failed to receive value: channel closed");
-            pam_client::ErrorCode::CONV_ERR
-        })?;
-
-        CString::new(value).map_err(|err| {
-            tracing::error!("failed to convert value to C string: {:?}", err);
-            pam_client::ErrorCode::CONV_ERR
-        })
-    }
-
-    fn message(&mut self, prompt_c: &CStr) -> Result<(), pam_client::ErrorCode> {
-        let prompt = prompt_c.to_str().map_err(|err| {
-            tracing::error!("failed to convert prompt to UTF-8: {:?}", err);
-            pam_client::ErrorCode::CONV_ERR
-        })?;
-
-        futures::executor::block_on(async {
-            self.msg_tx
-                .send(cosmic::Action::App(
-                    common::Message::Prompt(prompt.to_string(), false, None).into(),
-                ))
-                .await
-        })
-        .map_err(|err| {
-            tracing::error!("failed to send prompt: {:?}", err);
-            pam_client::ErrorCode::CONV_ERR
-        })
-    }
-
-    fn error_message(&mut self, prompt_c: &CStr) -> Result<(), pam_client::ErrorCode> {
-        let prompt = prompt_c.to_str().map_err(|err| {
-            tracing::error!("failed to convert prompt to UTF-8: {:?}", err);
-            pam_client::ErrorCode::CONV_ERR
-        })?;
-
-        futures::executor::block_on(async {
-            self.msg_tx
-                .send(cosmic::Action::App(Message::Error(prompt.to_string())))
-                .await
-        })
-        .map_err(|err| {
-            tracing::error!("failed to send error message: {:?}", err);
-            pam_client::ErrorCode::CONV_ERR
-        })
-    }
-}
-
-impl pam_client::ConversationHandler for Conversation {
-    fn prompt_echo_on(&mut self, prompt_c: &CStr) -> Result<CString, pam_client::ErrorCode> {
-        tracing::info!("prompt_echo_on {:?}", prompt_c);
-        self.prompt_value(prompt_c, false)
-    }
-    fn prompt_echo_off(&mut self, prompt_c: &CStr) -> Result<CString, pam_client::ErrorCode> {
-        tracing::info!("prompt_echo_off {:?}", prompt_c);
-        self.prompt_value(prompt_c, true)
-    }
-    fn text_info(&mut self, prompt_c: &CStr) {
-        tracing::info!("text_info {:?}", prompt_c);
-        match self.message(prompt_c) {
-            Ok(()) => (),
+    loop {
+        let line = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            // EOF: the worker exited without a verdict (typically killed).
+            Ok(None) => return WorkerOutcome::Aborted,
             Err(err) => {
-                tracing::warn!("failed to send text_info: {:?}", err);
+                tracing::warn!("PAM worker read error ({service}): {err}");
+                return WorkerOutcome::Aborted;
             }
-        }
-    }
-    fn error_msg(&mut self, prompt_c: &CStr) {
-        tracing::info!("error_msg {:?}", prompt_c);
-        match self.error_message(prompt_c) {
-            Ok(()) => (),
+        };
+
+        let msg = match ron::from_str::<WorkerMsg>(&line) {
+            Ok(msg) => msg,
             Err(err) => {
-                tracing::warn!("failed to send error_msg: {:?}", err);
+                tracing::warn!("invalid PAM worker message {line:?}: {err}");
+                continue;
             }
+        };
+
+        let (prompt, secret) = match msg {
+            WorkerMsg::PromptEchoOff(prompt) => (prompt, true),
+            WorkerMsg::PromptEchoOn(prompt) => (prompt, false),
+            WorkerMsg::Info(text) => {
+                // Fingerprint sensor text gets its own status line; password
+                // info replaces the prompt label (matching the old behavior).
+                let action = if is_fingerprint {
+                    Message::FingerprintInfo(Some(text))
+                } else {
+                    common::Message::Prompt(text, false, None).into()
+                };
+                let _ = msg_tx.send(cosmic::Action::App(action)).await;
+                continue;
+            }
+            WorkerMsg::Error(text) => {
+                let action = if is_fingerprint {
+                    Message::FingerprintInfo(Some(text))
+                } else {
+                    Message::Error(text)
+                };
+                let _ = msg_tx.send(cosmic::Action::App(action)).await;
+                continue;
+            }
+            WorkerMsg::Success => return WorkerOutcome::Success,
+            WorkerMsg::Failure(message) => return WorkerOutcome::Failure(message),
+        };
+
+        // A prompt needs typed input. Only the password stack has an input
+        // channel, the fingerprint stack should never reach here.
+        let Some(value_rx) = value_rx.as_mut() else {
+            tracing::warn!("unexpected input prompt in fingerprint worker");
+            // Unblock the worker with an empty value rather than deadlocking it.
+            let _ = write_host_input(&mut stdin, String::new()).await;
+            continue;
+        };
+
+        let _ = msg_tx
+            .send(cosmic::Action::App(
+                common::Message::Prompt(prompt, secret, Some(String::new())).into(),
+            ))
+            .await;
+
+        let value = match value_rx.recv().await {
+            Some(value) => value,
+            // UI input channel closed.
+            None => return WorkerOutcome::Aborted,
+        };
+
+        if write_host_input(&mut stdin, value).await.is_err() {
+            return WorkerOutcome::Aborted;
         }
     }
+}
+
+/// Write one `HostMsg::Input` line to the worker's stdin.
+async fn write_host_input(
+    stdin: &mut tokio::process::ChildStdin,
+    value: String,
+) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    let line = ron::to_string(&crate::pam_worker::HostMsg::Input(value))
+        .unwrap_or_else(|_| String::from("Input(\"\")"));
+    stdin.write_all(line.as_bytes()).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.flush().await
 }
 
 #[derive(Clone)]
@@ -247,6 +235,7 @@ pub struct Flags {
     user_data: UserData,
     user_icon: Option<widget::image::Handle>,
     lockfile_opt: Option<PathBuf>,
+    fingerprint_enabled: bool,
 }
 
 ///TODO: this is custom code that should be better handled by libcosmic
@@ -272,6 +261,7 @@ pub enum Message {
     Suspend,
     TimeAppletConfig(TimeAppletConfig),
     Error(String),
+    FingerprintInfo(Option<String>),
     Lock,
     Unlock,
 }
@@ -311,6 +301,7 @@ pub struct App {
     inhibit_opt: Option<Arc<OwnedFd>>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     authenticating: bool,
+    fingerprint_info_opt: Option<String>,
 }
 
 impl App {
@@ -556,6 +547,10 @@ impl App {
                 }
             }
 
+            if let Some(info) = &self.fingerprint_info_opt {
+                column = column.push(widget::text(info));
+            }
+
             // Show either authenticating message or error message in the same location
             if self.authenticating {
                 column = column.push(
@@ -665,6 +660,7 @@ impl cosmic::Application for App {
             inhibit_opt: None,
             value_tx_opt: None,
             authenticating: false,
+            fingerprint_info_opt: None,
         };
 
         let task = if cfg!(feature = "logind") {
@@ -851,10 +847,11 @@ impl cosmic::Application for App {
                     }
 
                     let username = self.flags.user_data.name.clone();
+                    let fingerprint_enabled = self.flags.fingerprint_enabled;
                     let (locked_task, locked_handle) =
                         cosmic::task::stream(cosmic::iced::stream::channel(
                             16,
-                            |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
+                            move |msg_tx: futures::channel::mpsc::Sender<_>| async move {
                                 // Send heartbeat once a second to update time.
                                 let heartbeat_future = {
                                     let mut output = msg_tx.clone();
@@ -873,52 +870,125 @@ impl cosmic::Application for App {
                                     }
                                 };
 
-                                let pam_future = async {
-                                    loop {
-                                        let (value_tx, value_rx) = mpsc::channel(16);
-                                        msg_tx
-                                            .send(cosmic::Action::App(Message::Channel(value_tx)))
-                                            .await
-                                            .unwrap();
+                                let password_future = {
+                                    let username = username.clone();
+                                    let mut msg_tx = msg_tx.clone();
+                                    async move {
+                                        loop {
+                                            let (value_tx, value_rx) = mpsc::channel(16);
+                                            msg_tx
+                                                .send(cosmic::Action::App(Message::Channel(
+                                                    value_tx,
+                                                )))
+                                                .await
+                                                .unwrap();
 
-                                        let pam_res = {
-                                            let username = username.clone();
-                                            let msg_tx = msg_tx.clone();
-                                            task::spawn_blocking(move || {
-                                                pam_thread(
-                                                    username,
-                                                    Conversation { msg_tx, value_rx },
-                                                )
-                                            })
+                                            match run_pam_worker(
+                                                "cosmic-greeter",
+                                                &username,
+                                                &mut msg_tx,
+                                                Some(value_rx),
+                                                false,
+                                            )
                                             .await
-                                            .unwrap()
-                                        };
-
-                                        match pam_res {
-                                            Ok(()) => {
-                                                tracing::info!("successfully authenticated");
-                                                msg_tx
-                                                    .send(cosmic::Action::App(Message::Unlock))
-                                                    .await
-                                                    .unwrap();
-                                                break;
-                                            }
-                                            Err(err) => {
-                                                tracing::warn!("authentication error: {}", err);
-                                                msg_tx
-                                                    .send(cosmic::Action::App(Message::Error(
-                                                        pam_error_to_message(&err),
-                                                    )))
-                                                    .await
-                                                    .unwrap();
+                                            {
+                                                WorkerOutcome::Success => {
+                                                    tracing::info!(
+                                                        "successfully authenticated (password)"
+                                                    );
+                                                    msg_tx
+                                                        .send(cosmic::Action::App(Message::Unlock))
+                                                        .await
+                                                        .unwrap();
+                                                    break;
+                                                }
+                                                WorkerOutcome::Failure(message) => {
+                                                    tracing::warn!(
+                                                        "password authentication failed: {message}"
+                                                    );
+                                                    msg_tx
+                                                        .send(cosmic::Action::App(Message::Error(
+                                                            message,
+                                                        )))
+                                                        .await
+                                                        .unwrap();
+                                                }
+                                                WorkerOutcome::Aborted => {
+                                                    tracing::warn!("password worker aborted");
+                                                    tokio::time::sleep(Duration::from_millis(100))
+                                                        .await;
+                                                }
                                             }
                                         }
                                     }
                                 };
 
+                                let fingerprint_future = {
+                                    let username = username.clone();
+                                    let mut msg_tx = msg_tx.clone();
+                                    async move {
+                                        let available = fingerprint_enabled
+                                            && crate::fprintd::fingerprint_available(&username)
+                                                .await;
+                                        if !available {
+                                            futures::future::pending::<()>().await;
+                                        }
+
+                                        tracing::info!("starting fingerprint authentication");
+                                        loop {
+                                            msg_tx
+                                                .send(cosmic::Action::App(
+                                                    Message::FingerprintInfo(None),
+                                                ))
+                                                .await
+                                                .unwrap();
+
+                                            match run_pam_worker(
+                                                "cosmic-greeter-fingerprint",
+                                                &username,
+                                                &mut msg_tx,
+                                                None,
+                                                true,
+                                            )
+                                            .await
+                                            {
+                                                WorkerOutcome::Success => {
+                                                    tracing::info!(
+                                                        "successfully authenticated (fingerprint)"
+                                                    );
+                                                    msg_tx
+                                                        .send(cosmic::Action::App(Message::Unlock))
+                                                        .await
+                                                        .unwrap();
+                                                    break;
+                                                }
+                                                WorkerOutcome::Failure(message) => {
+                                                    tracing::info!(
+                                                        "fingerprint attempt failed: {message}"
+                                                    );
+                                                    tokio::time::sleep(Duration::from_secs(1))
+                                                        .await;
+                                                }
+                                                WorkerOutcome::Aborted => {
+                                                    tokio::time::sleep(Duration::from_secs(1))
+                                                        .await;
+                                                }
+                                            }
+                                        }
+                                    }
+                                };
+
+                                let auth_future = async {
+                                    futures::pin_mut!(password_future);
+                                    futures::pin_mut!(fingerprint_future);
+                                    // First stack to win cancels the other.
+                                    futures::future::select(password_future, fingerprint_future)
+                                        .await;
+                                };
+
                                 futures::pin_mut!(heartbeat_future);
-                                futures::pin_mut!(pam_future);
-                                futures::future::select(heartbeat_future, pam_future).await;
+                                futures::pin_mut!(auth_future);
+                                futures::future::select(heartbeat_future, auth_future).await;
                             },
                         ))
                         .abortable();
@@ -1058,6 +1128,9 @@ impl cosmic::Application for App {
                 self.common.error_opt = Some(error);
                 self.authenticating = false;
             }
+            Message::FingerprintInfo(info_opt) => {
+                self.fingerprint_info_opt = info_opt;
+            }
             Message::Lock => match self.state {
                 State::Unlocked => {
                     tracing::info!("session locking");
@@ -1068,6 +1141,8 @@ impl cosmic::Application for App {
                     self.value_tx_opt = None;
                     // Reset authenticating state
                     self.authenticating = false;
+                    // Clear fingerprint status
+                    self.fingerprint_info_opt = None;
                     // Try to create lockfile when locking
                     if let Some(ref lockfile) = self.flags.lockfile_opt
                         && let Err(err) = fs::File::create(lockfile)
@@ -1095,6 +1170,8 @@ impl cosmic::Application for App {
                         self.value_tx_opt = None;
                         // Stop authenticating
                         self.authenticating = false;
+                        // Clear fingerprint status
+                        self.fingerprint_info_opt = None;
 
                         // Try to delete lockfile when unlocking
                         if let Some(ref lockfile) = self.flags.lockfile_opt
