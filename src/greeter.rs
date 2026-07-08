@@ -1527,6 +1527,9 @@ impl cosmic::Application for App {
                 if let Some(handle) = self.heartbeat_handle.take() {
                     handle.abort();
                 }
+                if self.dropdown_opt.is_some() {
+                    return self.common.dropdown_blur_rects(true);
+                }
             }
             Message::DialogConfirm => match self.dialog_page_opt.take() {
                 Some(DialogPage::Restart(_)) => {
@@ -1553,7 +1556,11 @@ impl cosmic::Application for App {
                     })
                     .discard();
                 }
-                None => {}
+                None => {
+                    if self.dropdown_opt.is_some() {
+                        return self.common.dropdown_blur_rects(true);
+                    }
+                }
             },
             Message::DropdownToggle(dropdown) => {
                 if self.dropdown_opt == Some(dropdown) {
@@ -1614,7 +1621,8 @@ impl cosmic::Application for App {
                     .abortable();
 
                     self.heartbeat_handle = Some(handle);
-                    return heartbeat;
+                    self.common.include_menu = false;
+                    return Task::batch(vec![self.common.dropdown_blur_rects(false), heartbeat]);
                 }
             }
             Message::Heartbeat => match self.dialog_page_opt {
