@@ -14,7 +14,6 @@ use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfac
 use cosmic::iced::{
     self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription,
 };
-use cosmic::widget::indeterminate_circular;
 use cosmic::{Element, executor, surface, theme, widget};
 use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{TimeAppletConfig, UserData};
@@ -373,7 +372,7 @@ impl App {
             let dropdown_menu = |items: Vec<_>| {
                 let item_cnt = items.len();
 
-                let items = widget::column::with_children(items);
+                let items = widget::menu::menu_column::MenuColumn::with_children(items);
                 let items = if item_cnt > 7 {
                     Element::from(
                         widget::scrollable(items)
@@ -383,25 +382,26 @@ impl App {
                     Element::from(items)
                 };
 
-                let menu = widget::container(items)
-                    .padding(1)
-                    //TODO: move style to libcosmic
-                    .class(theme::Container::custom(|theme| {
-                        let cosmic = theme.cosmic();
-                        let component = &cosmic.background(theme.transparent).component;
-                        widget::container::Style {
-                            icon_color: Some(component.on.into()),
-                            text_color: Some(component.on.into()),
-                            background: Some(Background::Color(component.base.into())),
-                            border: Border {
-                                radius: 8.0.into(),
-                                width: 1.0,
-                                color: component.divider.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }))
-                    .width(Length::Fixed(240.0));
+                let menu: widget::Container<'_, Message, cosmic::prelude::Theme> =
+                    widget::container(items)
+                        .padding(1)
+                        //TODO: move style to libcosmic
+                        .class(theme::Container::custom(|theme| {
+                            let cosmic = theme.cosmic();
+                            let component = &cosmic.background(theme.transparent).component;
+                            widget::container::Style {
+                                icon_color: Some(component.on.into()),
+                                text_color: Some(component.on.into()),
+                                background: Some(Background::Color(component.base.into())),
+                                border: Border {
+                                    radius: 8.0.into(),
+                                    width: 1.0,
+                                    color: component.divider.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }))
+                        .width(Length::Fixed(240.0));
 
                 if let Some(t) = self.common.rectangle_tracker.as_ref() {
                     Element::from(t.container((surface_id, true), menu))
