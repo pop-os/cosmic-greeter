@@ -366,7 +366,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         )
     }
 
-    fn blur_rects(&mut self, id: SurfaceId) -> Task<M> {
+    pub fn blur_rects(&mut self, id: SurfaceId) -> Task<M> {
         if let Some(output) = self.subsurface_outputs.get(&id) {
             if let Some(rect) = self.subsurface_rects.get(output) {
                 let x = rect.x;
