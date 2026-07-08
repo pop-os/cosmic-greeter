@@ -24,7 +24,8 @@ use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::repos
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{
-    self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription, window,
+    self, Alignment, Background, Border, Color, Length, Point, Rectangle, Size, Subscription,
+    window,
 };
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
@@ -537,7 +538,7 @@ impl App {
             let dropdown_menu = |items: Vec<_>| {
                 let item_cnt = items.len();
 
-                let items = widget::column::with_children(items);
+                let items = widget::menu::menu_column::MenuColumn::with_children(items);
                 let items = if item_cnt > 7 {
                     Element::from(
                         widget::scrollable(items)
