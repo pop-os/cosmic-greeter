@@ -388,7 +388,12 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                         let mut other = *other_rect;
                         other.x += x;
                         other.y += y;
-
+                        let rad = CornerRadius {
+                            top_left: 8,
+                            top_right: 8,
+                            bottom_left: 8,
+                            bottom_right: 8,
+                        };
                         rects.append(&mut rounded_rect_strips(other, rad));
                     }
 
