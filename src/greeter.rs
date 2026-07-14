@@ -500,9 +500,7 @@ impl App {
         };
         let left_element = {
             let military_time = self
-                .selected_username
-                .uid
-                .and_then(|uid| self.flags.user_configs.get(&uid.get()))
+                .get_selected_user_config()
                 .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
             let date_time_column = self.common.time.date_time_widget(military_time);
@@ -768,9 +766,7 @@ impl App {
                 .max_width(280.0);
 
             let military_time = self
-                .selected_username
-                .uid
-                .and_then(|uid| self.flags.user_configs.get(&uid.get()))
+                .get_selected_user_config()
                 .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
             let space_height = match military_time {
@@ -1055,11 +1051,7 @@ impl App {
     }
 
     fn set_xkb_config(&self) {
-        let user_data = match self
-            .selected_username
-            .uid
-            .and_then(|uid| self.flags.user_configs.get(&uid.get()))
-        {
+        let user_data = match self.get_selected_user_config() {
             Some(some) => some,
             None => return,
         };
@@ -1068,14 +1060,10 @@ impl App {
     }
 
     fn update_user_data(&mut self) -> Task<Message> {
-        let user_data_opt = self
-            .selected_username
-            .uid
-            .and_then(|uid| self.flags.user_configs.get(&uid.get()));
-
-        let user_data = match user_data_opt {
+        // Clone to avoid borrow checker issues when mutating self later
+        let user_data = match self.get_selected_user_config().cloned() {
             Some(user_data) => {
-                self.common.update_user_data(user_data);
+                self.common.update_user_data(&user_data);
                 user_data
             }
             None => {
@@ -1084,7 +1072,7 @@ impl App {
         };
 
         // Ensure that user's xkb config is used
-        self.common.set_xkb_config(user_data);
+        self.common.set_xkb_config(&user_data);
 
         if let Some(builder) = &user_data.theme_builder_opt {
             self.theme_builder = builder.clone();
@@ -1818,9 +1806,7 @@ impl cosmic::Application for App {
                     let mut list: Option<List> = None;
 
                     let Some(cur_user_output_state) = self
-                        .selected_username
-                        .uid
-                        .and_then(|uid| self.flags.user_configs.get(&uid.get()))
+                        .get_selected_user_config()
                         .map(|user_data| &user_data.kdl_output_lists)
                     else {
                         return Task::none();
