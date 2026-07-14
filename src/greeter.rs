@@ -419,7 +419,7 @@ pub struct App {
     greetd_sender: Option<tokio::sync::mpsc::Sender<greetd_ipc::Request>>,
     socket_state: SocketState,
     usernames: Vec<(String, String)>,
-    selected_username: SelectedUser,
+    selected_user: SelectedUser,
     session_names: Vec<String>,
     selected_session: String,
     dialog_page_opt: Option<DialogPage>,
@@ -483,7 +483,7 @@ impl App {
 
     /// Get the UserData for the currently selected user, if available
     fn selected_user_config(&self) -> Option<&UserData> {
-        self.selected_username
+        self.selected_user
             .uid
             .and_then(|uid| self.flags.user_configs.get(&uid.get()))
     }
@@ -637,7 +637,7 @@ impl App {
                 for (name, full_name) in self.usernames.iter() {
                     items.push(menu_checklist(
                         full_name,
-                        name == &self.selected_username.username,
+                        name == &self.selected_user.username,
                         Message::Username(name.clone()),
                     ));
                 }
@@ -804,7 +804,7 @@ impl App {
                     if !self.entering_name {
                         // Try to find user icon by UID
                         let user_icon_opt = self
-                            .selected_username
+                            .selected_user
                             .uid
                             .and_then(|uid| self.flags.user_icons.get(&uid.get()));
 
@@ -837,7 +837,7 @@ impl App {
 
                         // Use cached display_name from SelectedUser to avoid syscall in render path
                         column = column.push(
-                            widget::container(widget::text::title4(&self.selected_username.display_name))
+                            widget::container(widget::text::title4(&self.selected_user.display_name))
                                 .width(Length::Fill)
                                 .align_x(Alignment::Center),
                         );
@@ -846,7 +846,7 @@ impl App {
                         column = column.push(
                             widget::text_input(
                                 fl!("type-username"),
-                                self.selected_username.username.as_str(),
+                                self.selected_user.username.as_str(),
                             )
                             .id(USERNAME_ID.clone())
                             .on_input(|input| Message::EnterUser(false, input))
@@ -1169,7 +1169,7 @@ impl cosmic::Application for App {
             .unwrap_or_default();
 
         let display_name = get_display_name_for_user(&username, uid, &flags.user_configs);
-        let selected_username = SelectedUser { username, uid, display_name };
+        let selected_user = SelectedUser { username, uid, display_name };
         let accessibility = Accessibility {
             helper: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config()
                 .ok(),
@@ -1182,7 +1182,7 @@ impl cosmic::Application for App {
             greetd_sender: None,
             socket_state: SocketState::Pending,
             usernames,
-            selected_username,
+            selected_user,
             session_names,
             selected_session,
             dialog_page_opt: None,
@@ -1356,7 +1356,7 @@ impl cosmic::Application for App {
                 if let SocketState::Open = &self.socket_state {
                     // When socket is opened, send create session
                     self.send_request(Request::CreateSession {
-                        username: self.selected_username.username.clone(),
+                        username: self.selected_user.username.clone(),
                     });
                 }
             }
@@ -1378,7 +1378,7 @@ impl cosmic::Application for App {
 
                 // Defer expensive UID/display_name resolution until submit
                 // Just update username for now to avoid syscalls on every keystroke
-                self.selected_username.username = username;
+                self.selected_user.username = username;
                 if focus_input {
                     return Task::batch([
                         self.common.dropdown_blur_rects(false),
@@ -1390,15 +1390,15 @@ impl cosmic::Application for App {
                 if self.dropdown_opt == Some(Dropdown::User) {
                     self.dropdown_opt = None;
                 }
-                if self.entering_name || username != self.selected_username.username {
+                if self.entering_name || username != self.selected_user.username {
                     self.entering_name = false;
                     self.authenticating = false;
 
-                    self.selected_username = self.make_selected_user(username);
+                    self.selected_user = self.make_selected_user(username);
                     self.common.surface_images.clear();
 
                     // Try to get last session for this user
-                    if let Some(session) = self.selected_username.uid.and_then(|uid| {
+                    if let Some(session) = self.selected_user.uid.and_then(|uid| {
                         self.flags
                             .greeter_config
                             .users
@@ -1422,10 +1422,10 @@ impl cosmic::Application for App {
                 }
             }
             Message::ConfigUpdateUser => {
-                let Some(uid) = self.selected_username.uid else {
+                let Some(uid) = self.selected_user.uid else {
                     tracing::error!(
                         "Couldn't find UID for user: {:?}",
-                        self.selected_username.username,
+                        self.selected_user.username,
                     );
                     return Task::none();
                 };
@@ -1435,7 +1435,7 @@ impl cosmic::Application for App {
                 let Some(handler) = self.flags.greeter_config_handler.as_mut() else {
                     tracing::error!(
                         "Failed to update config for {} (UID: {}): no config handler",
-                        self.selected_username.username,
+                        self.selected_user.username,
                         user_entry.key()
                     );
                     return Task::none();
@@ -1484,7 +1484,7 @@ impl cosmic::Application for App {
                     tracing::error!(
                         "Failed to set {} as last selected session for {} (UID: {}): {:?}",
                         self.selected_session,
-                        self.selected_username.username,
+                        self.selected_user.username,
                         uid,
                         err
                     );
@@ -2253,7 +2253,7 @@ mod tests {
         let (mut app, _tasks) = App::init(core, flags);
         
         // Case 1: User has a config
-        app.selected_username = SelectedUser {
+        app.selected_user = SelectedUser {
             username: "alice".to_string(),
             uid: NonZeroU32::new(1000),
             display_name: "Alice Smith".to_string(),
@@ -2264,7 +2264,7 @@ mod tests {
         assert_eq!(config.unwrap().name, "alice");
         
         // Case 2: User has no config (LDAP user)
-        app.selected_username = SelectedUser {
+        app.selected_user = SelectedUser {
             username: "ldap_user".to_string(),
             uid: NonZeroU32::new(2000),
             display_name: "LDAP User".to_string(),
@@ -2274,7 +2274,7 @@ mod tests {
         assert!(config.is_none(), "Should return None for user without config");
         
         // Case 3: No UID selected
-        app.selected_username = SelectedUser {
+        app.selected_user = SelectedUser {
             username: "unknown".to_string(),
             uid: None,
             display_name: "Unknown".to_string(),
