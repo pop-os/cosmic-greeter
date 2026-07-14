@@ -24,8 +24,7 @@ use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::repos
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{
-    self, Alignment, Background, Border, Color, Length, Point, Rectangle, Size, Subscription,
-    window,
+    self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription, window,
 };
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
@@ -126,7 +125,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()
         .unwrap();
-    let mut user_datas = match runtime.block_on(user_data_dbus()) {
+    let users = match runtime.block_on(user_data_dbus()) {
         Ok(ok) => ok,
         Err(err) => {
             tracing::error!("failed to load user data from daemon: {}", err);
@@ -134,15 +133,26 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    // Sort user data by uid
-    user_datas.sort_by(|a, b| a.uid.cmp(&b.uid));
+    let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+    let mut user_icons: HashMap<u32, widget::image::Handle> = HashMap::new();
+
+    for mut user_data in users {
+        let uid = user_data.uid;
+
+        if let Some(icon_bytes) = user_data.icon_opt.take() {
+            user_icons.insert(uid, widget::image::Handle::from_bytes(icon_bytes));
+        }
+
+        user_configs.insert(uid, user_data);
+    }
+
+    let username_to_uid = build_username_to_uid_index(&user_configs);
+
     let (mut greeter_config, greeter_config_handler) = CosmicGreeterConfig::load();
     // Filter out users that were removed from the system since the last time we loaded config
-    greeter_config.users.retain(|uid, _| {
-        user_datas
-            .binary_search_by(|probe| probe.uid.cmp(&uid.get()))
-            .is_ok()
-    });
+    greeter_config
+        .users
+        .retain(|uid, _| user_configs.contains_key(&uid.get()));
 
     enum SessionType {
         X11,
@@ -281,11 +291,9 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let flags = Flags {
-        user_icons: user_datas
-            .iter_mut()
-            .map(|d| d.icon_opt.take().map(widget::image::Handle::from_bytes))
-            .collect(),
-        user_datas,
+        user_configs,
+        username_to_uid,
+        user_icons,
         sessions,
         greeter_config,
         greeter_config_handler,
@@ -300,8 +308,12 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
 #[derive(Clone)]
 pub struct Flags {
-    user_datas: Vec<UserData>,
-    user_icons: Vec<Option<widget::image::Handle>>,
+    /// User configurations indexed by UID (from daemon, or passwd fallback if daemon unavailable)
+    user_configs: HashMap<u32, UserData>,
+    /// username → UID (populated for O(1) lookups)
+    username_to_uid: HashMap<String, u32>,
+    /// User icons indexed by UID
+    user_icons: HashMap<u32, widget::image::Handle>,
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
     greeter_config: CosmicGreeterConfig,
     greeter_config_handler: Option<cosmic_config::Config>,
@@ -346,11 +358,14 @@ pub enum Dropdown {
     Session,
 }
 
-struct NameIndexPair {
+/// Represents the currently selected user
+struct SelectedUser {
     /// Selected username
     username: String,
-    /// Index of the [`UserData`] for the selected username
-    data_idx: Option<usize>,
+    /// User ID (UID) for looking up configuration
+    uid: Option<NonZeroU32>,
+    /// Cached display name (full name from GECOS or config)
+    display_name: String,
 }
 
 /// Messages that are used specifically by our [`App`].
@@ -406,7 +421,7 @@ pub struct App {
     greetd_sender: Option<tokio::sync::mpsc::Sender<greetd_ipc::Request>>,
     socket_state: SocketState,
     usernames: Vec<(String, String)>,
-    selected_username: NameIndexPair,
+    selected_user: SelectedUser,
     session_names: Vec<String>,
     selected_session: String,
     dialog_page_opt: Option<DialogPage>,
@@ -468,6 +483,30 @@ impl App {
         .discard()
     }
 
+    /// Get the UserData for the currently selected user, if available
+    fn selected_user_config(&self) -> Option<&UserData> {
+        self.selected_user
+            .uid
+            .and_then(|uid| self.flags.user_configs.get(&uid.get()))
+    }
+
+    /// Create a SelectedUser from a username by resolving UID and display name
+    fn make_selected_user(&self, username: String) -> SelectedUser {
+        let uid = self
+            .flags
+            .username_to_uid
+            .get(&username)
+            .and_then(|&uid| NonZeroU32::new(uid))
+            .or_else(|| resolve_uid_for_username(&username));
+
+        let display_name = get_display_name_for_user(&username, uid, &self.flags.user_configs);
+        SelectedUser {
+            username,
+            uid,
+            display_name,
+        }
+    }
+
     fn menu(&self, id: SurfaceId) -> Element<'_, Message> {
         let window_width = self
             .common
@@ -482,9 +521,7 @@ impl App {
         };
         let left_element = {
             let military_time = self
-                .selected_username
-                .data_idx
-                .and_then(|i| self.flags.user_datas.get(i))
+                .selected_user_config()
                 .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
             let date_time_column = self.common.time.date_time_widget(military_time);
@@ -604,7 +641,7 @@ impl App {
                 for (name, full_name) in self.usernames.iter() {
                     items.push(menu_checklist(
                         full_name,
-                        name == &self.selected_username.username,
+                        name == &self.selected_user.username,
                         Message::Username(name.clone()),
                     ));
                 }
@@ -750,9 +787,7 @@ impl App {
                 .max_width(280.0);
 
             let military_time = self
-                .selected_username
-                .data_idx
-                .and_then(|i| self.flags.user_datas.get(i))
+                .selected_user_config()
                 .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
             let space_height = match military_time {
@@ -769,52 +804,55 @@ impl App {
                     column = column.push(widget::text("Opening GREETD_SOCK"));
                 }
                 SocketState::Open => {
-                    for (user_data, user_icon) in self
-                        .flags
-                        .user_datas
-                        .iter()
-                        .zip(self.flags.user_icons.iter())
-                    {
-                        if !self.entering_name && user_data.name == self.selected_username.username
-                        {
-                            // Display user icon or empty transparent box
-                            if let Some(icon_handle) = user_icon {
-                                column = column.push(
-                                    widget::container(
-                                        widget::image(icon_handle)
-                                            .width(Length::Fixed(78.0))
-                                            .height(Length::Fixed(78.0))
-                                            .content_fit(iced::ContentFit::Fill),
-                                    )
-                                    .padding(0.0)
-                                    .width(Length::Fill)
-                                    .height(Length::Fixed(78.0))
-                                    .align_x(Alignment::Center),
-                                );
-                            } else {
-                                // Empty transparent box for users without icons
-                                column = column.push(
-                                    widget::container(
-                                        widget::space::horizontal().width(Length::Fixed(78.0)),
-                                    )
-                                    .padding(0.0)
-                                    .width(Length::Fill)
-                                    .height(Length::Fixed(78.0))
-                                    .align_x(Alignment::Center),
-                                );
-                            }
+                    // Display user icon and name
+                    if !self.entering_name {
+                        // Try to find user icon by UID
+                        let user_icon_opt = self
+                            .selected_user
+                            .uid
+                            .and_then(|uid| self.flags.user_icons.get(&uid.get()));
+
+                        // Display user icon or empty transparent box
+                        if let Some(icon_handle) = user_icon_opt {
                             column = column.push(
-                                widget::container(widget::text::title4(&user_data.full_name))
-                                    .width(Length::Fill)
-                                    .align_x(Alignment::Center),
+                                widget::container(
+                                    widget::image(icon_handle)
+                                        .width(Length::Fixed(78.0))
+                                        .height(Length::Fixed(78.0))
+                                        .content_fit(iced::ContentFit::Fill),
+                                )
+                                .padding(0.0)
+                                .width(Length::Fill)
+                                .height(Length::Fixed(78.0))
+                                .align_x(Alignment::Center),
+                            );
+                        } else {
+                            // Empty transparent box for users without icons
+                            column = column.push(
+                                widget::container(
+                                    widget::space::horizontal().width(Length::Fixed(78.0)),
+                                )
+                                .padding(0.0)
+                                .width(Length::Fill)
+                                .height(Length::Fixed(78.0))
+                                .align_x(Alignment::Center),
                             );
                         }
+
+                        // Use cached display_name from SelectedUser to avoid syscall in render path
+                        column = column.push(
+                            widget::container(widget::text::title4(
+                                &self.selected_user.display_name,
+                            ))
+                            .width(Length::Fill)
+                            .align_x(Alignment::Center),
+                        );
                     }
                     if self.entering_name {
                         column = column.push(
                             widget::text_input(
                                 fl!("type-username"),
-                                self.selected_username.username.as_str(),
+                                self.selected_user.username.as_str(),
                             )
                             .id(USERNAME_ID.clone())
                             .on_input(|input| Message::EnterUser(false, input))
@@ -1030,11 +1068,7 @@ impl App {
     }
 
     fn set_xkb_config(&self) {
-        let user_data = match self
-            .selected_username
-            .data_idx
-            .and_then(|i| self.flags.user_datas.get(i))
-        {
+        let user_data = match self.selected_user_config() {
             Some(some) => some,
             None => return,
         };
@@ -1043,21 +1077,19 @@ impl App {
     }
 
     fn update_user_data(&mut self) -> Task<Message> {
-        let user_data = match self
-            .selected_username
-            .data_idx
-            .and_then(|i| self.flags.user_datas.get(i))
-        {
-            Some(some) => some,
+        // Clone to avoid borrow checker issues when mutating self later
+        let user_data = match self.selected_user_config().cloned() {
+            Some(user_data) => {
+                self.common.update_user_data(&user_data);
+                user_data
+            }
             None => {
                 return Task::none();
             }
         };
 
-        self.common.update_user_data(user_data);
-
         // Ensure that user's xkb config is used
-        self.common.set_xkb_config(user_data);
+        self.common.set_xkb_config(&user_data);
 
         if let Some(builder) = &user_data.theme_builder_opt {
             self.theme_builder = builder.clone();
@@ -1117,29 +1149,16 @@ impl cosmic::Application for App {
 
         //TODO: use full_name?
         let mut usernames: Vec<_> = flags
-            .user_datas
-            .iter()
+            .user_configs
+            .values()
             .map(|x| (x.name.clone(), x.full_name.clone()))
             .collect();
         usernames.sort_by(|a, b| a.1.cmp(&b.1));
 
-        let last_user = flags.greeter_config.last_user.as_ref();
+        let last_user = flags.greeter_config.last_user.as_ref().copied();
 
-        let (username, uid) = last_user
-            .and_then(|last_user| {
-                flags
-                    .user_datas
-                    .iter()
-                    .find(|d| d.uid == last_user.get())
-                    .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
-            })
-            .or_else(|| {
-                flags
-                    .user_datas
-                    .first()
-                    .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
-            })
-            .unwrap_or_default();
+        // Determine initial username and UID using shared logic
+        let (username, uid) = resolve_last_user(last_user, &flags.user_configs);
 
         let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
         session_names.sort();
@@ -1154,8 +1173,13 @@ impl cosmic::Application for App {
             })
             .or_else(|| session_names.first().cloned())
             .unwrap_or_default();
-        let data_idx = flags.user_datas.iter().position(|d| d.name == username);
-        let selected_username = NameIndexPair { username, data_idx };
+
+        let display_name = get_display_name_for_user(&username, uid, &flags.user_configs);
+        let selected_user = SelectedUser {
+            username,
+            uid,
+            display_name,
+        };
         let accessibility = Accessibility {
             helper: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config()
                 .ok(),
@@ -1168,7 +1192,7 @@ impl cosmic::Application for App {
             greetd_sender: None,
             socket_state: SocketState::Pending,
             usernames,
-            selected_username,
+            selected_user,
             session_names,
             selected_session,
             dialog_page_opt: None,
@@ -1181,6 +1205,7 @@ impl cosmic::Application for App {
             surface_id_pairs: Vec::new(),
             authenticating: false,
         };
+
         (app, Task::batch(tasks))
     }
 
@@ -1341,7 +1366,7 @@ impl cosmic::Application for App {
                 if let SocketState::Open = &self.socket_state {
                     // When socket is opened, send create session
                     self.send_request(Request::CreateSession {
-                        username: self.selected_username.username.clone(),
+                        username: self.selected_user.username.clone(),
                     });
                 }
             }
@@ -1360,14 +1385,10 @@ impl cosmic::Application for App {
                     self.dropdown_opt = None;
                 }
                 self.entering_name = true;
-                self.selected_username = NameIndexPair {
-                    data_idx: self
-                        .flags
-                        .user_datas
-                        .iter()
-                        .position(|d| d.name == username),
-                    username,
-                };
+
+                // Defer expensive UID/display_name resolution until submit
+                // Just update username for now to avoid syscalls on every keystroke
+                self.selected_user.username = username;
                 if focus_input {
                     return Task::batch([
                         self.common.dropdown_blur_rects(false),
@@ -1379,29 +1400,20 @@ impl cosmic::Application for App {
                 if self.dropdown_opt == Some(Dropdown::User) {
                     self.dropdown_opt = None;
                 }
-                if self.entering_name || username != self.selected_username.username {
+                if self.entering_name || username != self.selected_user.username {
                     self.entering_name = false;
                     self.authenticating = false;
-                    let data_idx = self
-                        .flags
-                        .user_datas
-                        .iter()
-                        .position(|d| d.name == username);
-                    self.selected_username = NameIndexPair { username, data_idx };
+
+                    self.selected_user = self.make_selected_user(username);
                     self.common.surface_images.clear();
-                    if let Some(session) = data_idx.and_then(|i| {
+
+                    // Try to get last session for this user
+                    if let Some(session) = self.selected_user.uid.and_then(|uid| {
                         self.flags
-                            .user_datas
-                            .get(i)
-                            .and_then(|UserData { uid, .. }| {
-                                NonZeroU32::new(*uid).and_then(|uid| {
-                                    self.flags
-                                        .greeter_config
-                                        .users
-                                        .get(&uid)
-                                        .and_then(|conf| conf.last_session.as_deref())
-                                })
-                            })
+                            .greeter_config
+                            .users
+                            .get(&uid)
+                            .and_then(|conf| conf.last_session.as_deref())
                     }) {
                         session.clone_into(&mut self.selected_session);
                     };
@@ -1420,27 +1432,20 @@ impl cosmic::Application for App {
                 }
             }
             Message::ConfigUpdateUser => {
-                let Some(user_entry) = self.selected_username.data_idx.and_then(|i| {
-                    self.flags
-                        .user_datas
-                        .get(i)
-                        .and_then(|UserData { uid, .. }| {
-                            NonZeroU32::new(*uid)
-                                .map(|uid| self.flags.greeter_config.users.entry(uid))
-                        })
-                }) else {
+                let Some(uid) = self.selected_user.uid else {
                     tracing::error!(
-                        "Couldn't find user: {:?} {:?}",
-                        self.selected_username.username,
-                        self.selected_username.data_idx,
+                        "Couldn't find UID for user: {:?}",
+                        self.selected_user.username,
                     );
                     return Task::none();
                 };
 
+                let user_entry = self.flags.greeter_config.users.entry(uid);
+
                 let Some(handler) = self.flags.greeter_config_handler.as_mut() else {
                     tracing::error!(
                         "Failed to update config for {} (UID: {}): no config handler",
-                        self.selected_username.username,
+                        self.selected_user.username,
                         user_entry.key()
                     );
                     return Task::none();
@@ -1489,7 +1494,7 @@ impl cosmic::Application for App {
                     tracing::error!(
                         "Failed to set {} as last selected session for {} (UID: {}): {:?}",
                         self.selected_session,
-                        self.selected_username.username,
+                        self.selected_user.username,
                         uid,
                         err
                     );
@@ -1783,9 +1788,7 @@ impl cosmic::Application for App {
                     let mut list: Option<List> = None;
 
                     let Some(cur_user_output_state) = self
-                        .selected_username
-                        .data_idx
-                        .and_then(|i| self.flags.user_datas.get(i))
+                        .selected_user_config()
                         .map(|user_data| &user_data.kdl_output_lists)
                     else {
                         return Task::none();
@@ -1918,4 +1921,426 @@ pub fn apply_hc_theme(
     let new_theme = builder.build();
 
     Ok(new_theme)
+}
+
+/// Resolve UID for a username by querying the passwd database
+fn resolve_uid_for_username(username: &str) -> Option<NonZeroU32> {
+    pwd::Passwd::from_name(username)
+        .ok()
+        .flatten()
+        .and_then(|p| NonZeroU32::new(p.uid))
+}
+
+fn build_username_to_uid_index(user_configs: &HashMap<u32, UserData>) -> HashMap<String, u32> {
+    user_configs
+        .iter()
+        .map(|(&uid, user_data)| (user_data.name.clone(), uid))
+        .collect()
+}
+
+/// Determine username and UID from last_user configuration using UID-based approach.
+/// This handles multiple scenarios:
+/// 1. User in user_configs (normal local users enumerated by daemon)
+/// 2. User NOT in user_configs but exists in passwd (LDAP/AD users)
+/// 3. Fallback to first user in user_configs if last_user not found
+fn resolve_last_user(
+    last_user: Option<NonZeroU32>,
+    user_configs: &HashMap<u32, UserData>,
+) -> (String, Option<NonZeroU32>) {
+    let (username, uid) = last_user
+        .and_then(|last_user_uid| {
+            // First try to find in user configs by UID
+            user_configs
+                .get(&last_user_uid.get())
+                .map(|user_data| (user_data.name.clone(), Some(last_user_uid)))
+        })
+        .or_else(|| {
+            // If not in user_configs but we have a last_user UID,
+            // query passwd directly (handles LDAP users)
+            last_user.and_then(|last_user_uid| {
+                pwd::Passwd::from_uid(last_user_uid.get())
+                    .map(|passwd| (passwd.name, Some(last_user_uid)))
+            })
+        })
+        .or_else(|| {
+            // Final fallback: first user in configs (by UID order)
+            user_configs
+                .iter()
+                .min_by_key(|(uid, _)| *uid)
+                .map(|(uid, user_data)| (user_data.name.clone(), NonZeroU32::new(*uid)))
+        })
+        .unwrap_or_default();
+
+    (username, uid)
+}
+
+/// Get display name for a user, trying user_configs first, then passwd
+fn get_display_name_for_user(
+    username: &str,
+    uid: Option<NonZeroU32>,
+    user_configs: &HashMap<u32, UserData>,
+) -> String {
+    // First try to get from user_configs if available
+    if let Some(uid) = uid {
+        if let Some(user_data) = user_configs.get(&uid.get()) {
+            return user_data.full_name.clone();
+        }
+    }
+
+    // Fallback: query passwd and extract full_name from gecos
+    if let Some(passwd) = pwd::Passwd::from_name(username).ok().flatten() {
+        let full_name = cosmic_greeter_daemon::parse_full_name_from_gecos(passwd.gecos.as_deref());
+
+        if !full_name.is_empty() {
+            return full_name;
+        }
+    }
+
+    // Final fallback: use username
+    username.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmic_greeter_daemon::UserData;
+    use std::num::NonZeroU32;
+
+    // NOTE: Several tests in this module use pwd::Passwd::current_user() to test
+    // real passwd database lookups (LDAP/AD scenarios). These tests are system-coupled
+    // and may behave differently in CI containers where the running user's passwd entry
+    // differs from development environments. This is intentional - we're testing integration
+    // with the actual system passwd database, not mocked behavior.
+    //
+    // Thread safety: Tests calling libc passwd functions (pwd::Passwd::*) are non-reentrant
+    // and run in parallel by default. If tests become flaky, consider using #[serial] from
+    // the serial_test crate or running with --test-threads=1.
+
+    #[test]
+    fn test_last_user_in_enumerated_list() {
+        // Arrange: Normal case - last user exists in user_configs
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        );
+        user_configs.insert(
+            1001,
+            UserData {
+                uid: 1001,
+                name: "bob".to_string(),
+                full_name: "Bob".to_string(),
+                ..Default::default()
+            },
+        );
+        let last_user = NonZeroU32::new(1001);
+
+        // Act
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
+
+        // Assert
+        assert_eq!(username, "bob");
+        assert_eq!(uid, NonZeroU32::new(1001));
+    }
+
+    #[test]
+    fn test_ldap_user_not_in_enumerated_list_bug() {
+        // Arrange: LDAP user UID saved in config, but not in user_configs
+        // This simulates the real-world scenario where:
+        // 1. User logs in via LDAP (UID gets saved)
+        // 2. On next boot, daemon doesn't enumerate LDAP users
+        // 3. greeter has last_user UID but can't find it in user_configs
+
+        let current_user = pwd::Passwd::current_user().expect("Need current user for test");
+
+        let last_user = NonZeroU32::new(current_user.uid);
+
+        // Empty user_configs - LDAP users aren't enumerated by daemon
+        let user_configs: HashMap<u32, UserData> = HashMap::new();
+
+        // Act
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
+
+        // Assert: Should query passwd database for LDAP user
+        assert_ne!(
+            username, "",
+            "When last_user UID (from LDAP) is not in user_configs, \
+             should query passwd database, not return empty username. \
+             Empty username causes greetd authentication to fail."
+        );
+
+        // After fix, should find the user via passwd lookup
+        assert_eq!(username, current_user.name);
+        assert_eq!(uid, NonZeroU32::new(current_user.uid));
+    }
+
+    #[test]
+    fn test_fallback_to_first_user_when_ldap_user_missing_and_locals_exist() {
+        // Arrange: LDAP user UID saved, not in user_configs, but local users exist
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        );
+        // Use u32::MAX - 1 to guarantee non-existent UID (more robust than 5000)
+        let last_user = NonZeroU32::new(u32::MAX - 1); // UID not in user_configs or passwd
+
+        // Act
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
+
+        // Assert: Should fall back to first local user (lowest UID)
+        assert_eq!(username, "alice");
+        assert_eq!(uid, NonZeroU32::new(1000));
+    }
+
+    #[test]
+    fn test_resolve_last_user_with_none_and_empty_configs() {
+        // Arrange: No last_user and no user_configs
+        let last_user = None;
+        let user_configs: HashMap<u32, UserData> = HashMap::new();
+
+        // Act
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
+
+        // Assert: Should return empty string and None
+        assert_eq!(username, "");
+        assert_eq!(uid, None);
+    }
+
+    #[test]
+    fn test_resolve_last_user_with_none_falls_back_to_first() {
+        // Arrange: No last_user but user_configs has users
+        let last_user = None;
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1001,
+            UserData {
+                uid: 1001,
+                name: "bob".to_string(),
+                full_name: "Bob".to_string(),
+                ..Default::default()
+            },
+        );
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        );
+
+        // Act
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
+
+        // Assert: Should fall back to first user (lowest UID)
+        assert_eq!(username, "alice");
+        assert_eq!(uid, NonZeroU32::new(1000));
+    }
+
+    #[test]
+    fn test_get_display_name_from_user_configs() {
+        // Arrange
+        let mut user_configs = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice Wonderland".to_string(),
+                ..Default::default()
+            },
+        );
+
+        // Act
+        let display_name = get_display_name_for_user("alice", NonZeroU32::new(1000), &user_configs);
+
+        // Assert
+        assert_eq!(display_name, "Alice Wonderland");
+    }
+
+    #[test]
+    fn test_get_display_name_from_passwd() {
+        // Arrange: User not in user_configs
+        let user_configs = HashMap::new();
+        let current_user = pwd::Passwd::current_user().expect("Need current user");
+
+        // Act
+        let display_name = get_display_name_for_user(&current_user.name, None, &user_configs);
+
+        // Assert: Should get full name from passwd gecos, or username as fallback
+        let expected_display_name = current_user
+            .gecos
+            .as_ref()
+            .and_then(|gecos| gecos.split(',').next())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&current_user.name);
+
+        assert_eq!(
+            display_name, expected_display_name,
+            "Display name should match GECOS full name or username"
+        );
+    }
+
+    #[test]
+    fn test_get_display_name_for_nonexistent_user_with_empty_configs() {
+        // Arrange: Non-existent user, no UID, empty user_configs
+        let username = "nonexistent_user_xyz_12345";
+        let uid = None;
+        let user_configs: HashMap<u32, UserData> = HashMap::new();
+
+        // Act
+        let display_name = get_display_name_for_user(username, uid, &user_configs);
+
+        // Assert: Should fall back to username
+        assert_eq!(display_name, username);
+    }
+
+    #[test]
+    fn test_username_selection_without_user_configs() {
+        // This test proves we can select a username without any user_configs
+        // The greeter should work with ONLY passwd, no daemon data needed
+
+        let current_user = pwd::Passwd::current_user().expect("Need current user for test");
+
+        let last_user = NonZeroU32::new(current_user.uid);
+        let user_configs = HashMap::new(); // NO user config from daemon
+
+        // Act
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
+
+        // Assert: Should find user via passwd even with empty user_configs
+        assert_eq!(username, current_user.name);
+        assert_eq!(uid, NonZeroU32::new(current_user.uid));
+
+        // Prove we can get display name too
+        let display_name = get_display_name_for_user(&username, uid, &user_configs);
+        let expected_display_name = current_user
+            .gecos
+            .as_ref()
+            .and_then(|gecos| gecos.split(',').next())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&current_user.name);
+        assert_eq!(
+            display_name, expected_display_name,
+            "Display name should match GECOS full name or username"
+        );
+    }
+
+    #[test]
+    fn test_uid_based_lookup_fallback_to_first() {
+        // Arrange: Last user doesn't exist, should pick first by UID
+        let mut user_configs = HashMap::new();
+        user_configs.insert(
+            1001,
+            UserData {
+                uid: 1001,
+                name: "bob".to_string(),
+                full_name: "Bob".to_string(),
+                ..Default::default()
+            },
+        );
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        );
+
+        // Use u32::MAX - 1 to guarantee non-existent UID
+        let last_user = NonZeroU32::new(u32::MAX - 1); // Doesn't exist
+
+        // Act
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
+
+        // Assert: Should pick alice (UID 1000, lowest)
+        assert_eq!(username, "alice");
+        assert_eq!(uid, NonZeroU32::new(1000));
+    }
+
+    #[test]
+    fn test_resolve_uid_for_username() {
+        // Test the helper function that consolidates the duplicated passwd lookup pattern
+        // Input: username string
+        // Output: Option<NonZeroU32> UID
+
+        // Case 1: Root user (UID 0 cannot be represented as NonZeroU32)
+        let uid = resolve_uid_for_username("root");
+        assert_eq!(
+            uid, None,
+            "root has UID 0 which cannot be NonZeroU32, should return None"
+        );
+
+        // Case 2: Valid system user with non-zero UID (current user always exists and has UID > 0)
+        let current_user = pwd::Passwd::current_user().expect("Need current user for test");
+        if current_user.uid > 0 {
+            let uid = resolve_uid_for_username(&current_user.name);
+            assert_eq!(
+                uid,
+                NonZeroU32::new(current_user.uid),
+                "Current user should resolve to their UID"
+            );
+        }
+
+        // Case 3: Non-existent user
+        let uid = resolve_uid_for_username("nonexistent_user_xyz_12345");
+        assert_eq!(uid, None, "Non-existent user should return None");
+    }
+
+    #[test]
+    fn test_build_username_to_uid_index() {
+        // Arrange: Create user_configs with multiple users
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        );
+        user_configs.insert(
+            1001,
+            UserData {
+                uid: 1001,
+                name: "bob".to_string(),
+                full_name: "Bob".to_string(),
+                ..Default::default()
+            },
+        );
+        user_configs.insert(
+            1002,
+            UserData {
+                uid: 1002,
+                name: "charlie".to_string(),
+                full_name: "Charlie".to_string(),
+                ..Default::default()
+            },
+        );
+
+        // Act: Build reverse index from user_configs
+        let index = build_username_to_uid_index(&user_configs);
+
+        // Assert: Index should map all usernames to their UIDs
+        assert_eq!(index.get("alice"), Some(&1000));
+        assert_eq!(index.get("bob"), Some(&1001));
+        assert_eq!(index.get("charlie"), Some(&1002));
+        assert_eq!(index.len(), 3);
+        assert_eq!(index.get("nonexistent"), None);
+    }
 }
