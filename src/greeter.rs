@@ -1400,13 +1400,7 @@ impl cosmic::Application for App {
                     .values()
                     .find(|d| d.name == username)
                     .and_then(|d| NonZeroU32::new(d.uid))
-                    .or_else(|| {
-                        // Fallback: query passwd
-                        pwd::Passwd::from_name(&username)
-                            .ok()
-                            .flatten()
-                            .and_then(|p| NonZeroU32::new(p.uid))
-                    });
+                    .or_else(|| resolve_uid_for_username(&username));
 
                 self.selected_username = SelectedUser { username, uid };
                 if focus_input {
@@ -1431,13 +1425,7 @@ impl cosmic::Application for App {
                         .values()
                         .find(|d| d.name == username)
                         .and_then(|d| NonZeroU32::new(d.uid))
-                        .or_else(|| {
-                            // Fallback: query passwd
-                            pwd::Passwd::from_name(&username)
-                                .ok()
-                                .flatten()
-                                .and_then(|p| NonZeroU32::new(p.uid))
-                        });
+                        .or_else(|| resolve_uid_for_username(&username));
 
                     self.selected_username = SelectedUser { username, uid };
                     self.common.surface_images.clear();
