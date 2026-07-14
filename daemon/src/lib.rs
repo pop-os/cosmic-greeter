@@ -264,7 +264,7 @@ impl UserData {
     }
 }
 
-/// Parse full name from gecos field (first comma-separated component)
+/// Extract full name from gecos (gecos format: name,room,work-phone,home-phone,other)
 pub fn parse_full_name_from_gecos(gecos: Option<String>) -> String {
     gecos
         .as_ref()

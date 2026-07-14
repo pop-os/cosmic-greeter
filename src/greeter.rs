@@ -314,7 +314,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 pub struct Flags {
     /// User configurations indexed by UID (from daemon, or passwd fallback if daemon unavailable)
     user_configs: HashMap<u32, UserData>,
-    /// Reverse index: username → UID for O(1) lookups
+    /// username → UID (populated for O(1) lookups)
     username_to_uid: HashMap<String, u32>,
     /// User icons indexed by UID
     user_icons: HashMap<u32, widget::image::Handle>,
@@ -1926,7 +1926,6 @@ fn resolve_uid_for_username(username: &str) -> Option<NonZeroU32> {
         .and_then(|p| NonZeroU32::new(p.uid))
 }
 
-/// Build reverse index mapping username → UID from user_configs
 fn build_username_to_uid_index(user_configs: &HashMap<u32, UserData>) -> HashMap<String, u32> {
     user_configs
         .iter()
