@@ -125,7 +125,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()
         .unwrap();
-    let user_datas_vec = match runtime.block_on(user_data_dbus()) {
+    let users = match runtime.block_on(user_data_dbus()) {
         Ok(ok) => ok,
         Err(err) => {
             tracing::error!("failed to load user data from daemon: {}", err);
@@ -137,7 +137,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     let mut user_configs: HashMap<u32, UserData> = HashMap::new();
     let mut user_icons: HashMap<u32, widget::image::Handle> = HashMap::new();
 
-    for mut user_data in user_datas_vec {
+    for mut user_data in users {
         let uid = user_data.uid;
 
         // Extract and store icon if present
