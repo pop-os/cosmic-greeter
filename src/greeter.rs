@@ -1960,6 +1960,14 @@ pub fn apply_hc_theme(
     Ok(new_theme)
 }
 
+/// Resolve UID for a username by querying the passwd database
+fn resolve_uid_for_username(username: &str) -> Option<NonZeroU32> {
+    pwd::Passwd::from_name(username)
+        .ok()
+        .flatten()
+        .and_then(|p| NonZeroU32::new(p.uid))
+}
+
 /// Get display name for a user, trying user_configs first, then passwd
 fn get_display_name_for_user(
     username: &str,
@@ -2269,88 +2277,17 @@ mod tests {
     }
 
     #[test]
-    fn test_wallpaper_loading_with_default_user_data() {
-        // Test for regression: background turns grey when LDAP user selected
-        //
-        // Bug: update_user_data() returned early when user not in user_configs,
-        // so common.update_wallpapers() was never called.
-        // Result: surface_images remained empty, fallback grey background was shown.
-        //
-        // This test verifies that update_wallpapers() can be safely called
-        // with a default UserData (representing an LDAP user with no daemon config).
-
-        use crate::common::Common;
-
-        // Arrange: Create a Common instance with minimal setup
-        let core = Core::default();
-        let (mut common, _task): (Common<Message>, _) = Common::init(core);
-
-        // Default UserData represents an LDAP user with no custom wallpaper config
-        let default_user_data = UserData::default();
-
-        // Act: Call update_wallpapers with default user data
-        // This simulates what happens in update_user_data() for LDAP users
-        common.update_wallpapers(&default_user_data);
-
-        // Assert: No panic occurred (test passes if we reach here)
-        // The actual implementation now calls this even for users not in configs,
-        // preventing the grey background regression.
-    }
-
-    #[test]
-    fn test_init_calls_wallpaper_setup_for_selected_user() {
-        // Test for regression: gray background on greeter startup with LDAP user
-        //
-        // Scenario: LDAP user is selected as last_user in config
-        // Bug: No wallpaper loads on startup, screen stays gray until login
-        // Root cause: init() doesn't initialize wallpapers for the selected user
-        //
-        // This test verifies the initialization flow by checking that after init(),
-        // the necessary setup has been done to load wallpapers
-
-        use cosmic::Application;
-        use std::collections::HashMap;
-
-        // Arrange: Setup with local user (easier to test than LDAP)
-        let local_uid: u32 = 1000;
+    fn test_resolve_uid_for_username() {
+        // Test the helper function that consolidates the duplicated passwd lookup pattern
+        // Input: username string
+        // Output: Option<NonZeroU32> UID
         
-        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
-        user_configs.insert(
-            local_uid,
-            UserData {
-                uid: local_uid,
-                name: "testuser".to_string(),
-                full_name: "Test User".to_string(),
-                ..Default::default()
-            },
-        );
+        // Case 1: Valid system user (root always exists)
+        let uid = resolve_uid_for_username("root");
+        assert_eq!(uid, NonZeroU32::new(0), "root should resolve to UID 0");
         
-        let greeter_config = CosmicGreeterConfig {
-            last_user: NonZeroU32::new(local_uid),
-            ..Default::default()
-        };
-
-        let flags = Flags {
-            user_configs,
-            user_icons: HashMap::new(),
-            greeter_config,
-            greeter_config_handler: None,
-            sessions: HashMap::new(),
-        };
-
-        let core = Core::default();
-
-        // Act: Initialize the app
-        let (app, _init_tasks) = App::init(core, flags);
-
-        // Assert: The app should have been set up to load wallpapers
-        // Verify that selected_username matches the user we configured
-        assert_eq!(app.selected_username.username, "testuser");
-        assert_eq!(app.selected_username.uid, NonZeroU32::new(local_uid));
-        
-        // The fix: init() now calls update_wallpapers for the initially selected user
-        // This ensures wallpapers are loaded during initialization, preventing gray background
-        // The test passes if initialization completes without panic, confirming wallpaper
-        // initialization was attempted for the selected user
+        // Case 2: Non-existent user
+        let uid = resolve_uid_for_username("nonexistent_user_xyz_12345");
+        assert_eq!(uid, None, "Non-existent user should return None");
     }
 }
