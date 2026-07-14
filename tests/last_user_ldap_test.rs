@@ -6,10 +6,11 @@
 //! This test reproduces the bug where:
 //! 1. A user logs in with an LDAP-backed account (UID saved in config)
 //! 2. On next login, the UID is not found in user_datas (LDAP users aren't enumerated)
-//! 3. The code falls back to unwrap_or_default(), setting username to ""
-//! 4. Authentication fails because greetd receives an empty username
+//! 3. The code should use pwd::Passwd::from_uid() to look up the user directly
+//! 4. This works for LDAP users that aren't in the enumerated list
 
 use std::num::NonZeroU32;
+use pwd::Passwd;
 
 /// Simulates the user data structure from the daemon
 #[derive(Clone, Debug)]
@@ -31,10 +32,12 @@ struct NameIndexPair {
     data_idx: Option<usize>,
 }
 
-/// The function under test: determines selected username from last_user config
+/// ORIGINAL BUGGY VERSION: determines selected username from last_user config
 ///
-/// This replicates the logic from greeter.rs lines 1126-1158
-fn determine_selected_username(
+/// This replicates the BUGGY logic from greeter.rs lines 1126-1142
+/// that returns empty username when last_user UID is not in user_datas
+#[allow(dead_code)]
+fn determine_selected_username_buggy(
     greeter_config: &GreeterConfig,
     user_datas: &[UserData],
 ) -> NameIndexPair {
@@ -52,19 +55,45 @@ fn determine_selected_username(
                 .first()
                 .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
         })
-        .unwrap_or_else(|| {
-            // FIX: When last_user UID is not found in user_datas (e.g., LDAP user),
-            // preserve the last_user UID as a sentinel instead of returning empty string.
-            // This prevents authentication failure due to empty username.
-            if let Some(last_user_uid) = last_user {
-                // Return a sentinel username indicating manual entry is needed
-                // The actual username will be entered manually by the user
-                (format!("uid:{}", last_user_uid.get()), Some(*last_user_uid))
-            } else {
-                // No last_user and no enumerated users - truly empty state
-                (String::new(), None)
-            }
-        });
+        .unwrap_or_default(); // BUG: Returns ("", None) when no match!
+
+    let data_idx = user_datas.iter().position(|d| d.name == username);
+    NameIndexPair { username, data_idx }
+}
+
+/// FIXED VERSION: determines selected username using pwd::Passwd::from_uid()
+///
+/// This demonstrates the CORRECT approach: when last_user UID is not found
+/// in user_datas, query the system user database directly via passwd
+fn determine_selected_username(
+    greeter_config: &GreeterConfig,
+    user_datas: &[UserData],
+) -> NameIndexPair {
+    let last_user = greeter_config.last_user.as_ref();
+
+    let (username, _uid) = last_user
+        .and_then(|last_user| {
+            // First try to find in enumerated user_datas
+            user_datas
+                .iter()
+                .find(|d| d.uid == last_user.get())
+                .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+        })
+        .or_else(|| {
+            // If not in user_datas but we have a last_user UID,
+            // query passwd directly (this handles LDAP users!)
+            last_user.and_then(|last_user_uid| {
+                Passwd::from_uid(last_user_uid.get())
+                    .map(|passwd| (passwd.name, Some(*last_user_uid)))
+            })
+        })
+        .or_else(|| {
+            // Final fallback: first enumerated user
+            user_datas
+                .first()
+                .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+        })
+        .unwrap_or_default(); // Only empty if truly no users anywhere
 
     let data_idx = user_datas.iter().position(|d| d.name == username);
     NameIndexPair { username, data_idx }
@@ -126,31 +155,66 @@ mod tests {
     }
 
     #[test]
-    fn test_ldap_user_missing_should_not_use_empty_username() {
-        // Arrange: LDAP user logged in previously, saved in config
-        // On reconnect, LDAP user not in enumerated user_datas list
+    fn test_uid_not_found_anywhere_returns_empty() {
+        // Arrange: UID that doesn't exist in user_datas OR passwd database
         let config = GreeterConfig {
-            last_user: NonZeroU32::new(LDAP_USER_UID),
+            last_user: NonZeroU32::new(LDAP_USER_UID), // UID 5000 unlikely to exist
         };
         
-        // Empty user_datas - LDAP users aren't enumerated
+        // Empty user_datas - simulates LDAP users not being enumerated
         let user_datas: Vec<UserData> = vec![];
 
         // Act
         let result = determine_selected_username(&config, &user_datas);
 
-        // Assert: Should NOT have an empty username
-        // BUG: Original implementation returns "" via unwrap_or_default()
-        // FIX: Returns sentinel value (uid:5000) to preserve last_user info
-        assert_ne!(
+        // Assert: When UID exists nowhere, falls back to empty string as last resort
+        // This is acceptable because:
+        // 1. It tried user_datas (not found)
+        // 2. It tried passwd lookup (not found)
+        // 3. No users are available to fall back to
+        // The real fix is tested in test_real_system_user_lookup_via_passwd
+        assert_eq!(
             result.username, "",
-            "Empty username causes authentication to fail. \
-             When last_user UID is not in user_datas, username should remain set \
-             or UI should prompt for manual entry."
+            "When UID doesn't exist anywhere and no users available, \
+             should return empty string as last resort."
         );
+        assert_eq!(result.data_idx, None);
+    }
+
+    #[test]
+    fn test_real_system_user_lookup_via_passwd() {
+        // Arrange: Use current user's UID (which WILL exist in passwd)
+        let current_user = Passwd::current_user()
+            .expect("Failed to get current user for test");
         
-        // Verify it's the sentinel value
-        assert_eq!(result.username, format!("uid:{}", LDAP_USER_UID));
+        let config = GreeterConfig {
+            last_user: NonZeroU32::new(current_user.uid),
+        };
+        
+        // Empty user_datas - simulate LDAP user not enumerated
+        let user_datas: Vec<UserData> = vec![];
+
+        // Act
+        let result = determine_selected_username(&config, &user_datas);
+
+        // Assert: Should successfully look up via passwd
+        assert_eq!(result.username, current_user.name);
+        assert_eq!(result.data_idx, None); // Not in user_datas
+    }
+
+    #[test]
+    fn test_buggy_version_returns_empty_username() {
+        // This test documents the BUG in the original implementation
+        let config = GreeterConfig {
+            last_user: NonZeroU32::new(LDAP_USER_UID),
+        };
+        let user_datas: Vec<UserData> = vec![];
+
+        // Act with BUGGY version
+        let result = determine_selected_username_buggy(&config, &user_datas);
+
+        // Assert: Buggy version DOES return empty username (this is the problem!)
+        assert_eq!(result.username, "");
         assert_eq!(result.data_idx, None);
     }
 
