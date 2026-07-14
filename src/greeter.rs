@@ -1376,7 +1376,9 @@ impl cosmic::Application for App {
                 }
                 self.entering_name = true;
 
-                self.selected_username = self.make_selected_user(username);
+                // Defer expensive UID/display_name resolution until submit
+                // Just update username for now to avoid syscalls on every keystroke
+                self.selected_username.username = username;
                 if focus_input {
                     return Task::batch([
                         self.common.dropdown_blur_rects(false),
