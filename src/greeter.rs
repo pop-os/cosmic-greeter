@@ -1066,20 +1066,12 @@ impl App {
             .uid
             .and_then(|uid| self.flags.user_configs.get(&uid.get()));
 
-        // Always attempt wallpaper loading, even for users not in configs (e.g., LDAP users)
-        // This prevents the grey background regression
         let user_data = match user_data_opt {
             Some(user_data) => {
-                // User has config data - use it for full setup
                 self.common.update_user_data(user_data);
                 user_data
             }
             None => {
-                // User not in configs (LDAP user) - still load wallpapers with defaults
-                // to avoid grey background. Use default UserData which has empty wallpapers
-                // but won't crash the wallpaper loading logic.
-                let default_user_data = UserData::default();
-                self.common.update_wallpapers(&default_user_data);
                 return Task::none();
             }
         };
@@ -1220,21 +1212,6 @@ impl cosmic::Application for App {
             surface_id_pairs: Vec::new(),
             authenticating: false,
         };
-
-        // Initialize wallpapers for the initially selected user to avoid gray background on startup
-        let user_data_opt = app
-            .selected_username
-            .uid
-            .and_then(|uid| app.flags.user_configs.get(&uid.get()));
-        
-        if let Some(user_data) = user_data_opt {
-            // User has config data - load their wallpapers
-            app.common.update_wallpapers(user_data);
-        } else {
-            // User not in configs (LDAP user) - still try to load wallpapers with defaults
-            let default_user_data = UserData::default();
-            app.common.update_wallpapers(&default_user_data);
-        }
 
         (app, Task::batch(tasks))
     }
