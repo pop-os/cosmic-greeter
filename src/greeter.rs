@@ -2153,7 +2153,16 @@ mod tests {
 
         // Prove we can get display name too
         let display_name = get_display_name_for_user(&username, uid, &user_configs);
-        assert!(!display_name.is_empty());
+        let expected_display_name = current_user
+            .gecos
+            .as_ref()
+            .and_then(|gecos| gecos.split(',').next())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&current_user.name);
+        assert_eq!(
+            display_name, expected_display_name,
+            "Display name should match GECOS full name or username"
+        );
     }
 
     #[test]
