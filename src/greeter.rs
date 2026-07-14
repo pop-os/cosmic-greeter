@@ -1068,10 +1068,11 @@ impl App {
 
         // Always attempt wallpaper loading, even for users not in configs (e.g., LDAP users)
         // This prevents the grey background regression
-        match user_data_opt {
+        let user_data = match user_data_opt {
             Some(user_data) => {
                 // User has config data - use it for full setup
                 self.common.update_user_data(user_data);
+                user_data
             }
             None => {
                 // User not in configs (LDAP user) - still load wallpapers with defaults
@@ -1081,9 +1082,7 @@ impl App {
                 self.common.update_wallpapers(&default_user_data);
                 return Task::none();
             }
-        }
-
-        let user_data = user_data_opt.unwrap(); // Safe: we checked Some above
+        };
 
         // Ensure that user's xkb config is used
         self.common.set_xkb_config(user_data);
@@ -2277,44 +2276,31 @@ mod tests {
     }
 
     #[test]
-    fn test_update_user_data_called_even_when_user_not_in_configs() {
+    fn test_wallpaper_loading_with_default_user_data() {
         // Test for regression: background turns grey when LDAP user selected
         //
-        // Bug: update_user_data() returns early when user not in user_configs,
-        // so common.update_user_data() (which calls update_wallpapers()) is never called.
-        // Result: surface_images remains empty, fallback grey background is shown.
+        // Bug: update_user_data() returned early when user not in user_configs,
+        // so common.update_wallpapers() was never called.
+        // Result: surface_images remained empty, fallback grey background was shown.
         //
-        // This test verifies that wallpaper loading logic is invoked even when
-        // the selected user is not in user_configs.
+        // This test verifies that update_wallpapers() can be safely called
+        // with a default UserData (representing an LDAP user with no daemon config).
 
-        use std::collections::HashMap;
+        use crate::common::Common;
 
-        // Arrange: Empty user_configs (LDAP user not enumerated)
-        let user_configs: HashMap<u32, UserData> = HashMap::new();
-        let selected_user_uid = NonZeroU32::new(5000); // LDAP user
+        // Arrange: Create a Common instance with minimal setup
+        let core = Core::default();
+        let (mut common, _task): (Common<Message>, _) = Common::init(core);
 
-        // Act & Assert: should_call_wallpaper_loading returns true when user not in configs
-        let should_update_wallpapers =
-            should_call_wallpaper_loading(selected_user_uid, &user_configs);
+        // Default UserData represents an LDAP user with no custom wallpaper config
+        let default_user_data = UserData::default();
 
-        assert!(
-            should_update_wallpapers,
-            "Wallpaper loading should be attempted even when user is not in user_configs.\
-             This ensures the greeter doesn't show a grey background for LDAP users."
-        );
-    }
+        // Act: Call update_wallpapers with default user data
+        // This simulates what happens in update_user_data() for LDAP users
+        common.update_wallpapers(&default_user_data);
 
-    /// Helper function to determine if wallpaper loading should be attempted.
-    /// This encapsulates the logic that was previously inline in update_user_data().
-    ///
-    /// Returns true if wallpaper loading should be called, false otherwise.
-    fn should_call_wallpaper_loading(
-        _selected_user_uid: Option<NonZeroU32>,
-        _user_configs: &HashMap<u32, UserData>,
-    ) -> bool {
-        // Wallpaper loading should always be attempted, even for users not in configs.
-        // This ensures LDAP users (not enumerated by daemon) still get wallpapers
-        // instead of the grey fallback background.
-        true
+        // Assert: No panic occurred (test passes if we reach here)
+        // The actual implementation now calls this even for users not in configs,
+        // preventing the grey background regression.
     }
 }
