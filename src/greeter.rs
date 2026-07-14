@@ -2113,6 +2113,38 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_last_user_with_none_falls_back_to_first() {
+        // Arrange: No last_user but user_configs has users
+        let last_user = None;
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1001,
+            UserData {
+                uid: 1001,
+                name: "bob".to_string(),
+                full_name: "Bob".to_string(),
+                ..Default::default()
+            },
+        );
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        );
+
+        // Act
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
+
+        // Assert: Should fall back to first user (lowest UID)
+        assert_eq!(username, "alice");
+        assert_eq!(uid, NonZeroU32::new(1000));
+    }
+
+    #[test]
     fn test_get_display_name_from_user_configs() {
         // Arrange
         let mut user_configs = HashMap::new();
