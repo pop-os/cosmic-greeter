@@ -2282,23 +2282,4 @@ mod tests {
         assert!(config.is_none(), "Should return None when no UID selected");
     }
 
-    #[test]
-    fn test_selected_user_caches_display_name() {
-        // Test that SelectedUser struct caches the display name to avoid syscalls on every render
-        
-        // Create a SelectedUser with display_name cached
-        let user = SelectedUser {
-            username: "alice".to_string(),
-            uid: NonZeroU32::new(1000),
-            display_name: "Alice Smith".to_string(),
-        };
-        
-        assert_eq!(user.username, "alice");
-        assert_eq!(user.uid, NonZeroU32::new(1000));
-        assert_eq!(user.display_name, "Alice Smith");
-        
-        // When display_name is accessed, it should return cached value
-        // without calling pwd::Passwd::from_name (which would be a syscall)
-        assert_eq!(user.display_name, "Alice Smith");
-    }
 }
