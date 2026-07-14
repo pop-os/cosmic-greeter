@@ -135,6 +135,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
     // Build HashMap of user configs indexed by UID
     let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+    let mut username_to_uid: HashMap<String, u32> = HashMap::new();
     let mut user_icons: HashMap<u32, widget::image::Handle> = HashMap::new();
 
     for mut user_data in users {
@@ -144,6 +145,9 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         if let Some(icon_bytes) = user_data.icon_opt.take() {
             user_icons.insert(uid, widget::image::Handle::from_bytes(icon_bytes));
         }
+
+        // Build reverse index for O(1) username → UID lookups
+        username_to_uid.insert(user_data.name.clone(), uid);
 
         // Store user config
         user_configs.insert(uid, user_data);
@@ -293,6 +297,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
     let flags = Flags {
         user_configs,
+        username_to_uid,
         user_icons,
         sessions,
         greeter_config,
@@ -310,6 +315,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 pub struct Flags {
     /// User configurations indexed by UID (from daemon or empty if daemon unavailable)
     user_configs: HashMap<u32, UserData>,
+    /// Reverse index: username → UID for O(1) lookups
+    username_to_uid: HashMap<String, u32>,
     /// User icons indexed by UID
     user_icons: HashMap<u32, widget::image::Handle>,
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
@@ -2269,6 +2276,7 @@ mod tests {
         
         let flags = Flags {
             user_configs,
+            username_to_uid: HashMap::new(),
             user_icons: HashMap::new(),
             greeter_config: CosmicGreeterConfig::default(),
             greeter_config_handler: None,
@@ -2310,6 +2318,7 @@ mod tests {
         
         let flags = Flags {
             user_configs,
+            username_to_uid: HashMap::new(),
             user_icons: HashMap::new(),
             greeter_config: CosmicGreeterConfig::default(),
             greeter_config_handler: None,
@@ -2350,6 +2359,7 @@ mod tests {
         
         let flags = Flags {
             user_configs,
+            username_to_uid: HashMap::new(),
             user_icons: HashMap::new(),
             greeter_config: CosmicGreeterConfig::default(),
             greeter_config_handler: None,
@@ -2370,6 +2380,48 @@ mod tests {
         
         // Assert
         assert!(config.is_none(), "Should return None when no UID selected");
+    }
+
+    #[test]
+    fn test_username_to_uid_reverse_index_populated() {
+        // Arrange
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        );
+        user_configs.insert(
+            1001,
+            UserData {
+                uid: 1001,
+                name: "bob".to_string(),
+                full_name: "Bob".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let mut username_to_uid: HashMap<String, u32> = HashMap::new();
+        username_to_uid.insert("alice".to_string(), 1000);
+        username_to_uid.insert("bob".to_string(), 1001);
+
+        let flags = Flags {
+            user_configs,
+            username_to_uid,
+            user_icons: HashMap::new(),
+            greeter_config: CosmicGreeterConfig::default(),
+            greeter_config_handler: None,
+            sessions: HashMap::new(),
+        };
+
+        // Assert: username_to_uid should contain both users
+        assert_eq!(flags.username_to_uid.get("alice"), Some(&1000));
+        assert_eq!(flags.username_to_uid.get("bob"), Some(&1001));
+        assert_eq!(flags.username_to_uid.len(), 2);
     }
 
 }
