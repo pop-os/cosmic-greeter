@@ -488,6 +488,21 @@ impl App {
             .and_then(|uid| self.flags.user_configs.get(&uid.get()))
     }
 
+    /// Create a SelectedUser from a username by resolving UID and display name
+    fn make_selected_user(&self, username: String) -> SelectedUser {
+        // Find UID for this username
+        let uid = self
+            .flags
+            .user_configs
+            .values()
+            .find(|d| d.name == username)
+            .and_then(|d| NonZeroU32::new(d.uid))
+            .or_else(|| resolve_uid_for_username(&username));
+
+        let display_name = get_display_name_for_user(&username, uid, &self.flags.user_configs);
+        SelectedUser { username, uid, display_name }
+    }
+
     fn menu(&self, id: SurfaceId) -> Element<'_, Message> {
         let window_width = self
             .common
@@ -820,15 +835,9 @@ impl App {
                             );
                         }
 
-                        // Get display name (works for users in user_configs OR from passwd)
-                        let display_name = get_display_name_for_user(
-                            &self.selected_username.username,
-                            self.selected_username.uid,
-                            &self.flags.user_configs,
-                        );
-
+                        // Use cached display_name from SelectedUser to avoid syscall in render path
                         column = column.push(
-                            widget::container(widget::text::title4(display_name))
+                            widget::container(widget::text::title4(&self.selected_username.display_name))
                                 .width(Length::Fill)
                                 .align_x(Alignment::Center),
                         );
@@ -1140,34 +1149,10 @@ impl cosmic::Application for App {
             .collect();
         usernames.sort_by(|a, b| a.1.cmp(&b.1));
 
-        let last_user = flags.greeter_config.last_user.as_ref();
+        let last_user = flags.greeter_config.last_user.as_ref().copied();
 
-        // Use new UID-based lookup
-        let (username, uid) = last_user
-            .and_then(|last_user_uid| {
-                // First try to find in user configs by UID
-                flags
-                    .user_configs
-                    .get(&last_user_uid.get())
-                    .map(|user_data| (user_data.name.clone(), Some(*last_user_uid)))
-            })
-            .or_else(|| {
-                // If not in user_configs but we have a last_user UID,
-                // query passwd directly (handles LDAP users)
-                last_user.and_then(|last_user_uid| {
-                    pwd::Passwd::from_uid(last_user_uid.get())
-                        .map(|passwd| (passwd.name, Some(*last_user_uid)))
-                })
-            })
-            .or_else(|| {
-                // Final fallback: first user in configs (by UID order)
-                flags
-                    .user_configs
-                    .iter()
-                    .min_by_key(|(uid, _)| *uid)
-                    .map(|(uid, user_data)| (user_data.name.clone(), NonZeroU32::new(*uid)))
-            })
-            .unwrap_or_default();
+        // Determine initial username and UID using shared logic
+        let (username, uid) = determine_username_from_last_user(last_user, &flags.user_configs);
 
         let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
         session_names.sort();
@@ -1391,17 +1376,7 @@ impl cosmic::Application for App {
                 }
                 self.entering_name = true;
 
-                // Find UID for this username
-                let uid = self
-                    .flags
-                    .user_configs
-                    .values()
-                    .find(|d| d.name == username)
-                    .and_then(|d| NonZeroU32::new(d.uid))
-                    .or_else(|| resolve_uid_for_username(&username));
-
-                let display_name = get_display_name_for_user(&username, uid, &self.flags.user_configs);
-                self.selected_username = SelectedUser { username, uid, display_name };
+                self.selected_username = self.make_selected_user(username);
                 if focus_input {
                     return Task::batch([
                         self.common.dropdown_blur_rects(false),
@@ -1417,21 +1392,11 @@ impl cosmic::Application for App {
                     self.entering_name = false;
                     self.authenticating = false;
 
-                    // Find UID for this username
-                    let uid = self
-                        .flags
-                        .user_configs
-                        .values()
-                        .find(|d| d.name == username)
-                        .and_then(|d| NonZeroU32::new(d.uid))
-                        .or_else(|| resolve_uid_for_username(&username));
-
-                    let display_name = get_display_name_for_user(&username, uid, &self.flags.user_configs);
-                    self.selected_username = SelectedUser { username, uid, display_name };
+                    self.selected_username = self.make_selected_user(username);
                     self.common.surface_images.clear();
 
                     // Try to get last session for this user
-                    if let Some(session) = uid.and_then(|uid| {
+                    if let Some(session) = self.selected_username.uid.and_then(|uid| {
                         self.flags
                             .greeter_config
                             .users
@@ -1954,6 +1919,42 @@ fn resolve_uid_for_username(username: &str) -> Option<NonZeroU32> {
         .and_then(|p| NonZeroU32::new(p.uid))
 }
 
+/// Determine username and UID from last_user configuration using UID-based approach.
+/// This handles multiple scenarios:
+/// 1. User in user_configs (normal local users enumerated by daemon)
+/// 2. User NOT in user_configs but exists in passwd (LDAP/AD users)
+/// 3. Fallback to first user in user_configs if last_user not found
+fn determine_username_from_last_user(
+    last_user: Option<NonZeroU32>,
+    user_configs: &HashMap<u32, UserData>,
+) -> (String, Option<NonZeroU32>) {
+    let (username, uid) = last_user
+        .and_then(|last_user_uid| {
+            // First try to find in user configs by UID
+            user_configs
+                .get(&last_user_uid.get())
+                .map(|user_data| (user_data.name.clone(), Some(last_user_uid)))
+        })
+        .or_else(|| {
+            // If not in user_configs but we have a last_user UID,
+            // query passwd directly (handles LDAP users)
+            last_user.and_then(|last_user_uid| {
+                pwd::Passwd::from_uid(last_user_uid.get())
+                    .map(|passwd| (passwd.name, Some(last_user_uid)))
+            })
+        })
+        .or_else(|| {
+            // Final fallback: first user in configs (by UID order)
+            user_configs
+                .iter()
+                .min_by_key(|(uid, _)| *uid)
+                .map(|(uid, user_data)| (user_data.name.clone(), NonZeroU32::new(*uid)))
+        })
+        .unwrap_or_default();
+
+    (username, uid)
+}
+
 /// Get display name for a user, trying user_configs first, then passwd
 fn get_display_name_for_user(
     username: &str,
@@ -1992,6 +1993,16 @@ mod tests {
     use cosmic_greeter_daemon::UserData;
     use std::num::NonZeroU32;
 
+    // NOTE: Several tests in this module use pwd::Passwd::current_user() to test
+    // real passwd database lookups (LDAP/AD scenarios). These tests are system-coupled
+    // and may behave differently in CI containers where the running user's passwd entry
+    // differs from development environments. This is intentional - we're testing integration
+    // with the actual system passwd database, not mocked behavior.
+    //
+    // Thread safety: Tests calling libc passwd functions (pwd::Passwd::*) are non-reentrant
+    // and run in parallel by default. If tests become flaky, consider using #[serial] from
+    // the serial_test crate or running with --test-threads=1.
+
     #[test]
     fn test_last_user_in_enumerated_list() {
         // Arrange: Normal case - last user exists in user_configs
@@ -2017,7 +2028,7 @@ mod tests {
         let last_user = NonZeroU32::new(1001);
 
         // Act
-        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
+        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
 
         // Assert
         assert_eq!(username, "bob");
@@ -2040,7 +2051,7 @@ mod tests {
         let user_configs: HashMap<u32, UserData> = HashMap::new();
 
         // Act
-        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
+        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
 
         // Assert: Should query passwd database for LDAP user
         assert_ne!(
@@ -2068,10 +2079,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        let last_user = NonZeroU32::new(5000); // LDAP UID not in user_configs or passwd
+        // Use u32::MAX - 1 to guarantee non-existent UID (more robust than 5000)
+        let last_user = NonZeroU32::new(u32::MAX - 1); // UID not in user_configs or passwd
 
         // Act
-        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
+        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
 
         // Assert: Should fall back to first local user (lowest UID)
         assert_eq!(username, "alice");
@@ -2109,9 +2121,17 @@ mod tests {
         let display_name = get_display_name_for_user(&current_user.name, None, &user_configs);
 
         // Assert: Should get full name from passwd gecos, or username as fallback
-        assert!(!display_name.is_empty());
-        // We can't assert the exact value since it depends on the system,
-        // but it should at minimum be the username
+        let expected_display_name = current_user
+            .gecos
+            .as_ref()
+            .and_then(|gecos| gecos.split(',').next())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&current_user.name);
+        
+        assert_eq!(
+            display_name, expected_display_name,
+            "Display name should match GECOS full name or username"
+        );
     }
 
     #[test]
@@ -2125,7 +2145,7 @@ mod tests {
         let user_configs = HashMap::new(); // NO user config from daemon
 
         // Act
-        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
+        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
 
         // Assert: Should find user via passwd even with empty user_configs
         assert_eq!(username, current_user.name);
@@ -2134,88 +2154,6 @@ mod tests {
         // Prove we can get display name too
         let display_name = get_display_name_for_user(&username, uid, &user_configs);
         assert!(!display_name.is_empty());
-    }
-
-    /// NEW API: Determine username from last_user using UID-based approach
-    /// This will replace determine_username_from_last_user once refactoring is complete
-    fn determine_username_from_last_user_v2(
-        last_user: Option<NonZeroU32>,
-        user_configs: &HashMap<u32, UserData>,
-    ) -> (String, Option<NonZeroU32>) {
-        let (username, uid) = last_user
-            .and_then(|last_user_uid| {
-                // First try to find in user configs by UID
-                user_configs
-                    .get(&last_user_uid.get())
-                    .map(|user_data| (user_data.name.clone(), Some(last_user_uid)))
-            })
-            .or_else(|| {
-                // If not in user_configs but we have a last_user UID,
-                // query passwd directly (handles LDAP users)
-                last_user.and_then(|last_user_uid| {
-                    pwd::Passwd::from_uid(last_user_uid.get())
-                        .map(|passwd| (passwd.name, Some(last_user_uid)))
-                })
-            })
-            .or_else(|| {
-                // Final fallback: first user in configs (by UID order)
-                user_configs
-                    .iter()
-                    .min_by_key(|(uid, _)| *uid)
-                    .map(|(uid, user_data)| (user_data.name.clone(), NonZeroU32::new(*uid)))
-            })
-            .unwrap_or_default();
-
-        (username, uid)
-    }
-
-    #[test]
-    fn test_uid_based_lookup_with_configs() {
-        // Arrange: User configs keyed by UID
-        let mut user_configs = HashMap::new();
-        user_configs.insert(
-            1000,
-            UserData {
-                uid: 1000,
-                name: "alice".to_string(),
-                full_name: "Alice".to_string(),
-                ..Default::default()
-            },
-        );
-        user_configs.insert(
-            1001,
-            UserData {
-                uid: 1001,
-                name: "bob".to_string(),
-                full_name: "Bob".to_string(),
-                ..Default::default()
-            },
-        );
-
-        let last_user = NonZeroU32::new(1001);
-
-        // Act
-        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
-
-        // Assert
-        assert_eq!(username, "bob");
-        assert_eq!(uid, NonZeroU32::new(1001));
-    }
-
-    #[test]
-    fn test_uid_based_lookup_ldap_user() {
-        // Arrange: LDAP user not in configs
-        let user_configs = HashMap::new(); // Empty configs
-
-        let current_user = pwd::Passwd::current_user().expect("Need current user for test");
-        let last_user = NonZeroU32::new(current_user.uid);
-
-        // Act
-        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
-
-        // Assert: Should find via passwd
-        assert_eq!(username, current_user.name);
-        assert_eq!(uid, NonZeroU32::new(current_user.uid));
     }
 
     #[test]
@@ -2241,10 +2179,11 @@ mod tests {
             },
         );
 
-        let last_user = NonZeroU32::new(9999); // Doesn't exist
+        // Use u32::MAX - 1 to guarantee non-existent UID
+        let last_user = NonZeroU32::new(u32::MAX - 1); // Doesn't exist
 
         // Act
-        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
+        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
 
         // Assert: Should pick alice (UID 1000, lowest)
         assert_eq!(username, "alice");
@@ -2257,11 +2196,18 @@ mod tests {
         // Input: username string
         // Output: Option<NonZeroU32> UID
         
-        // Case 1: Valid system user (root always exists)
+        // Case 1: Root user (UID 0 cannot be represented as NonZeroU32)
         let uid = resolve_uid_for_username("root");
-        assert_eq!(uid, NonZeroU32::new(0), "root should resolve to UID 0");
+        assert_eq!(uid, None, "root has UID 0 which cannot be NonZeroU32, should return None");
         
-        // Case 2: Non-existent user
+        // Case 2: Valid system user with non-zero UID (current user always exists and has UID > 0)
+        let current_user = pwd::Passwd::current_user().expect("Need current user for test");
+        if current_user.uid > 0 {
+            let uid = resolve_uid_for_username(&current_user.name);
+            assert_eq!(uid, NonZeroU32::new(current_user.uid), "Current user should resolve to their UID");
+        }
+        
+        // Case 3: Non-existent user
         let uid = resolve_uid_for_username("nonexistent_user_xyz_12345");
         assert_eq!(uid, None, "Non-existent user should return None");
     }
