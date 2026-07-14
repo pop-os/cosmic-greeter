@@ -40,7 +40,7 @@ fn determine_selected_username(
 ) -> NameIndexPair {
     let last_user = greeter_config.last_user.as_ref();
 
-    let (username, uid) = last_user
+    let (username, _uid) = last_user
         .and_then(|last_user| {
             user_datas
                 .iter()
@@ -74,22 +74,32 @@ fn determine_selected_username(
 mod tests {
     use super::*;
 
+    // Test data constants
+    const LOCAL_USER_1_UID: u32 = 1000;
+    const LOCAL_USER_2_UID: u32 = 1001;
+    const LDAP_USER_UID: u32 = 5000; // LDAP users typically have higher UIDs
+
+    /// Helper to create standard test user data
+    fn create_test_users() -> Vec<UserData> {
+        vec![
+            UserData {
+                name: "alice".to_string(),
+                uid: LOCAL_USER_1_UID,
+            },
+            UserData {
+                name: "bob".to_string(),
+                uid: LOCAL_USER_2_UID,
+            },
+        ]
+    }
+
     #[test]
     fn test_last_user_found_in_user_datas() {
         // Arrange: Normal case where last user exists in enumerated users
         let config = GreeterConfig {
-            last_user: Some(NonZeroU32::new(1001).unwrap()),
+            last_user: NonZeroU32::new(LOCAL_USER_2_UID),
         };
-        let user_datas = vec![
-            UserData {
-                name: "alice".to_string(),
-                uid: 1000,
-            },
-            UserData {
-                name: "bob".to_string(),
-                uid: 1001,
-            },
-        ];
+        let user_datas = create_test_users();
 
         // Act
         let result = determine_selected_username(&config, &user_datas);
@@ -101,52 +111,47 @@ mod tests {
 
     #[test]
     fn test_last_user_not_found_falls_back_to_first() {
-        // Arrange: last_user UID doesn't exist in user_datas (current behavior)
+        // Arrange: last_user UID doesn't exist in user_datas but other users present
         let config = GreeterConfig {
-            last_user: Some(NonZeroU32::new(5000).unwrap()), // LDAP user UID
+            last_user: NonZeroU32::new(LDAP_USER_UID),
         };
-        let user_datas = vec![
-            UserData {
-                name: "alice".to_string(),
-                uid: 1000,
-            },
-            UserData {
-                name: "bob".to_string(),
-                uid: 1001,
-            },
-        ];
+        let user_datas = create_test_users();
 
         // Act
         let result = determine_selected_username(&config, &user_datas);
 
-        // Assert: Current behavior - falls back to first user
+        // Assert: Falls back to first user when LDAP user not found but locals exist
         assert_eq!(result.username, "alice");
         assert_eq!(result.data_idx, Some(0));
     }
 
     #[test]
     fn test_ldap_user_missing_should_not_use_empty_username() {
-        // Arrange: LDAP user (UID 5000) logged in previously, saved in config
+        // Arrange: LDAP user logged in previously, saved in config
         // On reconnect, LDAP user not in enumerated user_datas list
         let config = GreeterConfig {
-            last_user: Some(NonZeroU32::new(5000).unwrap()), // LDAP user UID
+            last_user: NonZeroU32::new(LDAP_USER_UID),
         };
         
-        // Empty user_datas (or no local users) - LDAP users aren't enumerated
+        // Empty user_datas - LDAP users aren't enumerated
         let user_datas: Vec<UserData> = vec![];
 
         // Act
         let result = determine_selected_username(&config, &user_datas);
 
         // Assert: Should NOT have an empty username
-        // BUG: Current implementation returns "" via unwrap_or_default()
-        // FIX: Should return a sentinel value or preserve the last_user info somehow
+        // BUG: Original implementation returns "" via unwrap_or_default()
+        // FIX: Returns sentinel value (uid:5000) to preserve last_user info
         assert_ne!(
             result.username, "",
             "Empty username causes authentication to fail. \
              When last_user UID is not in user_datas, username should remain set \
              or UI should prompt for manual entry."
         );
+        
+        // Verify it's the sentinel value
+        assert_eq!(result.username, format!("uid:{}", LDAP_USER_UID));
+        assert_eq!(result.data_idx, None);
     }
 
     #[test]
