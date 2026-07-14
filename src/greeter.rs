@@ -2252,10 +2252,8 @@ mod tests {
     }
 
     #[test]
-    fn test_selected_user_config() {
+    fn test_selected_user_config_with_existing_user() {
         use cosmic::Application;
-        
-        // Test the helper that consolidates the duplicated user_configs accessor pattern
         
         // Arrange: Setup app with user configs
         let mut user_configs: HashMap<u32, UserData> = HashMap::new();
@@ -2280,35 +2278,97 @@ mod tests {
         let core = Core::default();
         let (mut app, _tasks) = App::init(core, flags);
         
-        // Case 1: User has a config
         app.selected_user = SelectedUser {
             username: "alice".to_string(),
             uid: NonZeroU32::new(1000),
             display_name: "Alice Smith".to_string(),
         };
         
+        // Act
         let config = app.selected_user_config();
+        
+        // Assert
         assert!(config.is_some(), "Should find config for alice");
         assert_eq!(config.unwrap().name, "alice");
+    }
+
+    #[test]
+    fn test_selected_user_config_with_ldap_user() {
+        use cosmic::Application;
         
-        // Case 2: User has no config (LDAP user)
+        // Arrange: Setup app with user configs (LDAP user not in configs)
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice Smith".to_string(),
+                ..Default::default()
+            },
+        );
+        
+        let flags = Flags {
+            user_configs,
+            user_icons: HashMap::new(),
+            greeter_config: CosmicGreeterConfig::default(),
+            greeter_config_handler: None,
+            sessions: HashMap::new(),
+        };
+        
+        let core = Core::default();
+        let (mut app, _tasks) = App::init(core, flags);
+        
         app.selected_user = SelectedUser {
             username: "ldap_user".to_string(),
             uid: NonZeroU32::new(2000),
             display_name: "LDAP User".to_string(),
         };
         
+        // Act
         let config = app.selected_user_config();
-        assert!(config.is_none(), "Should return None for user without config");
         
-        // Case 3: No UID selected
+        // Assert
+        assert!(config.is_none(), "Should return None for user without config");
+    }
+
+    #[test]
+    fn test_selected_user_config_with_no_uid() {
+        use cosmic::Application;
+        
+        // Arrange: Setup app with user configs
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice Smith".to_string(),
+                ..Default::default()
+            },
+        );
+        
+        let flags = Flags {
+            user_configs,
+            user_icons: HashMap::new(),
+            greeter_config: CosmicGreeterConfig::default(),
+            greeter_config_handler: None,
+            sessions: HashMap::new(),
+        };
+        
+        let core = Core::default();
+        let (mut app, _tasks) = App::init(core, flags);
+        
         app.selected_user = SelectedUser {
             username: "unknown".to_string(),
             uid: None,
             display_name: "Unknown".to_string(),
         };
         
+        // Act
         let config = app.selected_user_config();
+        
+        // Assert
         assert!(config.is_none(), "Should return None when no UID selected");
     }
 
