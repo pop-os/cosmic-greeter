@@ -769,46 +769,52 @@ impl App {
                     column = column.push(widget::text("Opening GREETD_SOCK"));
                 }
                 SocketState::Open => {
-                    for (user_data, user_icon) in self
-                        .flags
-                        .user_datas
-                        .iter()
-                        .zip(self.flags.user_icons.iter())
-                    {
-                        if !self.entering_name && user_data.name == self.selected_username.username
-                        {
-                            // Display user icon or empty transparent box
-                            if let Some(icon_handle) = user_icon {
-                                column = column.push(
-                                    widget::container(
-                                        widget::image(icon_handle)
-                                            .width(Length::Fixed(78.0))
-                                            .height(Length::Fixed(78.0))
-                                            .content_fit(iced::ContentFit::Fill),
-                                    )
-                                    .padding(0.0)
-                                    .width(Length::Fill)
-                                    .height(Length::Fixed(78.0))
-                                    .align_x(Alignment::Center),
-                                );
-                            } else {
-                                // Empty transparent box for users without icons
-                                column = column.push(
-                                    widget::container(
-                                        widget::space::horizontal().width(Length::Fixed(78.0)),
-                                    )
-                                    .padding(0.0)
-                                    .width(Length::Fill)
-                                    .height(Length::Fixed(78.0))
-                                    .align_x(Alignment::Center),
-                                );
-                            }
+                    // Display user icon and name
+                    if !self.entering_name {
+                        // Try to find user in user_datas for icon
+                        let user_icon_opt = self.selected_username.data_idx
+                            .and_then(|idx| self.flags.user_icons.get(idx))
+                            .and_then(|opt| opt.as_ref());
+
+                        // Display user icon or empty transparent box
+                        if let Some(icon_handle) = user_icon_opt {
                             column = column.push(
-                                widget::container(widget::text::title4(&user_data.full_name))
-                                    .width(Length::Fill)
-                                    .align_x(Alignment::Center),
+                                widget::container(
+                                    widget::image(icon_handle)
+                                        .width(Length::Fixed(78.0))
+                                        .height(Length::Fixed(78.0))
+                                        .content_fit(iced::ContentFit::Fill),
+                                )
+                                .padding(0.0)
+                                .width(Length::Fill)
+                                .height(Length::Fixed(78.0))
+                                .align_x(Alignment::Center),
+                            );
+                        } else {
+                            // Empty transparent box for users without icons
+                            column = column.push(
+                                widget::container(
+                                    widget::space::horizontal().width(Length::Fixed(78.0)),
+                                )
+                                .padding(0.0)
+                                .width(Length::Fill)
+                                .height(Length::Fixed(78.0))
+                                .align_x(Alignment::Center),
                             );
                         }
+
+                        // Get display name (works for users in user_datas OR from passwd)
+                        let display_name = get_display_name_for_user(
+                            &self.selected_username.username,
+                            self.selected_username.data_idx,
+                            &self.flags.user_datas,
+                        );
+                        
+                        column = column.push(
+                            widget::container(widget::text::title4(display_name))
+                                .width(Length::Fill)
+                                .align_x(Alignment::Center),
+                        );
                     }
                     if self.entering_name {
                         column = column.push(
@@ -1930,6 +1936,34 @@ pub fn apply_hc_theme(
     Ok(new_theme)
 }
 
+/// Get display name for a user, trying user_datas first, then passwd
+fn get_display_name_for_user(username: &str, data_idx: Option<usize>, user_datas: &[UserData]) -> String {
+    // First try to get from user_datas if available
+    if let Some(idx) = data_idx {
+        if let Some(user_data) = user_datas.get(idx) {
+            return user_data.full_name.clone();
+        }
+    }
+
+    // Fallback: query passwd and extract full_name from gecos
+    if let Some(passwd) = pwd::Passwd::from_name(username).ok().flatten() {
+        // Parse full_name from gecos field (same logic as UserData::from(pwd::Passwd))
+        let full_name = passwd
+            .gecos
+            .as_ref()
+            .and_then(|gecos| gecos.split(',').next())
+            .map(|x| x.to_string())
+            .unwrap_or_default();
+        
+        if !full_name.is_empty() {
+            return full_name;
+        }
+    }
+
+    // Final fallback: use username
+    username.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2050,5 +2084,62 @@ mod tests {
         // Assert: Should fall back to first local user
         assert_eq!(username, "alice");
         assert_eq!(data_idx, Some(0));
+    }
+
+    #[test]
+    fn test_get_display_name_from_user_datas() {
+        // Arrange
+        let user_datas = vec![
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice Wonderland".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        // Act
+        let display_name = get_display_name_for_user("alice", Some(0), &user_datas);
+
+        // Assert
+        assert_eq!(display_name, "Alice Wonderland");
+    }
+
+    #[test]
+    fn test_get_display_name_from_passwd() {
+        // Arrange: User not in user_datas
+        let user_datas: Vec<UserData> = vec![];
+        let current_user = pwd::Passwd::current_user().expect("Need current user");
+
+        // Act
+        let display_name = get_display_name_for_user(&current_user.name, None, &user_datas);
+
+        // Assert: Should get full name from passwd gecos, or username as fallback
+        assert!(!display_name.is_empty());
+        // We can't assert the exact value since it depends on the system,
+        // but it should at minimum be the username
+    }
+
+    #[test]
+    fn test_username_selection_without_user_datas() {
+        // This test proves we can select a username without any user_datas
+        // The greeter should work with ONLY passwd, no daemon data needed
+        
+        let current_user = pwd::Passwd::current_user()
+            .expect("Need current user for test");
+        
+        let last_user = NonZeroU32::new(current_user.uid);
+        let user_datas: Vec<UserData> = vec![]; // NO user data from daemon
+
+        // Act
+        let (username, data_idx) = determine_username_from_last_user(last_user, &user_datas);
+
+        // Assert: Should find user via passwd even with empty user_datas
+        assert_eq!(username, current_user.name);
+        assert_eq!(data_idx, None); // Not in user_datas, which is fine
+        
+        // Prove we can get display name too
+        let display_name = get_display_name_for_user(&username, data_idx, &user_datas);
+        assert!(!display_name.is_empty());
     }
 }
