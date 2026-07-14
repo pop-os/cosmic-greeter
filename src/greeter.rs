@@ -482,7 +482,7 @@ impl App {
     }
 
     /// Get the UserData for the currently selected user, if available
-    fn get_selected_user_config(&self) -> Option<&UserData> {
+    fn selected_user_config(&self) -> Option<&UserData> {
         self.selected_username
             .uid
             .and_then(|uid| self.flags.user_configs.get(&uid.get()))
@@ -517,7 +517,7 @@ impl App {
         };
         let left_element = {
             let military_time = self
-                .get_selected_user_config()
+                .selected_user_config()
                 .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
             let date_time_column = self.common.time.date_time_widget(military_time);
@@ -783,7 +783,7 @@ impl App {
                 .max_width(280.0);
 
             let military_time = self
-                .get_selected_user_config()
+                .selected_user_config()
                 .map(|user_data| user_data.time_applet_config.military_time)
                 .unwrap_or_default();
             let space_height = match military_time {
@@ -1062,7 +1062,7 @@ impl App {
     }
 
     fn set_xkb_config(&self) {
-        let user_data = match self.get_selected_user_config() {
+        let user_data = match self.selected_user_config() {
             Some(some) => some,
             None => return,
         };
@@ -1072,7 +1072,7 @@ impl App {
 
     fn update_user_data(&mut self) -> Task<Message> {
         // Clone to avoid borrow checker issues when mutating self later
-        let user_data = match self.get_selected_user_config().cloned() {
+        let user_data = match self.selected_user_config().cloned() {
             Some(user_data) => {
                 self.common.update_user_data(&user_data);
                 user_data
@@ -1776,7 +1776,7 @@ impl cosmic::Application for App {
                     let mut list: Option<List> = None;
 
                     let Some(cur_user_output_state) = self
-                        .get_selected_user_config()
+                        .selected_user_config()
                         .map(|user_data| &user_data.kdl_output_lists)
                     else {
                         return Task::none();
@@ -2213,7 +2213,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_selected_user_config() {
+    fn test_selected_user_config() {
         use cosmic::Application;
         
         // Test the helper that consolidates the duplicated user_configs accessor pattern
@@ -2248,7 +2248,7 @@ mod tests {
             display_name: "Alice Smith".to_string(),
         };
         
-        let config = app.get_selected_user_config();
+        let config = app.selected_user_config();
         assert!(config.is_some(), "Should find config for alice");
         assert_eq!(config.unwrap().name, "alice");
         
@@ -2259,7 +2259,7 @@ mod tests {
             display_name: "LDAP User".to_string(),
         };
         
-        let config = app.get_selected_user_config();
+        let config = app.selected_user_config();
         assert!(config.is_none(), "Should return None for user without config");
         
         // Case 3: No UID selected
@@ -2269,7 +2269,7 @@ mod tests {
             display_name: "Unknown".to_string(),
         };
         
-        let config = app.get_selected_user_config();
+        let config = app.selected_user_config();
         assert!(config.is_none(), "Should return None when no UID selected");
     }
 
