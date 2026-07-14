@@ -500,7 +500,11 @@ impl App {
             .or_else(|| resolve_uid_for_username(&username));
 
         let display_name = get_display_name_for_user(&username, uid, &self.flags.user_configs);
-        SelectedUser { username, uid, display_name }
+        SelectedUser {
+            username,
+            uid,
+            display_name,
+        }
     }
 
     fn menu(&self, id: SurfaceId) -> Element<'_, Message> {
@@ -837,9 +841,11 @@ impl App {
 
                         // Use cached display_name from SelectedUser to avoid syscall in render path
                         column = column.push(
-                            widget::container(widget::text::title4(&self.selected_user.display_name))
-                                .width(Length::Fill)
-                                .align_x(Alignment::Center),
+                            widget::container(widget::text::title4(
+                                &self.selected_user.display_name,
+                            ))
+                            .width(Length::Fill)
+                            .align_x(Alignment::Center),
                         );
                     }
                     if self.entering_name {
@@ -1169,7 +1175,11 @@ impl cosmic::Application for App {
             .unwrap_or_default();
 
         let display_name = get_display_name_for_user(&username, uid, &flags.user_configs);
-        let selected_user = SelectedUser { username, uid, display_name };
+        let selected_user = SelectedUser {
+            username,
+            uid,
+            display_name,
+        };
         let accessibility = Accessibility {
             helper: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config()
                 .ok(),
@@ -2176,7 +2186,7 @@ mod tests {
             .and_then(|gecos| gecos.split(',').next())
             .filter(|s| !s.is_empty())
             .unwrap_or(&current_user.name);
-        
+
         assert_eq!(
             display_name, expected_display_name,
             "Display name should match GECOS full name or username"
@@ -2267,18 +2277,25 @@ mod tests {
         // Test the helper function that consolidates the duplicated passwd lookup pattern
         // Input: username string
         // Output: Option<NonZeroU32> UID
-        
+
         // Case 1: Root user (UID 0 cannot be represented as NonZeroU32)
         let uid = resolve_uid_for_username("root");
-        assert_eq!(uid, None, "root has UID 0 which cannot be NonZeroU32, should return None");
-        
+        assert_eq!(
+            uid, None,
+            "root has UID 0 which cannot be NonZeroU32, should return None"
+        );
+
         // Case 2: Valid system user with non-zero UID (current user always exists and has UID > 0)
         let current_user = pwd::Passwd::current_user().expect("Need current user for test");
         if current_user.uid > 0 {
             let uid = resolve_uid_for_username(&current_user.name);
-            assert_eq!(uid, NonZeroU32::new(current_user.uid), "Current user should resolve to their UID");
+            assert_eq!(
+                uid,
+                NonZeroU32::new(current_user.uid),
+                "Current user should resolve to their UID"
+            );
         }
-        
+
         // Case 3: Non-existent user
         let uid = resolve_uid_for_username("nonexistent_user_xyz_12345");
         assert_eq!(uid, None, "Non-existent user should return None");
@@ -2326,5 +2343,4 @@ mod tests {
         assert_eq!(index.len(), 3);
         assert_eq!(index.get("nonexistent"), None);
     }
-
 }
