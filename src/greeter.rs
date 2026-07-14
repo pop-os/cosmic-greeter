@@ -2099,7 +2099,7 @@ mod tests {
     }
 
     #[test]
-    fn test_determine_username_from_last_user_with_none_and_empty_configs() {
+    fn test_resolve_last_user_with_none_and_empty_configs() {
         // Arrange: No last_user and no user_configs
         let last_user = None;
         let user_configs: HashMap<u32, UserData> = HashMap::new();
