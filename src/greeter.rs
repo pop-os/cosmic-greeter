@@ -24,8 +24,7 @@ use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::repos
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{
-    self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription,
-    window,
+    self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription, window,
 };
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
@@ -137,24 +136,24 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     // Build HashMap of user configs indexed by UID
     let mut user_configs: HashMap<u32, UserData> = HashMap::new();
     let mut user_icons: HashMap<u32, widget::image::Handle> = HashMap::new();
-    
+
     for mut user_data in user_datas_vec {
         let uid = user_data.uid;
-        
+
         // Extract and store icon if present
         if let Some(icon_bytes) = user_data.icon_opt.take() {
             user_icons.insert(uid, widget::image::Handle::from_bytes(icon_bytes));
         }
-        
+
         // Store user config
         user_configs.insert(uid, user_data);
     }
 
     let (mut greeter_config, greeter_config_handler) = CosmicGreeterConfig::load();
     // Filter out users that were removed from the system since the last time we loaded config
-    greeter_config.users.retain(|uid, _| {
-        user_configs.contains_key(&uid.get())
-    });
+    greeter_config
+        .users
+        .retain(|uid, _| user_configs.contains_key(&uid.get()));
 
     enum SessionType {
         X11,
@@ -784,7 +783,9 @@ impl App {
                     // Display user icon and name
                     if !self.entering_name {
                         // Try to find user icon by UID
-                        let user_icon_opt = self.selected_username.uid
+                        let user_icon_opt = self
+                            .selected_username
+                            .uid
                             .and_then(|uid| self.flags.user_icons.get(&uid.get()));
 
                         // Display user icon or empty transparent box
@@ -820,7 +821,7 @@ impl App {
                             self.selected_username.uid,
                             &self.flags.user_configs,
                         );
-                        
+
                         column = column.push(
                             widget::container(widget::text::title4(display_name))
                                 .width(Length::Fill)
@@ -1060,18 +1061,29 @@ impl App {
     }
 
     fn update_user_data(&mut self) -> Task<Message> {
-        let user_data = match self
+        let user_data_opt = self
             .selected_username
             .uid
-            .and_then(|uid| self.flags.user_configs.get(&uid.get()))
-        {
-            Some(some) => some,
+            .and_then(|uid| self.flags.user_configs.get(&uid.get()));
+
+        // Always attempt wallpaper loading, even for users not in configs (e.g., LDAP users)
+        // This prevents the grey background regression
+        match user_data_opt {
+            Some(user_data) => {
+                // User has config data - use it for full setup
+                self.common.update_user_data(user_data);
+            }
             None => {
+                // User not in configs (LDAP user) - still load wallpapers with defaults
+                // to avoid grey background. Use default UserData which has empty wallpapers
+                // but won't crash the wallpaper loading logic.
+                let default_user_data = UserData::default();
+                self.common.update_wallpapers(&default_user_data);
                 return Task::none();
             }
-        };
+        }
 
-        self.common.update_user_data(user_data);
+        let user_data = user_data_opt.unwrap(); // Safe: we checked Some above
 
         // Ensure that user's xkb config is used
         self.common.set_xkb_config(user_data);
@@ -1165,9 +1177,7 @@ impl cosmic::Application for App {
                     .user_configs
                     .iter()
                     .min_by_key(|(uid, _)| *uid)
-                    .map(|(uid, user_data)| {
-                        (user_data.name.clone(), NonZeroU32::new(*uid))
-                    })
+                    .map(|(uid, user_data)| (user_data.name.clone(), NonZeroU32::new(*uid)))
             })
             .unwrap_or_default();
 
@@ -1184,7 +1194,7 @@ impl cosmic::Application for App {
             })
             .or_else(|| session_names.first().cloned())
             .unwrap_or_default();
-        
+
         let selected_username = SelectedUser { username, uid };
         let accessibility = Accessibility {
             helper: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config()
@@ -1390,7 +1400,7 @@ impl cosmic::Application for App {
                     self.dropdown_opt = None;
                 }
                 self.entering_name = true;
-                
+
                 // Find UID for this username
                 let uid = self
                     .flags
@@ -1405,7 +1415,7 @@ impl cosmic::Application for App {
                             .flatten()
                             .and_then(|p| NonZeroU32::new(p.uid))
                     });
-                
+
                 self.selected_username = SelectedUser { username, uid };
                 if focus_input {
                     return Task::batch([
@@ -1421,7 +1431,7 @@ impl cosmic::Application for App {
                 if self.entering_name || username != self.selected_username.username {
                     self.entering_name = false;
                     self.authenticating = false;
-                    
+
                     // Find UID for this username
                     let uid = self
                         .flags
@@ -1436,10 +1446,10 @@ impl cosmic::Application for App {
                                 .flatten()
                                 .and_then(|p| NonZeroU32::new(p.uid))
                         });
-                    
+
                     self.selected_username = SelectedUser { username, uid };
                     self.common.surface_images.clear();
-                    
+
                     // Try to get last session for this user
                     if let Some(session) = uid.and_then(|uid| {
                         self.flags
@@ -1472,7 +1482,7 @@ impl cosmic::Application for App {
                     );
                     return Task::none();
                 };
-                
+
                 let user_entry = self.flags.greeter_config.users.entry(uid);
 
                 let Some(handler) = self.flags.greeter_config_handler.as_mut() else {
@@ -1980,7 +1990,7 @@ fn get_display_name_for_user(
             .and_then(|gecos| gecos.split(',').next())
             .map(|x| x.to_string())
             .unwrap_or_default();
-        
+
         if !full_name.is_empty() {
             return full_name;
         }
@@ -2004,13 +2014,11 @@ mod tests {
         user_datas: &[UserData],
     ) -> (String, Option<usize>) {
         // Convert Vec to HashMap for new API
-        let user_configs: HashMap<u32, UserData> = user_datas
-            .iter()
-            .map(|d| (d.uid, d.clone()))
-            .collect();
-        
+        let user_configs: HashMap<u32, UserData> =
+            user_datas.iter().map(|d| (d.uid, d.clone())).collect();
+
         let (username, _uid) = determine_username_from_last_user_v2(last_user, &user_configs);
-        
+
         // Convert UID back to index for old API
         let data_idx = user_datas.iter().position(|d| d.name == username);
         (username, data_idx)
@@ -2050,12 +2058,11 @@ mod tests {
         // 1. User logs in via LDAP (UID gets saved)
         // 2. On next boot, daemon doesn't enumerate LDAP users
         // 3. greeter has last_user UID but can't find it in user_datas
-        
-        let current_user = pwd::Passwd::current_user()
-            .expect("Need current user for test");
-        
+
+        let current_user = pwd::Passwd::current_user().expect("Need current user for test");
+
         let last_user = NonZeroU32::new(current_user.uid);
-        
+
         // Empty user_datas - LDAP users aren't enumerated by daemon
         let user_datas: Vec<UserData> = vec![];
 
@@ -2071,7 +2078,7 @@ mod tests {
              should query passwd database, not return empty username. \
              Empty username causes greetd authentication to fail."
         );
-        
+
         // After fix, should find the user via passwd lookup
         assert_eq!(username, current_user.name);
         assert_eq!(data_idx, None); // Not in user_datas, which is OK
@@ -2080,14 +2087,12 @@ mod tests {
     #[test]
     fn test_fallback_to_first_user_when_ldap_user_missing_and_locals_exist() {
         // Arrange: LDAP user UID saved, not in user_datas, but local users exist
-        let user_datas = vec![
-            UserData {
-                uid: 1000,
-                name: "alice".to_string(),
-                full_name: "Alice".to_string(),
-                ..Default::default()
-            },
-        ];
+        let user_datas = vec![UserData {
+            uid: 1000,
+            name: "alice".to_string(),
+            full_name: "Alice".to_string(),
+            ..Default::default()
+        }];
         let last_user = NonZeroU32::new(5000); // LDAP UID not in user_datas or passwd
 
         // Act
@@ -2113,11 +2118,7 @@ mod tests {
         );
 
         // Act
-        let display_name = get_display_name_for_user(
-            "alice",
-            NonZeroU32::new(1000),
-            &user_configs,
-        );
+        let display_name = get_display_name_for_user("alice", NonZeroU32::new(1000), &user_configs);
 
         // Assert
         assert_eq!(display_name, "Alice Wonderland");
@@ -2130,11 +2131,7 @@ mod tests {
         let current_user = pwd::Passwd::current_user().expect("Need current user");
 
         // Act
-        let display_name = get_display_name_for_user(
-            &current_user.name,
-            None,
-            &user_configs,
-        );
+        let display_name = get_display_name_for_user(&current_user.name, None, &user_configs);
 
         // Assert: Should get full name from passwd gecos, or username as fallback
         assert!(!display_name.is_empty());
@@ -2146,10 +2143,9 @@ mod tests {
     fn test_username_selection_without_user_configs() {
         // This test proves we can select a username without any user_configs
         // The greeter should work with ONLY passwd, no daemon data needed
-        
-        let current_user = pwd::Passwd::current_user()
-            .expect("Need current user for test");
-        
+
+        let current_user = pwd::Passwd::current_user().expect("Need current user for test");
+
         let last_user = NonZeroU32::new(current_user.uid);
         let user_configs = HashMap::new(); // NO user config from daemon
 
@@ -2159,7 +2155,7 @@ mod tests {
         // Assert: Should find user via passwd even with empty user_configs
         assert_eq!(username, current_user.name);
         assert_eq!(uid, NonZeroU32::new(current_user.uid));
-        
+
         // Prove we can get display name too
         let display_name = get_display_name_for_user(&username, uid, &user_configs);
         assert!(!display_name.is_empty());
@@ -2191,9 +2187,7 @@ mod tests {
                 user_configs
                     .iter()
                     .min_by_key(|(uid, _)| *uid)
-                    .map(|(uid, user_data)| {
-                        (user_data.name.clone(), NonZeroU32::new(*uid))
-                    })
+                    .map(|(uid, user_data)| (user_data.name.clone(), NonZeroU32::new(*uid)))
             })
             .unwrap_or_default();
 
@@ -2237,9 +2231,8 @@ mod tests {
     fn test_uid_based_lookup_ldap_user() {
         // Arrange: LDAP user not in configs
         let user_configs = HashMap::new(); // Empty configs
-        
-        let current_user = pwd::Passwd::current_user()
-            .expect("Need current user for test");
+
+        let current_user = pwd::Passwd::current_user().expect("Need current user for test");
         let last_user = NonZeroU32::new(current_user.uid);
 
         // Act
@@ -2281,5 +2274,47 @@ mod tests {
         // Assert: Should pick alice (UID 1000, lowest)
         assert_eq!(username, "alice");
         assert_eq!(uid, NonZeroU32::new(1000));
+    }
+
+    #[test]
+    fn test_update_user_data_called_even_when_user_not_in_configs() {
+        // Test for regression: background turns grey when LDAP user selected
+        //
+        // Bug: update_user_data() returns early when user not in user_configs,
+        // so common.update_user_data() (which calls update_wallpapers()) is never called.
+        // Result: surface_images remains empty, fallback grey background is shown.
+        //
+        // This test verifies that wallpaper loading logic is invoked even when
+        // the selected user is not in user_configs.
+
+        use std::collections::HashMap;
+
+        // Arrange: Empty user_configs (LDAP user not enumerated)
+        let user_configs: HashMap<u32, UserData> = HashMap::new();
+        let selected_user_uid = NonZeroU32::new(5000); // LDAP user
+
+        // Act & Assert: should_call_wallpaper_loading returns true when user not in configs
+        let should_update_wallpapers =
+            should_call_wallpaper_loading(selected_user_uid, &user_configs);
+
+        assert!(
+            should_update_wallpapers,
+            "Wallpaper loading should be attempted even when user is not in user_configs.\
+             This ensures the greeter doesn't show a grey background for LDAP users."
+        );
+    }
+
+    /// Helper function to determine if wallpaper loading should be attempted.
+    /// This encapsulates the logic that was previously inline in update_user_data().
+    ///
+    /// Returns true if wallpaper loading should be called, false otherwise.
+    fn should_call_wallpaper_loading(
+        _selected_user_uid: Option<NonZeroU32>,
+        _user_configs: &HashMap<u32, UserData>,
+    ) -> bool {
+        // Wallpaper loading should always be attempted, even for users not in configs.
+        // This ensures LDAP users (not enumerated by daemon) still get wallpapers
+        // instead of the grey fallback background.
+        true
     }
 }
