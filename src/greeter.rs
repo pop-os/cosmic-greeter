@@ -135,7 +135,6 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
     // Build HashMap of user configs indexed by UID
     let mut user_configs: HashMap<u32, UserData> = HashMap::new();
-    let mut username_to_uid: HashMap<String, u32> = HashMap::new();
     let mut user_icons: HashMap<u32, widget::image::Handle> = HashMap::new();
 
     for mut user_data in users {
@@ -146,12 +145,12 @@ pub fn main() -> Result<(), Box<dyn Error>> {
             user_icons.insert(uid, widget::image::Handle::from_bytes(icon_bytes));
         }
 
-        // Build reverse index for O(1) username → UID lookups
-        username_to_uid.insert(user_data.name.clone(), uid);
-
         // Store user config
         user_configs.insert(uid, user_data);
     }
+
+    // Build reverse index for O(1) username → UID lookups
+    let username_to_uid = build_username_to_uid_index(&user_configs);
 
     let (mut greeter_config, greeter_config_handler) = CosmicGreeterConfig::load();
     // Filter out users that were removed from the system since the last time we loaded config
@@ -1927,6 +1926,14 @@ fn resolve_uid_for_username(username: &str) -> Option<NonZeroU32> {
         .and_then(|p| NonZeroU32::new(p.uid))
 }
 
+/// Build reverse index mapping username → UID from user_configs
+fn build_username_to_uid_index(user_configs: &HashMap<u32, UserData>) -> HashMap<String, u32> {
+    user_configs
+        .iter()
+        .map(|(&uid, user_data)| (user_data.name.clone(), uid))
+        .collect()
+}
+
 /// Determine username and UID from last_user configuration using UID-based approach.
 /// This handles multiple scenarios:
 /// 1. User in user_configs (normal local users enumerated by daemon)
@@ -2376,8 +2383,8 @@ mod tests {
     }
 
     #[test]
-    fn test_username_to_uid_reverse_index_populated() {
-        // Arrange
+    fn test_build_username_to_uid_index() {
+        // Arrange: Create user_configs with multiple users
         let mut user_configs: HashMap<u32, UserData> = HashMap::new();
         user_configs.insert(
             1000,
@@ -2397,24 +2404,25 @@ mod tests {
                 ..Default::default()
             },
         );
+        user_configs.insert(
+            1002,
+            UserData {
+                uid: 1002,
+                name: "charlie".to_string(),
+                full_name: "Charlie".to_string(),
+                ..Default::default()
+            },
+        );
 
-        let mut username_to_uid: HashMap<String, u32> = HashMap::new();
-        username_to_uid.insert("alice".to_string(), 1000);
-        username_to_uid.insert("bob".to_string(), 1001);
+        // Act: Build reverse index from user_configs
+        let index = build_username_to_uid_index(&user_configs);
 
-        let flags = Flags {
-            user_configs,
-            username_to_uid,
-            user_icons: HashMap::new(),
-            greeter_config: CosmicGreeterConfig::default(),
-            greeter_config_handler: None,
-            sessions: HashMap::new(),
-        };
-
-        // Assert: username_to_uid should contain both users
-        assert_eq!(flags.username_to_uid.get("alice"), Some(&1000));
-        assert_eq!(flags.username_to_uid.get("bob"), Some(&1001));
-        assert_eq!(flags.username_to_uid.len(), 2);
+        // Assert: Index should map all usernames to their UIDs
+        assert_eq!(index.get("alice"), Some(&1000));
+        assert_eq!(index.get("bob"), Some(&1001));
+        assert_eq!(index.get("charlie"), Some(&1002));
+        assert_eq!(index.len(), 3);
+        assert_eq!(index.get("nonexistent"), None);
     }
 
 }
