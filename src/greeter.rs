@@ -479,6 +479,13 @@ impl App {
         .discard()
     }
 
+    /// Get the UserData for the currently selected user, if available
+    fn get_selected_user_config(&self) -> Option<&UserData> {
+        self.selected_username
+            .uid
+            .and_then(|uid| self.flags.user_configs.get(&uid.get()))
+    }
+
     fn menu(&self, id: SurfaceId) -> Element<'_, Message> {
         let window_width = self
             .common
@@ -2277,5 +2284,63 @@ mod tests {
         // Case 2: Non-existent user
         let uid = resolve_uid_for_username("nonexistent_user_xyz_12345");
         assert_eq!(uid, None, "Non-existent user should return None");
+    }
+
+    #[test]
+    fn test_get_selected_user_config() {
+        use cosmic::Application;
+        
+        // Test the helper that consolidates the duplicated user_configs accessor pattern
+        
+        // Arrange: Setup app with user configs
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice Smith".to_string(),
+                ..Default::default()
+            },
+        );
+        
+        let flags = Flags {
+            user_configs,
+            user_icons: HashMap::new(),
+            greeter_config: CosmicGreeterConfig::default(),
+            greeter_config_handler: None,
+            sessions: HashMap::new(),
+        };
+        
+        let core = Core::default();
+        let (mut app, _tasks) = App::init(core, flags);
+        
+        // Case 1: User has a config
+        app.selected_username = SelectedUser {
+            username: "alice".to_string(),
+            uid: NonZeroU32::new(1000),
+        };
+        
+        let config = app.get_selected_user_config();
+        assert!(config.is_some(), "Should find config for alice");
+        assert_eq!(config.unwrap().name, "alice");
+        
+        // Case 2: User has no config (LDAP user)
+        app.selected_username = SelectedUser {
+            username: "ldap_user".to_string(),
+            uid: NonZeroU32::new(2000),
+        };
+        
+        let config = app.get_selected_user_config();
+        assert!(config.is_none(), "Should return None for user without config");
+        
+        // Case 3: No UID selected
+        app.selected_username = SelectedUser {
+            username: "unknown".to_string(),
+            uid: None,
+        };
+        
+        let config = app.get_selected_user_config();
+        assert!(config.is_none(), "Should return None when no UID selected");
     }
 }
