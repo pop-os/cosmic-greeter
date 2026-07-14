@@ -1127,6 +1127,7 @@ impl cosmic::Application for App {
 
         let (username, uid) = last_user
             .and_then(|last_user| {
+                // First try to find in enumerated user_datas
                 flags
                     .user_datas
                     .iter()
@@ -1134,6 +1135,15 @@ impl cosmic::Application for App {
                     .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
             })
             .or_else(|| {
+                // If not in user_datas but we have a last_user UID,
+                // query passwd directly (handles LDAP users and other non-enumerated accounts)
+                last_user.and_then(|last_user_uid| {
+                    pwd::Passwd::from_uid(last_user_uid.get())
+                        .map(|passwd| (passwd.name, Some(*last_user_uid)))
+                })
+            })
+            .or_else(|| {
+                // Final fallback: first enumerated user
                 flags
                     .user_datas
                     .first()
@@ -1918,4 +1928,127 @@ pub fn apply_hc_theme(
     let new_theme = builder.build();
 
     Ok(new_theme)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmic_greeter_daemon::UserData;
+    use std::num::NonZeroU32;
+
+    /// Helper function that extracts the username selection logic
+    /// from the App::new() initialization (lines 1126-1158)
+    fn determine_username_from_last_user(
+        last_user: Option<NonZeroU32>,
+        user_datas: &[UserData],
+    ) -> (String, Option<usize>) {
+        let (username, _uid) = last_user
+            .and_then(|last_user| {
+                // First try to find in enumerated user_datas
+                user_datas
+                    .iter()
+                    .find(|d| d.uid == last_user.get())
+                    .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+            })
+            .or_else(|| {
+                // If not in user_datas but we have a last_user UID,
+                // query passwd directly (handles LDAP users and other non-enumerated accounts)
+                last_user.and_then(|last_user_uid| {
+                    pwd::Passwd::from_uid(last_user_uid.get())
+                        .map(|passwd| (passwd.name, Some(last_user_uid)))
+                })
+            })
+            .or_else(|| {
+                // Final fallback: first enumerated user
+                user_datas
+                    .first()
+                    .map(|x| (x.name.clone(), NonZeroU32::new(x.uid)))
+            })
+            .unwrap_or_default();
+
+        let data_idx = user_datas.iter().position(|d| d.name == username);
+        (username, data_idx)
+    }
+
+    #[test]
+    fn test_last_user_in_enumerated_list() {
+        // Arrange: Normal case - last user exists in user_datas
+        let user_datas = vec![
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+            UserData {
+                uid: 1001,
+                name: "bob".to_string(),
+                full_name: "Bob".to_string(),
+                ..Default::default()
+            },
+        ];
+        let last_user = NonZeroU32::new(1001);
+
+        // Act
+        let (username, data_idx) = determine_username_from_last_user(last_user, &user_datas);
+
+        // Assert
+        assert_eq!(username, "bob");
+        assert_eq!(data_idx, Some(1));
+    }
+
+    #[test]
+    fn test_ldap_user_not_in_enumerated_list_bug() {
+        // Arrange: LDAP user UID saved in config, but not in user_datas
+        // This simulates the real-world scenario where:
+        // 1. User logs in via LDAP (UID gets saved)
+        // 2. On next boot, daemon doesn't enumerate LDAP users
+        // 3. greeter has last_user UID but can't find it in user_datas
+        
+        let current_user = pwd::Passwd::current_user()
+            .expect("Need current user for test");
+        
+        let last_user = NonZeroU32::new(current_user.uid);
+        
+        // Empty user_datas - LDAP users aren't enumerated by daemon
+        let user_datas: Vec<UserData> = vec![];
+
+        // Act
+        let (username, data_idx) = determine_username_from_last_user(last_user, &user_datas);
+
+        // Assert: This is the BUG!
+        // Current code returns empty username, causing authentication to fail
+        // It SHOULD look up the user via pwd::Passwd::from_uid()
+        assert_ne!(
+            username, "",
+            "BUG: When last_user UID (from LDAP) is not in user_datas, \
+             should query passwd database, not return empty username. \
+             Empty username causes greetd authentication to fail."
+        );
+        
+        // After fix, should find the user via passwd lookup
+        assert_eq!(username, current_user.name);
+        assert_eq!(data_idx, None); // Not in user_datas, which is OK
+    }
+
+    #[test]
+    fn test_fallback_to_first_user_when_ldap_user_missing_and_locals_exist() {
+        // Arrange: LDAP user UID saved, not in user_datas, but local users exist
+        let user_datas = vec![
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        ];
+        let last_user = NonZeroU32::new(5000); // LDAP UID not in user_datas or passwd
+
+        // Act
+        let (username, data_idx) = determine_username_from_last_user(last_user, &user_datas);
+
+        // Assert: Should fall back to first local user
+        assert_eq!(username, "alice");
+        assert_eq!(data_idx, Some(0));
+    }
 }
