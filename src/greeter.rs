@@ -1158,7 +1158,7 @@ impl cosmic::Application for App {
         let last_user = flags.greeter_config.last_user.as_ref().copied();
 
         // Determine initial username and UID using shared logic
-        let (username, uid) = determine_username_from_last_user(last_user, &flags.user_configs);
+        let (username, uid) = resolve_last_user(last_user, &flags.user_configs);
 
         let mut session_names: Vec<_> = flags.sessions.keys().map(|x| x.to_string()).collect();
         session_names.sort();
@@ -1932,7 +1932,7 @@ fn resolve_uid_for_username(username: &str) -> Option<NonZeroU32> {
 /// 1. User in user_configs (normal local users enumerated by daemon)
 /// 2. User NOT in user_configs but exists in passwd (LDAP/AD users)
 /// 3. Fallback to first user in user_configs if last_user not found
-fn determine_username_from_last_user(
+fn resolve_last_user(
     last_user: Option<NonZeroU32>,
     user_configs: &HashMap<u32, UserData>,
 ) -> (String, Option<NonZeroU32>) {
@@ -2036,7 +2036,7 @@ mod tests {
         let last_user = NonZeroU32::new(1001);
 
         // Act
-        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
 
         // Assert
         assert_eq!(username, "bob");
@@ -2059,7 +2059,7 @@ mod tests {
         let user_configs: HashMap<u32, UserData> = HashMap::new();
 
         // Act
-        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
 
         // Assert: Should query passwd database for LDAP user
         assert_ne!(
@@ -2091,7 +2091,7 @@ mod tests {
         let last_user = NonZeroU32::new(u32::MAX - 1); // UID not in user_configs or passwd
 
         // Act
-        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
 
         // Assert: Should fall back to first local user (lowest UID)
         assert_eq!(username, "alice");
@@ -2105,7 +2105,7 @@ mod tests {
         let user_configs: HashMap<u32, UserData> = HashMap::new();
 
         // Act
-        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
 
         // Assert: Should return empty string and None
         assert_eq!(username, "");
@@ -2181,7 +2181,7 @@ mod tests {
         let user_configs = HashMap::new(); // NO user config from daemon
 
         // Act
-        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
 
         // Assert: Should find user via passwd even with empty user_configs
         assert_eq!(username, current_user.name);
@@ -2228,7 +2228,7 @@ mod tests {
         let last_user = NonZeroU32::new(u32::MAX - 1); // Doesn't exist
 
         // Act
-        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
+        let (username, uid) = resolve_last_user(last_user, &user_configs);
 
         // Assert: Should pick alice (UID 1000, lowest)
         assert_eq!(username, "alice");
