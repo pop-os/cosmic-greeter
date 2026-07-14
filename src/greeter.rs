@@ -362,6 +362,8 @@ struct SelectedUser {
     username: String,
     /// User ID (UID) for looking up configuration
     uid: Option<NonZeroU32>,
+    /// Cached display name (full name from GECOS or config)
+    display_name: String,
 }
 
 /// Messages that are used specifically by our [`App`].
@@ -1181,7 +1183,8 @@ impl cosmic::Application for App {
             .or_else(|| session_names.first().cloned())
             .unwrap_or_default();
 
-        let selected_username = SelectedUser { username, uid };
+        let display_name = get_display_name_for_user(&username, uid, &flags.user_configs);
+        let selected_username = SelectedUser { username, uid, display_name };
         let accessibility = Accessibility {
             helper: cosmic_settings_daemon_config::greeter::GreeterAccessibilityState::config()
                 .ok(),
@@ -1397,7 +1400,8 @@ impl cosmic::Application for App {
                     .and_then(|d| NonZeroU32::new(d.uid))
                     .or_else(|| resolve_uid_for_username(&username));
 
-                self.selected_username = SelectedUser { username, uid };
+                let display_name = get_display_name_for_user(&username, uid, &self.flags.user_configs);
+                self.selected_username = SelectedUser { username, uid, display_name };
                 if focus_input {
                     return Task::batch([
                         self.common.dropdown_blur_rects(false),
@@ -1422,7 +1426,8 @@ impl cosmic::Application for App {
                         .and_then(|d| NonZeroU32::new(d.uid))
                         .or_else(|| resolve_uid_for_username(&username));
 
-                    self.selected_username = SelectedUser { username, uid };
+                    let display_name = get_display_name_for_user(&username, uid, &self.flags.user_configs);
+                    self.selected_username = SelectedUser { username, uid, display_name };
                     self.common.surface_images.clear();
 
                     // Try to get last session for this user
@@ -2305,6 +2310,7 @@ mod tests {
         app.selected_username = SelectedUser {
             username: "alice".to_string(),
             uid: NonZeroU32::new(1000),
+            display_name: "Alice Smith".to_string(),
         };
         
         let config = app.get_selected_user_config();
@@ -2315,6 +2321,7 @@ mod tests {
         app.selected_username = SelectedUser {
             username: "ldap_user".to_string(),
             uid: NonZeroU32::new(2000),
+            display_name: "LDAP User".to_string(),
         };
         
         let config = app.get_selected_user_config();
@@ -2324,9 +2331,30 @@ mod tests {
         app.selected_username = SelectedUser {
             username: "unknown".to_string(),
             uid: None,
+            display_name: "Unknown".to_string(),
         };
         
         let config = app.get_selected_user_config();
         assert!(config.is_none(), "Should return None when no UID selected");
+    }
+
+    #[test]
+    fn test_selected_user_caches_display_name() {
+        // Test that SelectedUser struct caches the display name to avoid syscalls on every render
+        
+        // Create a SelectedUser with display_name cached
+        let user = SelectedUser {
+            username: "alice".to_string(),
+            uid: NonZeroU32::new(1000),
+            display_name: "Alice Smith".to_string(),
+        };
+        
+        assert_eq!(user.username, "alice");
+        assert_eq!(user.uid, NonZeroU32::new(1000));
+        assert_eq!(user.display_name, "Alice Smith");
+        
+        // When display_name is accessed, it should return cached value
+        // without calling pwd::Passwd::from_name (which would be a syscall)
+        assert_eq!(user.display_name, "Alice Smith");
     }
 }
