@@ -1992,101 +1992,90 @@ mod tests {
     use cosmic_greeter_daemon::UserData;
     use std::num::NonZeroU32;
 
-    /// OLD: Kept for backward compat with existing tests - will be removed
-    /// Use determine_username_from_last_user_v2 instead
-    #[allow(dead_code)]
-    fn determine_username_from_last_user(
-        last_user: Option<NonZeroU32>,
-        user_datas: &[UserData],
-    ) -> (String, Option<usize>) {
-        // Convert Vec to HashMap for new API
-        let user_configs: HashMap<u32, UserData> =
-            user_datas.iter().map(|d| (d.uid, d.clone())).collect();
-
-        let (username, _uid) = determine_username_from_last_user_v2(last_user, &user_configs);
-
-        // Convert UID back to index for old API
-        let data_idx = user_datas.iter().position(|d| d.name == username);
-        (username, data_idx)
-    }
-
     #[test]
     fn test_last_user_in_enumerated_list() {
-        // Arrange: Normal case - last user exists in user_datas
-        let user_datas = vec![
+        // Arrange: Normal case - last user exists in user_configs
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
             UserData {
                 uid: 1000,
                 name: "alice".to_string(),
                 full_name: "Alice".to_string(),
                 ..Default::default()
             },
+        );
+        user_configs.insert(
+            1001,
             UserData {
                 uid: 1001,
                 name: "bob".to_string(),
                 full_name: "Bob".to_string(),
                 ..Default::default()
             },
-        ];
+        );
         let last_user = NonZeroU32::new(1001);
 
         // Act
-        let (username, data_idx) = determine_username_from_last_user(last_user, &user_datas);
+        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
 
         // Assert
         assert_eq!(username, "bob");
-        assert_eq!(data_idx, Some(1));
+        assert_eq!(uid, NonZeroU32::new(1001));
     }
 
     #[test]
     fn test_ldap_user_not_in_enumerated_list_bug() {
-        // Arrange: LDAP user UID saved in config, but not in user_datas
+        // Arrange: LDAP user UID saved in config, but not in user_configs
         // This simulates the real-world scenario where:
         // 1. User logs in via LDAP (UID gets saved)
         // 2. On next boot, daemon doesn't enumerate LDAP users
-        // 3. greeter has last_user UID but can't find it in user_datas
+        // 3. greeter has last_user UID but can't find it in user_configs
 
         let current_user = pwd::Passwd::current_user().expect("Need current user for test");
 
         let last_user = NonZeroU32::new(current_user.uid);
 
-        // Empty user_datas - LDAP users aren't enumerated by daemon
-        let user_datas: Vec<UserData> = vec![];
+        // Empty user_configs - LDAP users aren't enumerated by daemon
+        let user_configs: HashMap<u32, UserData> = HashMap::new();
 
         // Act
-        let (username, data_idx) = determine_username_from_last_user(last_user, &user_datas);
+        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
 
-        // Assert: This is the BUG!
-        // Current code returns empty username, causing authentication to fail
-        // It SHOULD look up the user via pwd::Passwd::from_uid()
+        // Assert: Should query passwd database for LDAP user
         assert_ne!(
             username, "",
-            "BUG: When last_user UID (from LDAP) is not in user_datas, \
+            "When last_user UID (from LDAP) is not in user_configs, \
              should query passwd database, not return empty username. \
              Empty username causes greetd authentication to fail."
         );
 
         // After fix, should find the user via passwd lookup
         assert_eq!(username, current_user.name);
-        assert_eq!(data_idx, None); // Not in user_datas, which is OK
+        assert_eq!(uid, NonZeroU32::new(current_user.uid));
     }
 
     #[test]
     fn test_fallback_to_first_user_when_ldap_user_missing_and_locals_exist() {
-        // Arrange: LDAP user UID saved, not in user_datas, but local users exist
-        let user_datas = vec![UserData {
-            uid: 1000,
-            name: "alice".to_string(),
-            full_name: "Alice".to_string(),
-            ..Default::default()
-        }];
-        let last_user = NonZeroU32::new(5000); // LDAP UID not in user_datas or passwd
+        // Arrange: LDAP user UID saved, not in user_configs, but local users exist
+        let mut user_configs: HashMap<u32, UserData> = HashMap::new();
+        user_configs.insert(
+            1000,
+            UserData {
+                uid: 1000,
+                name: "alice".to_string(),
+                full_name: "Alice".to_string(),
+                ..Default::default()
+            },
+        );
+        let last_user = NonZeroU32::new(5000); // LDAP UID not in user_configs or passwd
 
         // Act
-        let (username, data_idx) = determine_username_from_last_user(last_user, &user_datas);
+        let (username, uid) = determine_username_from_last_user_v2(last_user, &user_configs);
 
-        // Assert: Should fall back to first local user
+        // Assert: Should fall back to first local user (lowest UID)
         assert_eq!(username, "alice");
-        assert_eq!(data_idx, Some(0));
+        assert_eq!(uid, NonZeroU32::new(1000));
     }
 
     #[test]
