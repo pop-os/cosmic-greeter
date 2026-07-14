@@ -313,7 +313,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
 #[derive(Clone)]
 pub struct Flags {
-    /// User configurations indexed by UID (from daemon or empty if daemon unavailable)
+    /// User configurations indexed by UID (from daemon, or passwd fallback if daemon unavailable)
     user_configs: HashMap<u32, UserData>,
     /// Reverse index: username → UID for O(1) lookups
     username_to_uid: HashMap<String, u32>,
