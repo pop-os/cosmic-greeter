@@ -1978,13 +1978,7 @@ fn get_display_name_for_user(
 
     // Fallback: query passwd and extract full_name from gecos
     if let Some(passwd) = pwd::Passwd::from_name(username).ok().flatten() {
-        // Parse full_name from gecos field (same logic as UserData::from(pwd::Passwd))
-        let full_name = passwd
-            .gecos
-            .as_ref()
-            .and_then(|gecos| gecos.split(',').next())
-            .map(|x| x.to_string())
-            .unwrap_or_default();
+        let full_name = cosmic_greeter_daemon::parse_full_name_from_gecos(passwd.gecos);
 
         if !full_name.is_empty() {
             return full_name;
