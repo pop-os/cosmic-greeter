@@ -133,23 +133,19 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    // Build HashMap of user configs indexed by UID
     let mut user_configs: HashMap<u32, UserData> = HashMap::new();
     let mut user_icons: HashMap<u32, widget::image::Handle> = HashMap::new();
 
     for mut user_data in users {
         let uid = user_data.uid;
 
-        // Extract and store icon if present
         if let Some(icon_bytes) = user_data.icon_opt.take() {
             user_icons.insert(uid, widget::image::Handle::from_bytes(icon_bytes));
         }
 
-        // Store user config
         user_configs.insert(uid, user_data);
     }
 
-    // Build reverse index for O(1) username → UID lookups
     let username_to_uid = build_username_to_uid_index(&user_configs);
 
     let (mut greeter_config, greeter_config_handler) = CosmicGreeterConfig::load();
@@ -496,7 +492,6 @@ impl App {
 
     /// Create a SelectedUser from a username by resolving UID and display name
     fn make_selected_user(&self, username: String) -> SelectedUser {
-        // Find UID for this username using O(1) reverse index lookup
         let uid = self
             .flags
             .username_to_uid
