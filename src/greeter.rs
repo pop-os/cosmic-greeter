@@ -2093,6 +2093,20 @@ mod tests {
     }
 
     #[test]
+    fn test_determine_username_from_last_user_with_none_and_empty_configs() {
+        // Arrange: No last_user and no user_configs
+        let last_user = None;
+        let user_configs: HashMap<u32, UserData> = HashMap::new();
+
+        // Act
+        let (username, uid) = determine_username_from_last_user(last_user, &user_configs);
+
+        // Assert: Should return empty string and None
+        assert_eq!(username, "");
+        assert_eq!(uid, None);
+    }
+
+    #[test]
     fn test_get_display_name_from_user_configs() {
         // Arrange
         let mut user_configs = HashMap::new();
