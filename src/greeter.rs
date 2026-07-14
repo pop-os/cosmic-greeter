@@ -1176,7 +1176,7 @@ impl cosmic::Application for App {
             ..Default::default()
         };
 
-        let mut app = App {
+        let app = App {
             common,
             flags,
             greetd_sender: None,
