@@ -497,13 +497,12 @@ impl App {
 
     /// Create a SelectedUser from a username by resolving UID and display name
     fn make_selected_user(&self, username: String) -> SelectedUser {
-        // Find UID for this username
+        // Find UID for this username using O(1) reverse index lookup
         let uid = self
             .flags
-            .user_configs
-            .values()
-            .find(|d| d.name == username)
-            .and_then(|d| NonZeroU32::new(d.uid))
+            .username_to_uid
+            .get(&username)
+            .and_then(|&uid| NonZeroU32::new(uid))
             .or_else(|| resolve_uid_for_username(&username));
 
         let display_name = get_display_name_for_user(&username, uid, &self.flags.user_configs);
