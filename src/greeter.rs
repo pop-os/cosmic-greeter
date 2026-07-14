@@ -2151,6 +2151,20 @@ mod tests {
     }
 
     #[test]
+    fn test_get_display_name_for_nonexistent_user_with_empty_configs() {
+        // Arrange: Non-existent user, no UID, empty user_configs
+        let username = "nonexistent_user_xyz_12345";
+        let uid = None;
+        let user_configs: HashMap<u32, UserData> = HashMap::new();
+
+        // Act
+        let display_name = get_display_name_for_user(username, uid, &user_configs);
+
+        // Assert: Should fall back to username
+        assert_eq!(display_name, username);
+    }
+
+    #[test]
     fn test_username_selection_without_user_configs() {
         // This test proves we can select a username without any user_configs
         // The greeter should work with ONLY passwd, no daemon data needed
