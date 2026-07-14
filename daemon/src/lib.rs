@@ -265,9 +265,8 @@ impl UserData {
 }
 
 /// Extract full name from gecos (gecos format: name,room,work-phone,home-phone,other)
-pub fn parse_full_name_from_gecos(gecos: Option<String>) -> String {
+pub fn parse_full_name_from_gecos(gecos: Option<&str>) -> String {
     gecos
-        .as_ref()
         .and_then(|gecos| gecos.split(',').next())
         .map(|x| x.to_string())
         .unwrap_or_default()
@@ -275,7 +274,7 @@ pub fn parse_full_name_from_gecos(gecos: Option<String>) -> String {
 
 impl From<pwd::Passwd> for UserData {
     fn from(user: pwd::Passwd) -> Self {
-        let mut full_name = parse_full_name_from_gecos(user.gecos.clone());
+        let mut full_name = parse_full_name_from_gecos(user.gecos.as_deref());
         if full_name.is_empty() {
             full_name = user.name.clone();
         }
@@ -296,18 +295,18 @@ mod tests {
     fn test_parse_full_name_from_gecos() {
         // Standard gecos with full name as first field
         assert_eq!(
-            parse_full_name_from_gecos(Some("John Doe,Room 123,555-1234".to_string())),
+            parse_full_name_from_gecos(Some("John Doe,Room 123,555-1234")),
             "John Doe"
         );
 
         // Gecos with only name
         assert_eq!(
-            parse_full_name_from_gecos(Some("Alice Smith".to_string())),
+            parse_full_name_from_gecos(Some("Alice Smith")),
             "Alice Smith"
         );
 
         // Empty gecos
-        assert_eq!(parse_full_name_from_gecos(Some(String::new())), "");
+        assert_eq!(parse_full_name_from_gecos(Some("")), "");
 
         // None gecos
         assert_eq!(parse_full_name_from_gecos(None), "");
