@@ -570,7 +570,7 @@ impl App {
                         widget::row::with_capacity(2)
                             .spacing(8.0)
                             .align_y(Alignment::Center)
-                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
+                            .push(widget::indeterminate_circular().size(16.0))
                             .push(widget::text(fl!("authenticating"))),
                     )
                     .width(Length::Fill)
