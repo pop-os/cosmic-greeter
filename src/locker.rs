@@ -1000,7 +1000,7 @@ impl cosmic::Application for App {
                     self.state = State::Unlocked;
 
                     let mut commands = Vec::new();
-                    for (_output, surface_id) in self.common.surface_ids.iter() {
+                    for surface_id in self.common.surface_ids.values() {
                         self.common.surface_names.remove(surface_id);
                         self.common.window_size.remove(surface_id);
                         commands.push(destroy_lock_surface(*surface_id));
@@ -1129,7 +1129,7 @@ impl cosmic::Application for App {
                         // Destroy lock surfaces
                         let mut commands = Vec::with_capacity(self.common.surface_ids.len() + 1);
 
-                        for (_output, surface_id) in self.common.surface_ids.iter() {
+                        for surface_id in self.common.surface_ids.values() {
                             self.common.surface_names.remove(surface_id);
                             self.common.window_size.remove(surface_id);
                             commands.push(destroy_lock_surface(*surface_id));
