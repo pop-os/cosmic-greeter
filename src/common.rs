@@ -164,7 +164,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
     }
 
     pub fn update_wallpapers(&mut self, user_data: &UserData) {
-        for (_output, surface_id) in self.surface_ids.iter() {
+        for surface_id in self.surface_ids.values() {
             if self.surface_images.contains_key(surface_id) {
                 continue;
             }
@@ -367,40 +367,40 @@ impl<M: From<Message> + Send + 'static> Common<M> {
     }
 
     pub fn blur_rects(&mut self, id: SurfaceId) -> Task<M> {
-        if let Some(output) = self.subsurface_outputs.get(&id) {
-            if let Some(rect) = self.subsurface_rects.get(output) {
-                let x = rect.x;
-                let y = rect.y;
-                if let Some(rect) = self.rectangles.get(&(id, false)) {
-                    let mut offset_rect = *rect;
-                    offset_rect.x += x;
-                    offset_rect.y += y;
+        if let Some(output) = self.subsurface_outputs.get(&id)
+            && let Some(rect) = self.subsurface_rects.get(output)
+        {
+            let x = rect.x;
+            let y = rect.y;
+            if let Some(rect) = self.rectangles.get(&(id, false)) {
+                let mut offset_rect = *rect;
+                offset_rect.x += x;
+                offset_rect.y += y;
+                let rad = CornerRadius {
+                    top_left: 16,
+                    top_right: 16,
+                    bottom_left: 16,
+                    bottom_right: 16,
+                };
+                let mut rects = rounded_rect_strips(offset_rect, rad);
+                if let Some(other_rect) = self.rectangles.get(&(id, true))
+                    && self.include_menu
+                {
+                    let mut other = *other_rect;
+                    other.x += x;
+                    other.y += y;
                     let rad = CornerRadius {
-                        top_left: 16,
-                        top_right: 16,
-                        bottom_left: 16,
-                        bottom_right: 16,
+                        top_left: 8,
+                        top_right: 8,
+                        bottom_left: 8,
+                        bottom_right: 8,
                     };
-                    let mut rects = rounded_rect_strips(offset_rect, rad);
-                    if let Some(other_rect) = self.rectangles.get(&(id, true))
-                        && self.include_menu
-                    {
-                        let mut other = *other_rect;
-                        other.x += x;
-                        other.y += y;
-                        let rad = CornerRadius {
-                            top_left: 8,
-                            top_right: 8,
-                            bottom_left: 8,
-                            bottom_right: 8,
-                        };
-                        rects.append(&mut rounded_rect_strips(other, rad));
-                    }
-
-                    return blur(id, Some(rects)).discard();
-                } else {
-                    tracing::error!("no rectangle for surface {id:?}");
+                    rects.append(&mut rounded_rect_strips(other, rad));
                 }
+
+                return blur(id, Some(rects)).discard();
+            } else {
+                tracing::error!("no rectangle for surface {id:?}");
             }
         }
         Task::none()

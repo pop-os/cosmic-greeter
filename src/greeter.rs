@@ -24,8 +24,7 @@ use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::repos
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{
-    self, Alignment, Background, Border, Color, Length, Point, Rectangle, Size, Subscription,
-    window,
+    self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription, window,
 };
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
@@ -135,7 +134,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     };
 
     // Sort user data by uid
-    user_datas.sort_by(|a, b| a.uid.cmp(&b.uid));
+    user_datas.sort_by_key(|a| a.uid);
     let (mut greeter_config, greeter_config_handler) = CosmicGreeterConfig::load();
     // Filter out users that were removed from the system since the last time we loaded config
     greeter_config.users.retain(|uid, _| {
@@ -906,7 +905,7 @@ impl App {
                         widget::row::with_capacity(2)
                             .spacing(8.0)
                             .align_y(Alignment::Center)
-                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
+                            .push(widget::indeterminate_circular().size(16.0))
                             .push(widget::text(fl!("authenticating"))),
                     )
                     .width(Length::Fill)
@@ -1626,12 +1625,12 @@ impl cosmic::Application for App {
                 }
             }
             Message::Heartbeat => match self.dialog_page_opt {
-                Some(DialogPage::Restart(instant)) | Some(DialogPage::Shutdown(instant)) => {
-                    if DialogPage::remaining(instant).is_none() {
-                        return self.update(Message::DialogConfirm);
-                    }
+                Some(DialogPage::Restart(instant)) | Some(DialogPage::Shutdown(instant))
+                    if DialogPage::remaining(instant).is_none() =>
+                {
+                    return self.update(Message::DialogConfirm);
                 }
-                None => {}
+                _ => {}
             },
             Message::Exit => {
                 let mut commands = Vec::new();
