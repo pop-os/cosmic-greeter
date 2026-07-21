@@ -280,6 +280,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions
     };
 
+    let logind_available = cfg!(feature = "logind") && crate::logind::is_available();
+
     let flags = Flags {
         user_icons: user_datas
             .iter_mut()
@@ -289,6 +291,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions,
         greeter_config,
         greeter_config_handler,
+        logind_available,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -305,6 +308,7 @@ pub struct Flags {
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
     greeter_config: CosmicGreeterConfig,
     greeter_config_handler: Option<cosmic_config::Config>,
+    logind_available: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -688,7 +692,7 @@ impl App {
 
             let accessibility_button = accessibility_dropdown;
 
-            let button_row = iced::widget::row![
+            let mut button_row = iced::widget::row![
                 widget::tooltip(
                     accessibility_button,
                     text(fl!("accessibility")),
@@ -709,30 +713,32 @@ impl App {
                     text(fl!("session")),
                     widget::tooltip::Position::Top
                 ),
-                widget::tooltip(
-                    widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Suspend),
-                    text(fl!("suspend")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    widget::button::custom(widget::icon::from_name("system-reboot-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Restart),
-                    text(fl!("restart")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    widget::button::custom(widget::icon::from_name("system-shutdown-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Shutdown),
-                    text(fl!("shutdown")),
-                    widget::tooltip::Position::Top
-                )
-            ]
-            .padding([16.0, 0.0, 0.0, 0.0])
-            .spacing(8.0);
+            ];
+            if self.flags.logind_available {
+                button_row = button_row
+                    .push(widget::tooltip(
+                        widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
+                            .padding(12.0)
+                            .on_press(Message::Suspend),
+                        text(fl!("suspend")),
+                        widget::tooltip::Position::Top,
+                    ))
+                    .push(widget::tooltip(
+                        widget::button::custom(widget::icon::from_name("system-reboot-symbolic"))
+                            .padding(12.0)
+                            .on_press(Message::Restart),
+                        text(fl!("restart")),
+                        widget::tooltip::Position::Top,
+                    ))
+                    .push(widget::tooltip(
+                        widget::button::custom(widget::icon::from_name("system-shutdown-symbolic"))
+                            .padding(12.0)
+                            .on_press(Message::Shutdown),
+                        text(fl!("shutdown")),
+                        widget::tooltip::Position::Top,
+                    ));
+            }
+            let button_row = button_row.padding([16.0, 0.0, 0.0, 0.0]).spacing(8.0);
 
             widget::container(iced::widget::column![
                 date_time_column,
