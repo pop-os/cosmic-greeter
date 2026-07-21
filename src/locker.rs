@@ -433,7 +433,7 @@ impl App {
             }
 
             //TODO: implement these buttons
-            let button_row = iced::widget::row![
+            let mut button_row = iced::widget::row![
                 /*TODO: greeter accessibility options
                 widget::button::custom(widget::icon::from_name(
                     "applications-accessibility-symbolic"
@@ -446,16 +446,17 @@ impl App {
                     widget::text(fl!("keyboard-layout")),
                     widget::tooltip::Position::Top
                 ),
-                widget::tooltip(
+            ];
+            if cfg!(feature = "logind") && self.flags.logind_available {
+                button_row = button_row.push(widget::tooltip(
                     widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
                         .padding(12.0)
                         .on_press(Message::Suspend),
                     widget::text(fl!("suspend")),
-                    widget::tooltip::Position::Top
-                ),
-            ]
-            .padding([16.0, 0.0, 0.0, 0.0])
-            .spacing(8.0);
+                    widget::tooltip::Position::Top,
+                ));
+            }
+            let button_row = button_row.padding([16.0, 0.0, 0.0, 0.0]).spacing(8.0);
 
             widget::container(iced::widget::column![
                 date_time_column,
