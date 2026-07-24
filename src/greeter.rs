@@ -586,7 +586,7 @@ impl App {
                 for (i, layout) in self.common.active_layouts.iter().enumerate() {
                     items.push(menu_checklist(
                         &layout.description,
-                        i == 0,
+                        i == self.common.current_keyboard_layout,
                         Message::KeyboardLayout(i),
                     ));
                 }
@@ -1029,19 +1029,6 @@ impl App {
         }
     }
 
-    fn set_xkb_config(&self) {
-        let user_data = match self
-            .selected_username
-            .data_idx
-            .and_then(|i| self.flags.user_datas.get(i))
-        {
-            Some(some) => some,
-            None => return,
-        };
-
-        self.common.set_xkb_config(user_data);
-    }
-
     fn update_user_data(&mut self) -> Task<Message> {
         let user_data = match self
             .selected_username
@@ -1055,9 +1042,6 @@ impl App {
         };
 
         self.common.update_user_data(user_data);
-
-        // Ensure that user's xkb config is used
-        self.common.set_xkb_config(user_data);
 
         if let Some(builder) = &user_data.theme_builder_opt {
             self.theme_builder = builder.clone();
@@ -1572,10 +1556,10 @@ impl cosmic::Application for App {
                 }
             }
             Message::KeyboardLayout(layout_i) => {
-                if layout_i < self.common.active_layouts.len() {
-                    self.common.active_layouts.swap(0, layout_i);
-                    self.set_xkb_config();
+                if let Some(keyboard_layout) = &self.common.keyboard_layout {
+                    keyboard_layout.set_group(layout_i as u32);
                 }
+                self.common.current_keyboard_layout = layout_i;
                 if self.dropdown_opt == Some(Dropdown::Keyboard) {
                     self.dropdown_opt = None
                 }

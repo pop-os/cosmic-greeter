@@ -10,11 +10,14 @@ use cosmic::iced::{self, Rectangle, Size, Subscription};
 use cosmic::surface::corner_radius::rounded_rect_strips;
 use cosmic::widget::rectangle_tracker::{RectangleUpdate, rectangle_tracker_subscription};
 use cosmic::widget::{self, RectangleTracker};
-use cosmic_config::{ConfigSet, CosmicConfigEntry};
-use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
+use cosmic_greeter_daemon::{BgSource, UserData};
+use cosmic_protocols::keyboard_layout::v1::client::zcosmic_keyboard_layout_v1::ZcosmicKeyboardLayoutV1;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use wayland_client::protocol::wl_output::WlOutput;
+use wayland_client::{Connection, Proxy};
+
+use crate::keyboard_layout_wayland;
 
 pub const DEFAULT_MENU_ITEM_HEIGHT: f32 = 36.;
 
@@ -26,13 +29,15 @@ pub struct ActiveLayout {
 }
 
 pub struct Common<M> {
+    pub wayland_connection: Option<Connection>,
+    pub keyboard_layout: Option<ZcosmicKeyboardLayoutV1>,
+    pub current_keyboard_layout: usize,
     pub active_layouts: Vec<ActiveLayout>,
     pub active_surface_id_opt: Option<SurfaceId>,
     pub on_battery: bool,
     pub battery_percent: f64,
     pub charging_limit: Option<bool>,
     pub caps_lock: bool,
-    pub comp_config_handler: Option<cosmic_config::Config>,
     pub core: Core,
     pub error_opt: Option<String>,
     pub fallback_background: widget::image::Handle,
@@ -70,6 +75,7 @@ pub enum Message {
     Tick,
     Tz(jiff::tz::TimeZone),
     Rectangle(RectangleUpdate<(SurfaceId, bool)>),
+    KeyboardLayoutWayland(keyboard_layout_wayland::Event),
 }
 
 impl<M: From<Message> + Send + 'static> Common<M> {
@@ -82,17 +88,6 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         core.window.show_minimize = false;
         core.window.use_template = false;
 
-        let comp_config_handler = match cosmic_config::Config::new(
-            "com.system76.CosmicComp",
-            CosmicCompConfig::VERSION,
-        ) {
-            Ok(config_handler) => Some(config_handler),
-            Err(err) => {
-                tracing::error!("failed to create cosmic-comp config handler: {}", err);
-                None
-            }
-        };
-
         let layouts_opt = match xkb_data::all_keyboard_layouts() {
             Ok(ok) => Some(Arc::new(ok)),
             Err(err) => {
@@ -102,10 +97,12 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         };
 
         let app = Self {
+            wayland_connection: None,
+            keyboard_layout: None,
+            current_keyboard_layout: 0,
             active_layouts: Vec::new(),
             active_surface_id_opt: None,
             caps_lock: false,
-            comp_config_handler,
             core,
             error_opt: None,
             fallback_background: widget::image::Handle::from_bytes(
@@ -140,27 +137,6 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 crate::time::tz_updates().map(|tz| cosmic::Action::App(Message::Tz(tz).into())),
             ]),
         )
-    }
-
-    pub fn set_xkb_config(&self, user_data: &UserData) {
-        if let Some(mut xkb_config) = user_data.xkb_config_opt.clone() {
-            xkb_config.layout = String::new();
-            xkb_config.variant = String::new();
-            for (i, layout) in self.active_layouts.iter().enumerate() {
-                if i > 0 {
-                    xkb_config.layout.push(',');
-                    xkb_config.variant.push(',');
-                }
-                xkb_config.layout.push_str(&layout.layout);
-                xkb_config.variant.push_str(&layout.variant);
-            }
-            if let Some(comp_config_handler) = &self.comp_config_handler {
-                match comp_config_handler.set("xkb_config", xkb_config) {
-                    Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
-                    Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
-                }
-            }
-        }
     }
 
     pub fn update_wallpapers(&mut self, user_data: &UserData) {
@@ -301,6 +277,11 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                     network_icon_opt.map(|name| widget::icon::from_name(name).into());
             }
             Message::OutputEvent(output_event, output) => {
+                if self.wayland_connection.is_none() {
+                    if let Some(backend) = output.backend().upgrade() {
+                        self.wayland_connection = Some(Connection::from_backend(backend));
+                    }
+                }
                 if let Some(on_output_event) = &self.on_output_event {
                     return Task::done(cosmic::Action::App(on_output_event(output_event, output)));
                 }
@@ -347,6 +328,14 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 }
                 RectangleUpdate::Init(tracker) => {
                     self.rectangle_tracker.replace(tracker);
+                }
+            },
+            Message::KeyboardLayoutWayland(w) => match w {
+                keyboard_layout_wayland::Event::KeyboardLayout(keyboard_layout) => {
+                    self.keyboard_layout = Some(keyboard_layout);
+                }
+                keyboard_layout_wayland::Event::Group(group) => {
+                    self.current_keyboard_layout = group;
                 }
             },
         }
@@ -440,6 +429,12 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(id)),
             _ => None,
         }));
+
+        if let Some(conn) = self.wayland_connection.clone() {
+            subscriptions.push(
+                keyboard_layout_wayland::subscription(conn).map(Message::KeyboardLayoutWayland),
+            );
+        }
 
         #[cfg(feature = "networkmanager")]
         {
