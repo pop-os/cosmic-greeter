@@ -8,6 +8,8 @@ mod wayland;
 
 mod common;
 
+mod keyboard_layout_wayland;
+
 mod localize;
 
 #[cfg(feature = "logind")]

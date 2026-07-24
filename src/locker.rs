@@ -421,7 +421,7 @@ impl App {
                 for (i, layout) in self.common.active_layouts.iter().enumerate() {
                     items.push(menu_checklist(
                         &layout.description,
-                        i == 0,
+                        i == self.common.current_keyboard_layout,
                         Message::KeyboardLayout(i),
                     ));
                 }
@@ -1044,10 +1044,10 @@ impl cosmic::Application for App {
                 }
             },
             Message::KeyboardLayout(layout_i) => {
-                if layout_i < self.common.active_layouts.len() {
-                    self.common.active_layouts.swap(0, layout_i);
-                    self.common.set_xkb_config(&self.flags.user_data);
+                if let Some(keyboard_layout) = &self.common.keyboard_layout {
+                    keyboard_layout.set_group(layout_i as u32);
                 }
+                self.common.current_keyboard_layout = layout_i;
                 if self.dropdown_opt == Some(Dropdown::Keyboard) {
                     self.dropdown_opt = None;
                     return self.common.dropdown_blur_rects(false);
