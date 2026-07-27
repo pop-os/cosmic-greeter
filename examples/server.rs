@@ -78,5 +78,6 @@ fn main() {
     });
 
     // Run greeter on main thread (required for winit event loop)
-    cosmic_greeter::greeter::main().unwrap();
+    let test_window = env::args().any(|arg| arg == "-t" || arg == "--test-window");
+    cosmic_greeter::greeter::main(test_window).unwrap();
 }

@@ -17,6 +17,10 @@ macro_rules! fl {
         i18n_embed_fl::fl!($crate::localize::LANGUAGE_LOADER.get().unwrap(), $message_id)
     }};
 
+    ($message_id:literal, $($key:ident = $value:expr),*) => {{
+        i18n_embed_fl::fl!($crate::localize::LANGUAGE_LOADER.get().unwrap(), $message_id, $($key = $value),*)
+    }};
+
     ($message_id:literal, $($args:expr),*) => {{
         i18n_embed_fl::fl!($crate::localize::LANGUAGE_LOADER.get().unwrap(), $message_id, $($args), *)
     }};

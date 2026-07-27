@@ -5,14 +5,14 @@ use cosmic::iced::event::{self};
 use cosmic::iced::keyboard::{Event as KeyEvent, Key, Modifiers};
 use cosmic::iced::platform_specific::shell::commands::blur::blur;
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
-use cosmic::iced::runtime::platform_specific::wayland::CornerRadius;
 use cosmic::iced::{self, Rectangle, Size, Subscription};
-use cosmic::surface::corner_radius::rounded_rect_strips;
 use cosmic::widget::rectangle_tracker::{RectangleUpdate, rectangle_tracker_subscription};
 use cosmic::widget::{self, RectangleTracker};
 use cosmic_config::{ConfigSet, CosmicConfigEntry};
 use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use wayland_client::protocol::wl_output::WlOutput;
 
@@ -43,9 +43,10 @@ pub struct Common<M> {
     pub output_names: HashMap<WlOutput, String>,
     pub power_info_opt: Option<(widget::Icon, f64)>,
     pub prompt_opt: Option<(String, bool, Option<String>)>,
-    pub rectangle_tracker: Option<RectangleTracker<(SurfaceId, bool)>>,
-    pub rectangles: HashMap<(SurfaceId, bool), iced::Rectangle>,
+    pub rectangle_tracker: Option<RectangleTracker<(SurfaceId, u8)>>,
+    pub rectangles: HashMap<(SurfaceId, u8), iced::Rectangle>,
     pub include_menu: bool,
+    pub last_blur_rects: HashMap<SurfaceId, Vec<iced::Rectangle>>,
     pub subsurface_rects: HashMap<WlOutput, Rectangle>,
     pub surface_ids: HashMap<WlOutput, SurfaceId>,
     pub subsurface_outputs: HashMap<SurfaceId, WlOutput>,
@@ -54,6 +55,9 @@ pub struct Common<M> {
     pub text_input_ids: HashMap<String, widget::Id>,
     pub time: crate::time::Time,
     pub window_size: HashMap<SurfaceId, Size>,
+    /// When true, wallpapers are loaded sharp (no blur/darken) for lock screen.
+    /// When false, wallpapers use frosted blur for the greeter.
+    pub use_sharp_wallpaper: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -69,11 +73,194 @@ pub enum Message {
     SessionLockEvent(SessionLockEvent),
     Tick,
     Tz(jiff::tz::TimeZone),
-    Rectangle(RectangleUpdate<(SurfaceId, bool)>),
+    Rectangle(RectangleUpdate<(SurfaceId, u8)>),
+}
+
+pub fn circular_avatar_handle(bytes: &[u8], size: u32) -> widget::image::Handle {
+    match image::load_from_memory(bytes) {
+        Ok(dyn_img) => {
+            let min_dim = dyn_img.width().min(dyn_img.height());
+            let cropped = dyn_img.crop_imm(
+                (dyn_img.width() - min_dim) / 2,
+                (dyn_img.height() - min_dim) / 2,
+                min_dim,
+                min_dim,
+            );
+            let mut rgba = cropped
+                .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
+                .to_rgba8();
+            let center = (size as f32) / 2.0;
+            let radius = center - 1.0;
+            for (x, y, pixel) in rgba.enumerate_pixels_mut() {
+                let dx = x as f32 + 0.5 - center;
+                let dy = y as f32 + 0.5 - center;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist >= radius + 1.0 {
+                    pixel[3] = 0;
+                } else if dist > radius - 1.0 {
+                    let alpha_factor = (radius + 1.0 - dist) / 2.0;
+                    pixel[3] = (pixel[3] as f32 * alpha_factor) as u8;
+                }
+            }
+            widget::image::Handle::from_rgba(size, size, rgba.into_raw())
+        }
+        Err(err) => {
+            tracing::warn!("Failed to process image for circular avatar: {err}");
+            widget::image::Handle::from_bytes(bytes.to_vec())
+        }
+    }
+}
+
+fn fast_box_blur(buf: &mut [u8], width: u32, height: u32, radius: u32) {
+    if width < 2 || height < 2 || radius == 0 {
+        return;
+    }
+    let w = width as usize;
+    let h = height as usize;
+    let r = radius as usize;
+    let mut temp = vec![0u8; buf.len()];
+
+    temp.par_chunks_exact_mut(w * 4)
+        .zip(buf.par_chunks_exact(w * 4))
+        .for_each(|(temp_row, buf_row)| {
+            let window_size = (2 * r + 1) as u32;
+
+            let mut sum_r = (r as u32 + 1) * buf_row[0] as u32;
+            let mut sum_g = (r as u32 + 1) * buf_row[1] as u32;
+            let mut sum_b = (r as u32 + 1) * buf_row[2] as u32;
+            let mut sum_a = (r as u32 + 1) * buf_row[3] as u32;
+
+            for i in 1..=r {
+                let clamped_x = i.min(w - 1);
+                let idx = clamped_x * 4;
+                sum_r += buf_row[idx] as u32;
+                sum_g += buf_row[idx + 1] as u32;
+                sum_b += buf_row[idx + 2] as u32;
+                sum_a += buf_row[idx + 3] as u32;
+            }
+
+            for x in 0..w {
+                let dst_idx = x * 4;
+                temp_row[dst_idx] = (sum_r / window_size) as u8;
+                temp_row[dst_idx + 1] = (sum_g / window_size) as u8;
+                temp_row[dst_idx + 2] = (sum_b / window_size) as u8;
+                temp_row[dst_idx + 3] = (sum_a / window_size) as u8;
+
+                let left_x = x.saturating_sub(r);
+                let right_x = (x + r + 1).min(w - 1);
+
+                let left_idx = left_x * 4;
+                let right_idx = right_x * 4;
+
+                sum_r = sum_r + buf_row[right_idx] as u32 - buf_row[left_idx] as u32;
+                sum_g = sum_g + buf_row[right_idx + 1] as u32 - buf_row[left_idx + 1] as u32;
+                sum_b = sum_b + buf_row[right_idx + 2] as u32 - buf_row[left_idx + 2] as u32;
+                sum_a = sum_a + buf_row[right_idx + 3] as u32 - buf_row[left_idx + 3] as u32;
+            }
+        });
+
+    for x in 0..w {
+        let window_size = (2 * r + 1) as u32;
+
+        let mut sum_r = (r as u32 + 1) * temp[x * 4] as u32;
+        let mut sum_g = (r as u32 + 1) * temp[x * 4 + 1] as u32;
+        let mut sum_b = (r as u32 + 1) * temp[x * 4 + 2] as u32;
+        let mut sum_a = (r as u32 + 1) * temp[x * 4 + 3] as u32;
+
+        for i in 1..=r {
+            let clamped_y = i.min(h - 1);
+            let idx = (clamped_y * w + x) * 4;
+            sum_r += temp[idx] as u32;
+            sum_g += temp[idx + 1] as u32;
+            sum_b += temp[idx + 2] as u32;
+            sum_a += temp[idx + 3] as u32;
+        }
+
+        for y in 0..h {
+            let dst_idx = (y * w + x) * 4;
+            buf[dst_idx] = (sum_r / window_size) as u8;
+            buf[dst_idx + 1] = (sum_g / window_size) as u8;
+            buf[dst_idx + 2] = (sum_b / window_size) as u8;
+            buf[dst_idx + 3] = (sum_a / window_size) as u8;
+
+            let top_y = y.saturating_sub(r);
+            let bottom_y = (y + r + 1).min(h - 1);
+
+            let top_idx = (top_y * w + x) * 4;
+            let bottom_idx = (bottom_y * w + x) * 4;
+
+            sum_r = sum_r + temp[bottom_idx] as u32 - temp[top_idx] as u32;
+            sum_g = sum_g + temp[bottom_idx + 1] as u32 - temp[top_idx + 1] as u32;
+            sum_b = sum_b + temp[bottom_idx + 2] as u32 - temp[top_idx + 2] as u32;
+            sum_a = sum_a + temp[bottom_idx + 3] as u32 - temp[top_idx + 3] as u32;
+        }
+    }
+}
+
+pub fn frosted_handle(path: &str, bytes: &[u8]) -> widget::image::Handle {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    if let Ok(metadata) = std::fs::metadata(path)
+        && let Ok(modified) = metadata.modified()
+    {
+        modified.hash(&mut hasher);
+    }
+    let path_hash = hasher.finish();
+
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join("cosmic-greeter");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cache_file = cache_dir.join(format!("frosted_{:x}.png", path_hash));
+
+    if let Ok(cached_bytes) = std::fs::read(&cache_file) {
+        return widget::image::Handle::from_bytes(cached_bytes);
+    }
+
+    match image::load_from_memory(bytes) {
+        Ok(dyn_img) => {
+            let (w, h) = (dyn_img.width().max(4) / 4, dyn_img.height().max(4) / 4);
+            let small = dyn_img.resize_exact(w, h, image::imageops::FilterType::Triangle);
+            let mut blurred = small.to_rgba8();
+            let (width, height) = blurred.dimensions();
+            let raw = blurred.as_mut();
+            fast_box_blur(raw, width, height, 6);
+            fast_box_blur(raw, width, height, 6);
+            fast_box_blur(raw, width, height, 6);
+
+            raw.par_chunks_exact_mut(4).for_each(|pixel| {
+                pixel[0] = (pixel[0] as f32 * 0.55) as u8;
+                pixel[1] = (pixel[1] as f32 * 0.55) as u8;
+                pixel[2] = (pixel[2] as f32 * 0.55) as u8;
+            });
+
+            if let Err(e) = image::save_buffer(
+                &cache_file,
+                blurred.as_raw(),
+                width,
+                height,
+                image::ColorType::Rgba8,
+            ) {
+                tracing::warn!("Failed to save cached frosted background: {}", e);
+            }
+
+            widget::image::Handle::from_rgba(width, height, blurred.into_raw())
+        }
+        Err(err) => {
+            tracing::warn!("Failed to process image for frosted blur: {err}");
+            widget::image::Handle::from_bytes(bytes.to_vec())
+        }
+    }
+}
+
+/// Load wallpaper at full resolution without blur or darkening.
+/// Used by the lock screen where the wallpaper is the visual hero.
+pub fn sharp_handle(bytes: &[u8]) -> widget::image::Handle {
+    widget::image::Handle::from_bytes(bytes.to_vec())
 }
 
 impl<M: From<Message> + Send + 'static> Common<M> {
-    pub fn init(mut core: Core) -> (Self, Task<M>) {
+    pub fn init(mut core: Core, use_sharp_wallpaper: bool) -> (Self, Task<M>) {
         core.window.show_window_menu = false;
         core.window.show_headerbar = false;
         // XXX must be false or define custom style to have transparent bg
@@ -101,6 +288,13 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             }
         };
 
+        let bg_bytes = include_bytes!("../res/background.jpg").as_slice();
+        let fallback_background = if use_sharp_wallpaper {
+            sharp_handle(bg_bytes)
+        } else {
+            frosted_handle("fallback", bg_bytes)
+        };
+
         let app = Self {
             active_layouts: Vec::new(),
             active_surface_id_opt: None,
@@ -108,9 +302,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             comp_config_handler,
             core,
             error_opt: None,
-            fallback_background: widget::image::Handle::from_bytes(
-                include_bytes!("../res/background.jpg").as_slice(),
-            ),
+            fallback_background,
             layouts_opt,
             network_icon_opt: None,
             on_output_event: None,
@@ -132,6 +324,8 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             rectangle_tracker: None,
             rectangles: HashMap::new(),
             include_menu: false,
+            last_blur_rects: HashMap::new(),
+            use_sharp_wallpaper,
         };
         (
             app,
@@ -181,7 +375,11 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                         BgSource::Path(path) => {
                             match user_data.bg_path_data.get(path) {
                                 Some(bytes) => {
-                                    let image = widget::image::Handle::from_bytes(bytes.clone());
+                                    let image = if self.use_sharp_wallpaper {
+                                        sharp_handle(bytes)
+                                    } else {
+                                        frosted_handle(&path.to_string_lossy(), bytes)
+                                    };
                                     self.surface_images.insert(*surface_id, image);
                                     //TODO: what to do about duplicates?
                                 }
@@ -314,15 +512,14 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
                 self.prompt_opt = Some((prompt, secret, value_opt));
-                if prompt_was_none
-                    && let Some(surface_id) = self.active_surface_id_opt
-                    && let Some(text_input_id) = self
-                        .surface_names
-                        .get(&surface_id)
-                        .and_then(|id| self.text_input_ids.get(id))
-                {
-                    tracing::info!("focus surface found id {:?}", text_input_id);
-                    return widget::text_input::focus(text_input_id.clone());
+                if prompt_was_none && let Some(surface_id) = self.active_surface_id_opt {
+                    return cosmic::iced::Task::perform(
+                        async {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        },
+                        move |_| Message::Focus(surface_id),
+                    )
+                    .map(|m| cosmic::Action::App(m.into()));
                 }
             }
             Message::SessionLockEvent(lock_event) => {
@@ -341,9 +538,28 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             }
             Message::Rectangle(u) => match u {
                 RectangleUpdate::Rectangle(r) => {
-                    self.rectangles.insert(r.0, r.1);
-
-                    return self.blur_rects(r.0.0);
+                    let rounded_r = iced::Rectangle {
+                        x: r.1.x.round(),
+                        y: r.1.y.round(),
+                        width: r.1.width.round(),
+                        height: r.1.height.round(),
+                    };
+                    let old_rect = self.rectangles.insert(r.0, rounded_r);
+                    // Only re-send blur if the integer-pixel bounding box actually
+                    // changed. Sub-pixel jitter from iced layout engine is ignored,
+                    // preventing an avalanche of Wayland IPC calls on static screens.
+                    let changed = match old_rect {
+                        Some(old) => {
+                            (old.x - rounded_r.x).abs() >= 1.0
+                                || (old.y - rounded_r.y).abs() >= 1.0
+                                || (old.width - rounded_r.width).abs() >= 1.0
+                                || (old.height - rounded_r.height).abs() >= 1.0
+                        }
+                        None => true, // First time seeing this rectangle
+                    };
+                    if changed {
+                        return self.blur_rects(r.0.0);
+                    }
                 }
                 RectangleUpdate::Init(tracker) => {
                     self.rectangle_tracker.replace(tracker);
@@ -356,9 +572,14 @@ impl<M: From<Message> + Send + 'static> Common<M> {
     pub(crate) fn dropdown_blur_rects(&mut self, enable: bool) -> Task<M> {
         let mut ids = HashSet::new();
         for r in self.rectangles.keys() {
-            ids.insert(r.0);
+            if r.1 == 1 {
+                ids.insert(r.0);
+            }
         }
         self.include_menu = enable;
+        if !enable {
+            self.last_blur_rects.clear();
+        }
         Task::batch(
             ids.into_iter()
                 .map(|i| self.blur_rects(i))
@@ -367,41 +588,57 @@ impl<M: From<Message> + Send + 'static> Common<M> {
     }
 
     pub fn blur_rects(&mut self, id: SurfaceId) -> Task<M> {
-        if let Some(output) = self.subsurface_outputs.get(&id) {
-            if let Some(rect) = self.subsurface_rects.get(output) {
-                let x = rect.x;
-                let y = rect.y;
-                if let Some(rect) = self.rectangles.get(&(id, false)) {
-                    let mut offset_rect = *rect;
-                    offset_rect.x += x;
-                    offset_rect.y += y;
-                    let rad = CornerRadius {
-                        top_left: 16,
-                        top_right: 16,
-                        bottom_left: 16,
-                        bottom_right: 16,
-                    };
-                    let mut rects = rounded_rect_strips(offset_rect, rad);
-                    if let Some(other_rect) = self.rectangles.get(&(id, true))
-                        && self.include_menu
-                    {
-                        let mut other = *other_rect;
-                        other.x += x;
-                        other.y += y;
-                        let rad = CornerRadius {
-                            top_left: 8,
-                            top_right: 8,
-                            bottom_left: 8,
-                            bottom_right: 8,
-                        };
-                        rects.append(&mut rounded_rect_strips(other, rad));
+        if !cosmic::theme::active().cosmic().frosted_system_interface || !self.use_sharp_wallpaper {
+            if let Some(last) = self.last_blur_rects.get(&id)
+                && last.is_empty()
+            {
+                return Task::none();
+            }
+            self.last_blur_rects.insert(id, Vec::new());
+            return blur(id, None).discard();
+        }
+        if let Some(output) = self.subsurface_outputs.get(&id)
+            && let Some(rect) = self.subsurface_rects.get(output)
+        {
+            let x = rect.x;
+            let y = rect.y;
+            let mut rects = Vec::new();
+            for (&(surf_id, tag), r) in self.rectangles.iter() {
+                if surf_id == id {
+                    if tag == 1 && !self.include_menu {
+                        continue;
                     }
-
-                    return blur(id, Some(rects)).discard();
-                } else {
-                    tracing::error!("no rectangle for surface {id:?}");
+                    rects.push(iced::Rectangle {
+                        x: (r.x + x).round(),
+                        y: (r.y + y).round(),
+                        width: r.width.round(),
+                        height: r.height.round(),
+                    });
                 }
             }
+            if rects.is_empty() {
+                if let Some(last) = self.last_blur_rects.get(&id)
+                    && last.is_empty()
+                {
+                    return Task::none();
+                }
+                self.last_blur_rects.insert(id, Vec::new());
+                return blur(id, None).discard();
+            }
+            // Sort deterministically by spatial coordinates so arbitrary HashMap
+            // iteration order does not cause false negatives in the cache check.
+            rects.sort_by(|a, b| {
+                a.y.partial_cmp(&b.y)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
+            });
+            if let Some(last) = self.last_blur_rects.get(&id)
+                && last == &rects
+            {
+                return Task::none();
+            }
+            self.last_blur_rects.insert(id, rects.clone());
+            return blur(id, Some(rects)).discard();
         }
         Task::none()
     }

@@ -1272,6 +1272,7 @@ dependencies = [
  "logind-zbus",
  "pam-client",
  "pwd",
+ "rayon",
  "ron 0.12.2",
  "rust-embed",
  "shlex 1.3.0",

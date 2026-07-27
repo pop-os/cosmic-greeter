@@ -45,8 +45,10 @@ pub fn subscription() -> Subscription<Message> {
                 let (tx, mut rx) = mpsc::channel::<greetd_ipc::Request>(1);
                 _ = sender.send(Message::GreetdChannel(tx)).await;
 
-                let socket_path =
-                    std::env::var_os("GREETD_SOCK").expect("GREETD_SOCK environment not set");
+                let Some(socket_path) = std::env::var_os("GREETD_SOCK") else {
+                    _ = sender.send(Message::Socket(SocketState::NotSet)).await;
+                    return futures_util::future::pending().await;
+                };
 
                 let mut interval = tokio::time::interval(Duration::from_secs(1));
 
@@ -153,7 +155,11 @@ pub fn subscription() -> Subscription<Message> {
                                             _ = sender.send(Message::Login).await;
                                         }
                                         greetd_ipc::Request::StartSession { .. } => {
-                                            // Session has been started, exit greeter
+                                            // Session has been started, wait for compositor crossfade, then exit greeter
+                                            tracing::info!(
+                                                "StartSession succeeded. Waiting 3 seconds for desktop crossfade..."
+                                            );
+                                            tokio::time::sleep(Duration::from_millis(3000)).await;
                                             _ = sender.send(Message::Exit).await;
                                         }
                                         greetd_ipc::Request::CancelSession => {

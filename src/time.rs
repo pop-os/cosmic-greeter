@@ -1,5 +1,6 @@
 use anyhow::bail;
 use async_fn_stream::StreamEmitter;
+use cosmic::iced::{Alignment, Color};
 use cosmic::widget::{column, text};
 use cosmic::{Element, Task, style};
 use futures_util::StreamExt;
@@ -94,16 +95,62 @@ impl Time {
             .to_string()
     }
 
+    #[allow(dead_code)]
     pub fn date_time_widget<'a, M: 'a>(&self, military_time: bool) -> Element<'a, M> {
         Element::from(
             column::with_capacity(2)
-                .padding(16.)
-                .spacing(12.0)
-                .push(text::title2(self.format_date()).class(style::Text::Accent))
+                .padding(16.0)
+                .spacing(4.0)
+                .align_x(Alignment::Center)
+                .push(
+                    text(self.format_date())
+                        .size(24.0)
+                        .class(style::Text::Custom(|_theme| {
+                            cosmic::iced::widget::text::Style {
+                                color: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.88)),
+                                ..Default::default()
+                            }
+                        })),
+                )
                 .push(
                     text(self.format_time(military_time))
-                        .size(if military_time { 112. } else { 75. })
-                        .class(style::Text::Accent),
+                        .size(if military_time { 110. } else { 88. })
+                        .class(style::Text::Custom(|_theme| {
+                            cosmic::iced::widget::text::Style {
+                                color: Some(Color::WHITE),
+                                ..Default::default()
+                            }
+                        })),
+                ),
+        )
+    }
+
+    /// Lock screen clock widget: small date above, very large thin-weight clock below.
+    /// Designed to be the primary focal point of the lock screen.
+    pub fn lock_screen_widget<'a, M: 'a>(&self, military_time: bool) -> Element<'a, M> {
+        Element::from(
+            column::with_capacity(2)
+                .spacing(2.0)
+                .align_x(Alignment::Center)
+                .push(
+                    text(self.format_date())
+                        .size(18.0)
+                        .class(style::Text::Custom(|_theme| {
+                            cosmic::iced::widget::text::Style {
+                                color: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.7)),
+                                ..Default::default()
+                            }
+                        })),
+                )
+                .push(
+                    text(self.format_time(military_time))
+                        .size(if military_time { 130. } else { 110. })
+                        .class(style::Text::Custom(|_theme| {
+                            cosmic::iced::widget::text::Style {
+                                color: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.92)),
+                                ..Default::default()
+                            }
+                        })),
                 ),
         )
     }

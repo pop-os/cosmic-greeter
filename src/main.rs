@@ -9,9 +9,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let raw_args = RawArgs::from_args();
     let mut cursor = raw_args.cursor();
 
+    let mut test_window = false;
+
     // Parse the arguments
     while let Some(arg) = raw_args.next_os(&mut cursor) {
         match arg.to_str() {
+            Some("--test-window") => {
+                test_window = true;
+            }
             Some("--help") | Some("-h") => {
                 print_help(env!("CARGO_PKG_VERSION"), env!("VERGEN_GIT_SHA"));
                 return Ok(());
@@ -30,8 +35,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match pwd::Passwd::current_user() {
         Some(current_user) => match current_user.name.as_str() {
-            "cosmic-greeter" => greeter::main(),
-            _ => locker::main(current_user),
+            "cosmic-greeter" => greeter::main(test_window),
+            _ => locker::main(current_user, test_window),
         },
         _ => Err("failed to determine current user".into()),
     }

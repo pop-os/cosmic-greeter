@@ -42,7 +42,7 @@ fn lockfile_opt() -> Option<PathBuf> {
     Some(runtime_dir.join(format!("cosmic-greeter-{}.lock", session_id)))
 }
 
-pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
+pub fn main(user: pwd::Passwd, test_window: bool) -> Result<(), Box<dyn std::error::Error>> {
     color_eyre::install().wrap_err("failed to install color_eyre error handler")?;
 
     let trace = tracing_subscriber::registry();
@@ -82,13 +82,20 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     let flags = Flags {
         user_icon: user_data
             .icon_opt
-            .take()
-            .map(widget::image::Handle::from_bytes),
+            .as_deref()
+            .map(|bytes| common::circular_avatar_handle(bytes, 200)),
         user_data,
         lockfile_opt: lockfile_opt(),
+        test_window,
     };
 
-    let settings = Settings::default().no_main_window(true);
+    let settings = if test_window {
+        Settings::default()
+            .no_main_window(false)
+            .size(Size::new(1280.0, 800.0))
+    } else {
+        Settings::default().no_main_window(true)
+    };
 
     cosmic::app::run::<App>(settings, flags)?;
 
@@ -247,6 +254,7 @@ pub struct Flags {
     user_data: UserData,
     user_icon: Option<widget::image::Handle>,
     lockfile_opt: Option<PathBuf>,
+    pub test_window: bool,
 }
 
 ///TODO: this is custom code that should be better handled by libcosmic
@@ -270,6 +278,8 @@ pub enum Message {
     Submit(String),
     Surface(surface::Action),
     Suspend,
+    Shutdown,
+    Restart,
     TimeAppletConfig(TimeAppletConfig),
     Error(String),
     Lock,
@@ -315,320 +325,497 @@ pub struct App {
 
 impl App {
     fn menu(&self, surface_id: SurfaceId) -> Element<'_, Message> {
-        let window_width = self
-            .common
-            .window_size
-            .get(&surface_id)
-            .map(|s| s.width)
-            .unwrap_or(800.);
-        let menu_width = if window_width > 800. {
-            800.
-        } else {
-            window_width
-        };
-        let left_element = {
-            let military_time = self.flags.user_data.time_applet_config.military_time;
-            let date_time_column = self.common.time.date_time_widget(military_time);
+        let military_time = self.flags.user_data.time_applet_config.military_time;
 
-            let mut status_row = widget::row::with_capacity(2).padding(16.0).spacing(12.0);
-
-            if let Some(network_icon) = self.common.network_icon_opt.as_ref() {
-                status_row = status_row.push(network_icon.clone());
-            }
-
-            if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
-                status_row = status_row.push(
-                    iced::widget::row![
-                        power_icon.clone(),
-                        widget::text(format!("{:.0}%", power_percent)),
-                    ]
-                    .align_y(Alignment::Center),
-                );
-            }
-
-            //TODO: move code for custom dropdowns to libcosmic
-            let menu_checklist = |label, value, message| {
-                Element::from(
-                    widget::menu::menu_button(vec![
-                        if value {
-                            widget::icon::from_name("object-select-symbolic")
-                                .size(16)
-                                .icon()
-                                .width(Length::Fixed(16.0))
-                                .into()
-                        } else {
-                            widget::space::horizontal()
-                                .width(Length::Fixed(17.0))
-                                .into()
-                        },
-                        widget::space::horizontal().width(Length::Fixed(8.0)).into(),
-                        widget::text(label)
-                            .align_x(iced::alignment::Horizontal::Left)
-                            .into(),
-                    ])
-                    .on_press(message),
-                )
-            };
-            let dropdown_menu = |items: Vec<_>| {
-                let item_cnt = items.len();
-
-                let items = widget::menu::menu_column::MenuColumn::with_children(items);
-                let items = if item_cnt > 7 {
-                    Element::from(
-                        widget::scrollable(items)
-                            .height(Length::Fixed(DEFAULT_MENU_ITEM_HEIGHT * 7.)),
-                    )
-                } else {
-                    Element::from(items)
-                };
-
-                let menu: widget::Container<'_, Message, cosmic::prelude::Theme> =
-                    widget::container(items)
-                        .padding(1)
-                        //TODO: move style to libcosmic
-                        .class(theme::Container::custom(|theme| {
-                            let cosmic = theme.cosmic();
-                            let component = &cosmic.background(theme.transparent).component;
-                            widget::container::Style {
-                                icon_color: Some(component.on.into()),
-                                text_color: Some(component.on.into()),
-                                background: Some(Background::Color(component.base.into())),
-                                border: Border {
-                                    radius: 8.0.into(),
-                                    width: 1.0,
-                                    color: component.divider.into(),
-                                },
-                                ..Default::default()
-                            }
-                        }))
-                        .width(Length::Fixed(240.0));
-
-                if let Some(t) = self.common.rectangle_tracker.as_ref() {
-                    Element::from(t.container((surface_id, true), menu))
-                } else {
-                    menu.into()
+        // ── Shared glass material style for UI containers ──
+        let glass_panel_style = |radius: f32| {
+            cosmic::theme::Container::Custom(Box::new(move |_theme: &cosmic::Theme| {
+                widget::container::Style {
+                    text_color: Some(iced::Color::WHITE),
+                    icon_color: Some(iced::Color::WHITE),
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.04, 0.06, 0.10, 0.50,
+                    ))),
+                    border: iced::Border {
+                        radius: radius.into(),
+                        width: 1.0,
+                        color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.20),
+                    },
+                    shadow: iced::Shadow::default(),
+                    ..Default::default()
                 }
-            };
+            }))
+        };
 
-            let mut input_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
+        // ── Transparent button style for action dock icons ──
+        let action_btn = |icon_name: &'static str, msg: Message| {
+            widget::button::custom(widget::icon::from_name(icon_name).size(20))
+                .padding([10.0, 14.0])
+                .class(cosmic::theme::Button::Custom {
+                    active: Box::new(|_selected, _theme| {
+                        let mut s = cosmic::widget::button::Style::new();
+                        s.icon_color = Some(iced::Color::WHITE);
+                        s.text_color = Some(iced::Color::WHITE);
+                        s
+                    }),
+                    hovered: Box::new(|_selected, _theme| {
+                        let mut s = cosmic::widget::button::Style::new();
+                        s.icon_color = Some(iced::Color::WHITE);
+                        s.text_color = Some(iced::Color::WHITE);
+                        s.background = Some(iced::Background::Color(iced::Color::from_rgba(
+                            1.0, 1.0, 1.0, 0.15,
+                        )));
+                        s.border_radius = 100.0.into();
+                        s
+                    }),
+                    pressed: Box::new(|_selected, _theme| {
+                        let mut s = cosmic::widget::button::Style::new();
+                        s.icon_color = Some(iced::Color::WHITE);
+                        s.text_color = Some(iced::Color::WHITE);
+                        s.background = Some(iced::Background::Color(iced::Color::from_rgba(
+                            1.0, 1.0, 1.0, 0.10,
+                        )));
+                        s.border_radius = 100.0.into();
+                        s
+                    }),
+                    disabled: Box::new(|_theme| {
+                        let mut s = cosmic::widget::button::Style::new();
+                        s.icon_color = Some(iced::Color::WHITE);
+                        s.text_color = Some(iced::Color::WHITE);
+                        s
+                    }),
+                })
+                .on_press(msg)
+        };
+
+        // ── Dropdown menu support (keyboard layout popover) ──
+        let menu_checklist = |label, value, message| {
+            Element::from(
+                widget::menu::menu_button(vec![
+                    if value {
+                        widget::icon::from_name("object-select-symbolic")
+                            .size(16)
+                            .icon()
+                            .width(Length::Fixed(16.0))
+                            .into()
+                    } else {
+                        widget::space::horizontal()
+                            .width(Length::Fixed(17.0))
+                            .into()
+                    },
+                    widget::space::horizontal().width(Length::Fixed(8.0)).into(),
+                    widget::text(label)
+                        .align_x(iced::alignment::Horizontal::Left)
+                        .into(),
+                ])
+                .on_press(message),
             )
-            .position(widget::popover::Position::Bottom);
-            if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
-                let mut items = Vec::with_capacity(self.common.active_layouts.len());
-                for (i, layout) in self.common.active_layouts.iter().enumerate() {
-                    items.push(menu_checklist(
-                        &layout.description,
-                        i == 0,
-                        Message::KeyboardLayout(i),
-                    ));
-                }
-                input_button = input_button.popup(dropdown_menu(items));
-            }
-
-            //TODO: implement these buttons
-            let button_row = iced::widget::row![
-                /*TODO: greeter accessibility options
-                widget::button::custom(widget::icon::from_name(
-                    "applications-accessibility-symbolic"
-                ))
-                .padding(12.0)
-                .on_press(Message::None),
-                */
-                widget::tooltip(
-                    input_button,
-                    widget::text(fl!("keyboard-layout")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Suspend),
-                    widget::text(fl!("suspend")),
-                    widget::tooltip::Position::Top
-                ),
-            ]
-            .padding([16.0, 0.0, 0.0, 0.0])
-            .spacing(8.0);
-
-            widget::container(iced::widget::column![
-                date_time_column,
-                widget::divider::horizontal::default().width(Length::Fixed(menu_width / 2. - 16.)),
-                status_row,
-                widget::divider::horizontal::default().width(Length::Fixed(menu_width / 2. - 16.)),
-                button_row,
-            ])
-            .align_x(Alignment::Start)
         };
+        let dropdown_menu = |items: Vec<_>| -> Element<'_, Message> {
+            let item_cnt = items.len();
+            let items = widget::menu::menu_column::MenuColumn::with_children(items);
+            let items = if item_cnt > 7 {
+                Element::from(
+                    widget::scrollable(items).height(Length::Fixed(DEFAULT_MENU_ITEM_HEIGHT * 7.)),
+                )
+            } else {
+                Element::from(items)
+            };
+            let menu: widget::Container<'_, Message, cosmic::prelude::Theme> =
+                widget::container(items)
+                    .padding(1)
+                    .class(theme::Container::custom(|theme| {
+                        let cosmic = theme.cosmic();
+                        let component = &cosmic.background(theme.transparent).component;
+                        widget::container::Style {
+                            icon_color: Some(component.on.into()),
+                            text_color: Some(component.on.into()),
+                            background: Some(Background::Color(component.base.into())),
+                            border: Border {
+                                radius: 8.0.into(),
+                                width: 1.0,
+                                color: component.divider.into(),
+                            },
+                            ..Default::default()
+                        }
+                    }))
+                    .width(Length::Fixed(240.0));
 
-        let right_element = {
-            let mut column = widget::column::with_capacity(5)
-                .spacing(12.0)
-                .max_width(280.0);
-
-            let military_time = self.flags.user_data.time_applet_config.military_time;
-            let space_height = match military_time {
-                true => 63.0,
-                false => 10.0,
+            let menu = if let Some(t) = self.common.rectangle_tracker.as_ref() {
+                Element::from(t.container((surface_id, 1), menu))
+            } else {
+                menu.into()
             };
 
-            // Add top spacing for better visual appearance
-            // Bottom of the password text input field should align with bottom of time widget
-            column = column.push(widget::space::vertical().height(Length::Fixed(space_height)));
+            // Hack to force the popover to flip UPWARDS:
+            // We give it a large fixed height that overflows the bottom of the screen,
+            // and align the actual menu to the bottom of this invisible block!
+            widget::container(menu)
+                .height(Length::Fixed(400.0))
+                .align_y(iced::alignment::Vertical::Bottom)
+                .into()
+        };
 
-            // Display user icon or empty transparent box
-            if let Some(icon_handle) = &self.flags.user_icon {
-                column = column.push(
-                    widget::container(
-                        widget::image(icon_handle)
-                            .width(Length::Fixed(78.0))
-                            .height(Length::Fixed(78.0))
-                            .content_fit(iced::ContentFit::Fill),
-                    )
-                    .padding(0.0)
-                    .width(Length::Fill)
-                    .height(Length::Fixed(78.0))
-                    .align_x(Alignment::Center),
-                );
-            } else {
-                // Empty transparent box for users without icons
-                column = column.push(
-                    widget::container(widget::space::horizontal().width(Length::Fixed(78.0)))
-                        .padding(0.0)
-                        .width(Length::Fill)
-                        .height(Length::Fixed(78.0))
-                        .align_x(Alignment::Center),
-                );
-            }
+        // ════════════════════════════════════════════════════
+        // ZONE 1: TOP — Status icons + Date + Large Clock
+        // ════════════════════════════════════════════════════
 
-            column = column.push(
-                widget::container(widget::text::title4(&self.flags.user_data.full_name))
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
+        let mut status_row = widget::row::with_capacity(3).spacing(12.0);
+        if let Some(network_icon) = self.common.network_icon_opt.as_ref() {
+            status_row = status_row.push(network_icon.clone());
+        }
+        if let Some((power_icon, power_percent)) = &self.common.power_info_opt {
+            status_row = status_row.push(
+                iced::widget::row![
+                    power_icon.clone(),
+                    widget::text(format!("{:.0}%", power_percent))
+                        .size(13.0)
+                        .class(theme::Text::Color(iced::Color::from_rgba(
+                            1.0, 1.0, 1.0, 0.85
+                        ))),
+                ]
+                .align_y(Alignment::Center)
+                .spacing(4.0),
             );
+        }
 
-            if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
-                match value_opt {
-                    Some(value) => {
-                        let text_input_id = self
-                            .common
-                            .surface_names
-                            .get(&surface_id)
-                            .and_then(|id| self.common.text_input_ids.get(id))
-                            .cloned()
-                            .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
+        let status_pill = widget::container(status_row)
+            .padding([8.0, 16.0])
+            .align_y(Alignment::Center)
+            .class(cosmic::theme::Container::Custom(Box::new(
+                |_theme: &cosmic::Theme| widget::container::Style {
+                    text_color: Some(iced::Color::WHITE),
+                    icon_color: Some(iced::Color::WHITE),
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.04, 0.06, 0.10, 0.50,
+                    ))),
+                    border: iced::Border {
+                        radius: 100.0.into(),
+                        width: 1.0,
+                        color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.20),
+                    },
+                    shadow: iced::Shadow::default(),
+                    ..Default::default()
+                },
+            )));
 
-                        let mut text_input = widget::secure_input(
-                            prompt.clone(),
-                            value.as_str(),
-                            Some(
-                                common::Message::Prompt(
-                                    prompt.clone(),
-                                    !*secret,
-                                    Some(value.clone()),
-                                )
-                                .into(),
-                            ),
-                            *secret,
-                        )
-                        .id(text_input_id);
-
-                        // Don't allow input when authenticating
-                        if !self.authenticating {
-                            text_input = text_input
-                                .on_input(|input| {
-                                    common::Message::Prompt(prompt.clone(), *secret, Some(input))
-                                        .into()
-                                })
-                                .on_submit(Message::Submit);
-                        }
-
-                        if *secret {
-                            text_input = text_input.password()
-                        }
-
-                        column = column.push(text_input);
-
-                        if self.common.caps_lock && !self.authenticating {
-                            column = column.push(widget::text(fl!("caps-lock")));
-                        } else if self.common.error_opt.is_none() {
-                            column = column.push(widget::text(""));
-                        }
-                    }
-                    None => {
-                        column = column.push(widget::text(prompt));
-                    }
-                }
-            }
-
-            // Show either authenticating message or error message in the same location
-            if self.authenticating {
-                column = column.push(
-                    widget::container(
-                        widget::row::with_capacity(2)
-                            .spacing(8.0)
-                            .align_y(Alignment::Center)
-                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
-                            .push(widget::text(fl!("authenticating"))),
-                    )
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
-                );
-            } else if let Some(error) = &self.common.error_opt {
-                column = column.push(
-                    widget::text(error)
-                        .class(theme::Text::Color(iced::Color::from_rgb(1.0, 0.0, 0.0))),
-                );
-                if !self.common.caps_lock {
-                    column = column.push(widget::text(""));
-                }
-            } else {
-                column = column.push(widget::text(""));
-            }
-
-            widget::container(column)
-                .align_x(Alignment::Center)
-                .width(Length::Fill)
-        };
-        let menu = widget::layer_container(
-            iced::widget::row![left_element, right_element].align_y(Alignment::Start),
-        )
-        .layer(cosmic::cosmic_theme::Layer::Background)
-        .padding(16)
-        .class(cosmic::theme::Container::Custom(Box::new(
-            |theme: &cosmic::Theme| {
-                // Use background appearance as the base
-                let mut appearance =
-                    widget::container::Catalog::style(theme, &cosmic::theme::Container::Background);
-                let c: iced::Color = theme.cosmic().background(theme.transparent).base.into();
-                appearance.background = Some(iced::Background::Color(c));
-                appearance.border = iced::Border::default().rounded(16.0);
-                appearance
-            },
-        )))
-        .width(Length::Fill)
-        .height(Length::Shrink);
-        let menu = if let Some(t) = self.common.rectangle_tracker.as_ref() {
-            Element::from(t.container((surface_id, false), menu))
+        let tracked_status_pill = if let Some(t) = self.common.rectangle_tracker.as_ref() {
+            Element::from(t.container((surface_id, 3), status_pill))
         } else {
-            menu.into()
+            status_pill.into()
         };
-        widget::container(widget::column::with_children(vec![
-            widget::space::vertical()
-                .height(Length::FillPortion(1))
+
+        let top_bar = widget::container(
+            widget::row![
+                widget::space::horizontal().width(Length::Fill),
+                tracked_status_pill
+            ]
+            .width(Length::Fill)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding([16.0, 24.0]);
+
+        // Large lock screen clock (date above, time below)
+        let clock_widget = self.common.time.lock_screen_widget(military_time);
+        let clock_section = widget::container(clock_widget)
+            .width(Length::Fill)
+            .align_x(Alignment::Center);
+
+        // ════════════════════════════════════════════════════
+        // ZONE 3: BOTTOM — Login Panel + Action Dock
+        // ════════════════════════════════════════════════════
+
+        // ── Login Panel: avatar + name + password + controls ──
+        let mut login_col = widget::column::with_capacity(8)
+            .spacing(10.0)
+            .align_x(Alignment::Center)
+            .max_width(360.0);
+
+        // Avatar
+        if let Some(icon_handle) = &self.flags.user_icon {
+            login_col = login_col.push(
+                widget::container(
+                    widget::image(icon_handle)
+                        .width(Length::Fixed(80.0))
+                        .height(Length::Fixed(80.0))
+                        .content_fit(iced::ContentFit::Cover)
+                        .border_radius(40.0),
+                )
+                .padding(2.0)
+                .width(Length::Fixed(84.0))
+                .height(Length::Fixed(84.0))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .class(cosmic::theme::Container::Custom(Box::new(
+                    |_theme: &cosmic::Theme| widget::container::Style {
+                        border: iced::Border {
+                            radius: 42.0.into(),
+                            width: 2.0,
+                            color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.25),
+                        },
+                        ..Default::default()
+                    },
+                ))),
+            );
+        }
+
+        // Username
+        login_col = login_col.push(
+            widget::text::title3(&self.flags.user_data.full_name)
+                .class(theme::Text::Color(iced::Color::WHITE)),
+        );
+
+        // Password field
+        if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
+            match value_opt {
+                Some(value) => {
+                    let text_input_id = self
+                        .common
+                        .surface_names
+                        .get(&surface_id)
+                        .and_then(|id| self.common.text_input_ids.get(id))
+                        .cloned()
+                        .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
+
+                    let transparent_input_appearance =
+                        |_theme: &cosmic::Theme| -> cosmic::widget::text_input::Appearance {
+                            cosmic::widget::text_input::Appearance {
+                                background: iced::Background::Color(iced::Color::TRANSPARENT),
+                                border_radius: 0.0.into(),
+                                border_offset: None,
+                                border_width: 0.0,
+                                border_color: iced::Color::TRANSPARENT,
+                                label_color: iced::Color::WHITE,
+                                placeholder_color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.5),
+                                selected_text_color: iced::Color::WHITE,
+                                icon_color: Some(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.8)),
+                                text_color: Some(iced::Color::WHITE),
+                                selected_fill: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.3),
+                            }
+                        };
+
+                    let mut text_input = widget::secure_input(
+                        prompt.clone(),
+                        value.as_str(),
+                        Some(
+                            common::Message::Prompt(prompt.clone(), !*secret, Some(value.clone()))
+                                .into(),
+                        ),
+                        *secret,
+                    )
+                    .id(text_input_id)
+                    .always_active()
+                    .style(cosmic::theme::TextInput::Custom {
+                        active: Box::new(transparent_input_appearance),
+                        hovered: Box::new(transparent_input_appearance),
+                        focused: Box::new(transparent_input_appearance),
+                        error: Box::new(transparent_input_appearance),
+                        disabled: Box::new(transparent_input_appearance),
+                    });
+
+                    if !self.authenticating {
+                        text_input = text_input
+                            .on_input(|input| {
+                                common::Message::Prompt(prompt.clone(), *secret, Some(input)).into()
+                            })
+                            .on_submit(Message::Submit);
+                    }
+
+                    if *secret {
+                        text_input = text_input.password();
+                    }
+
+                    // Password container — pill shape with subtle glass
+                    let password_box = widget::container(text_input)
+                        .padding([8.0, 20.0])
+                        .width(Length::Fixed(300.0))
+                        .align_x(Alignment::Center)
+                        .clip(true)
+                        .class(cosmic::theme::Container::Custom(Box::new(
+                            |_theme: &cosmic::Theme| widget::container::Style {
+                                text_color: Some(iced::Color::WHITE),
+                                icon_color: Some(iced::Color::WHITE),
+                                background: Some(iced::Background::Color(iced::Color::from_rgba(
+                                    0.04, 0.06, 0.10, 0.55,
+                                ))),
+                                border: iced::Border {
+                                    radius: 100.0.into(),
+                                    width: 1.0,
+                                    color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.22),
+                                },
+                                shadow: iced::Shadow::default(),
+                                ..Default::default()
+                            },
+                        )));
+
+                    let tracked_password_box =
+                        if let Some(t) = self.common.rectangle_tracker.as_ref() {
+                            Element::from(t.container((surface_id, 4), password_box))
+                        } else {
+                            password_box.into()
+                        };
+
+                    login_col = login_col.push(tracked_password_box);
+
+                    // Caps lock warning
+                    if self.common.caps_lock && !self.authenticating {
+                        login_col =
+                            login_col.push(widget::text(fl!("caps-lock")).size(13.0).class(
+                                theme::Text::Color(iced::Color::from_rgba(1.0, 0.85, 0.4, 0.9)),
+                            ));
+                    }
+                }
+                None => {
+                    login_col = login_col
+                        .push(widget::text(prompt).class(theme::Text::Color(iced::Color::WHITE)));
+                }
+            }
+        }
+
+        // Authenticating indicator
+        if self.authenticating {
+            login_col = login_col.push(
+                widget::container(
+                    widget::row::with_capacity(2)
+                        .spacing(8.0)
+                        .align_y(Alignment::Center)
+                        .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
+                        .push(
+                            widget::text(fl!("authenticating"))
+                                .class(theme::Text::Color(iced::Color::WHITE)),
+                        ),
+                )
+                .width(Length::Fill)
+                .align_x(Alignment::Center),
+            );
+        } else if let Some(error) = &self.common.error_opt {
+            login_col = login_col.push(
+                widget::text(error)
+                    .size(14.0)
+                    .class(theme::Text::Color(iced::Color::from_rgb(1.0, 0.35, 0.35))),
+            );
+        }
+
+
+        let active_layout_str = self
+            .common
+            .active_layouts
+            .first()
+            .map(|l| l.description.as_str())
+            .unwrap_or("EN (US)");
+
+        let mut input_popover = widget::popover(action_btn(
+            "input-keyboard-symbolic",
+            Message::DropdownToggle(Dropdown::Keyboard),
+        ))
+        .position(widget::popover::Position::Point(cosmic::iced::Point::new(
+            0.0, -12.0,
+        )));
+
+        if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
+            let mut items = Vec::with_capacity(self.common.active_layouts.len());
+            for (i, layout) in self.common.active_layouts.iter().enumerate() {
+                items.push(menu_checklist(
+                    &layout.description,
+                    i == 0,
+                    Message::KeyboardLayout(i),
+                ));
+            }
+            input_popover = input_popover.popup(dropdown_menu(items));
+        }
+
+        let input_button = widget::tooltip(
+            input_popover,
+            widget::text(active_layout_str),
+            widget::tooltip::Position::Top,
+        );
+
+        // User profile area floating directly over the wallpaper (no outer container)
+        let user_profile_area = widget::container(login_col)
+            .padding([12.0, 16.0])
+            .align_x(Alignment::Center);
+
+        // ── Action Dock: Shutdown / Restart / Suspend / Accessibility / Switch User / Keyboard Layout ──
+        let dock_divider = || {
+            widget::container(widget::space::vertical().height(Length::Fixed(20.0))).class(
+                cosmic::theme::Container::Custom(Box::new(|_theme: &cosmic::Theme| {
+                    widget::container::Style {
+                        border: iced::Border {
+                            radius: 0.0.into(),
+                            width: 1.0,
+                            color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.18),
+                        },
+                        ..Default::default()
+                    }
+                })),
+            )
+        };
+
+        let dock_row = iced::widget::row![
+            widget::tooltip(
+                action_btn("system-shutdown-symbolic", Message::Shutdown),
+                widget::text(fl!("shutdown")),
+                widget::tooltip::Position::Top
+            ),
+            dock_divider(),
+            widget::tooltip(
+                action_btn("system-reboot-symbolic", Message::Restart),
+                widget::text(fl!("restart")),
+                widget::tooltip::Position::Top
+            ),
+            dock_divider(),
+            widget::tooltip(
+                action_btn("system-suspend-symbolic", Message::Suspend),
+                widget::text(fl!("suspend")),
+                widget::tooltip::Position::Top
+            ),
+            dock_divider(),
+            input_button,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4.0);
+
+        let action_dock = widget::container(dock_row)
+            .padding([8.0, 16.0])
+            .align_x(Alignment::Center)
+            .class(glass_panel_style(100.0));
+
+        let tracked_action_dock = if let Some(t) = self.common.rectangle_tracker.as_ref() {
+            Element::from(t.container((surface_id, 2), action_dock))
+        } else {
+            action_dock.into()
+        };
+
+        // ════════════════════════════════════════════════════
+        // FULL LAYOUT ASSEMBLY
+        // ════════════════════════════════════════════════════
+
+        let full_layout = widget::column::with_children(vec![
+            // Zone 1: Top — status bar + clock
+            top_bar.into(),
+            clock_section.into(),
+            // Zone 2: Middle — empty spacer (wallpaper hero)
+            widget::space::vertical().height(Length::Fill).into(),
+            // Zone 3: Bottom — floating user profile + action dock
+            user_profile_area.into(),
+            widget::space::vertical().height(Length::Fixed(16.0)).into(),
+            widget::container(tracked_action_dock)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
                 .into(),
-            menu,
-            widget::space::vertical()
-                .height(Length::FillPortion(4))
-                .into(),
-        ]))
+            widget::space::vertical().height(Length::Fixed(24.0)).into(),
+        ])
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(Alignment::Center)
-        .class(cosmic::theme::Container::Transparent)
-        .into()
+        .align_x(Alignment::Center);
+
+        let menu = widget::container(full_layout)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .class(cosmic::theme::Container::Transparent);
+
+        menu.into()
     }
 }
 
@@ -657,7 +844,7 @@ impl cosmic::Application for App {
     /// Creates the application, and optionally emits command on initialize.
     fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         core.set_app_type(cosmic::core::AppType::System);
-        let (mut common, common_task) = Common::init(core);
+        let (mut common, common_task) = Common::init(core, false);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
         }));
@@ -669,6 +856,7 @@ impl cosmic::Application for App {
             None => false,
         };
 
+        let is_test_window = flags.test_window;
         let mut app = App {
             common,
             flags,
@@ -678,6 +866,87 @@ impl cosmic::Application for App {
             value_tx_opt: None,
             authenticating: false,
         };
+
+        if is_test_window {
+            tracing::info!("running in test window mode");
+            let _username = app.flags.user_data.name.clone();
+            let (locked_task, locked_handle) = cosmic::task::stream(cosmic::iced::stream::channel(
+                16,
+                |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
+                    let heartbeat_future = {
+                        let mut output = msg_tx.clone();
+                        async move {
+                            let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+                            loop {
+                                output
+                                    .send(cosmic::Action::App(Message::None))
+                                    .await
+                                    .unwrap();
+
+                                interval.tick().await;
+                            }
+                        }
+                    };
+
+                    let pam_future = async {
+                        loop {
+                            let (value_tx, mut value_rx) = mpsc::channel(16);
+                            msg_tx
+                                .send(cosmic::Action::App(Message::Channel(value_tx)))
+                                .await
+                                .unwrap();
+
+                            // In test window mode, prompt for password without requiring root/PAM privileges
+                            msg_tx
+                                .send(cosmic::Action::App(Message::Common(
+                                    common::Message::Prompt(
+                                        "Password (test mode: type 'password')".to_string(),
+                                        true,
+                                        Some(String::new()),
+                                    ),
+                                )))
+                                .await
+                                .unwrap();
+
+                            if let Some(input) = value_rx.recv().await {
+                                if input == "password" || input == "test" || input == "unlock" {
+                                    tracing::info!("test window successfully authenticated");
+                                    msg_tx
+                                        .send(cosmic::Action::App(Message::Unlock))
+                                        .await
+                                        .unwrap();
+                                    break;
+                                } else {
+                                    tracing::warn!("test window wrong password entered");
+                                    msg_tx
+                                        .send(cosmic::Action::App(Message::Error(
+                                            "Authentication failed (test mode: type 'password')"
+                                                .to_string(),
+                                        )))
+                                        .await
+                                        .unwrap();
+                                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                                }
+                            } else {
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                            }
+                        }
+                    };
+
+                    futures::pin_mut!(heartbeat_future);
+                    futures::pin_mut!(pam_future);
+                    futures::future::select(heartbeat_future, pam_future).await;
+                },
+            ))
+            .abortable();
+
+            app.state = State::Locked {
+                task_handle: locked_handle,
+            };
+
+            return (app, Task::batch([locked_task, common_task]));
+        }
 
         let task = if cfg!(feature = "logind") {
             if already_locked {
@@ -750,6 +1019,7 @@ impl cosmic::Application for App {
                                         .surface_names
                                         .insert(subsurface_id, output_name.clone());
                                     self.common.surface_images.remove(&surface_id);
+                                    self.common.last_blur_rects.remove(&surface_id);
                                     self.common.update_wallpapers(&self.flags.user_data);
                                     let text_input_id =
                                         widget::Id::new(format!("input-{output_name}",));
@@ -769,17 +1039,10 @@ impl cosmic::Application for App {
                         let unwrapped_size = size
                             .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
                             .unwrap_or((1920, 1080));
-                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
-                            (
-                                Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
-                                Size::new(800., unwrapped_size.1 as f32 - 32.),
-                            )
-                        } else {
-                            (
-                                Point::new(0., 32.),
-                                Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32 - 32.),
-                            )
-                        };
+                        let (loc, sub_size) = (
+                            Point::ORIGIN,
+                            Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
+                        );
                         self.common.window_size.insert(
                             surface_id,
                             Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
@@ -819,6 +1082,7 @@ impl cosmic::Application for App {
                         match self.common.surface_ids.remove(&output) {
                             Some(surface_id) => {
                                 self.common.surface_images.remove(&surface_id);
+                                self.common.last_blur_rects.remove(&surface_id);
                                 self.common.surface_names.remove(&surface_id);
                                 self.common.window_size.remove(&surface_id);
                                 if let Some(n) = self.common.surface_names.remove(&surface_id) {
@@ -842,17 +1106,16 @@ impl cosmic::Application for App {
                         let unwrapped_size = size
                             .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
                             .unwrap_or((1920, 1080));
-                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
-                            (
-                                Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
-                                Size::new(800., unwrapped_size.1 as f32 - 32.),
-                            )
-                        } else {
-                            (Point::ORIGIN, Size::new(1920., 1080.))
-                        };
+                        let (loc, sub_size) = (
+                            Point::ORIGIN,
+                            Size::new(unwrapped_size.0 as f32, unwrapped_size.1 as f32),
+                        );
                         self.common
                             .subsurface_rects
                             .insert(output.clone(), Rectangle::new(loc, sub_size));
+                        if let Some(surface_id) = self.common.surface_ids.get(&output) {
+                            self.common.last_blur_rects.remove(surface_id);
+                        }
 
                         tracing::info!("output {}: info update", output.id());
                     }
@@ -1024,6 +1287,7 @@ impl cosmic::Application for App {
                 self.flags.user_data.bg_state = bg_state;
                 self.flags.user_data.load_wallpapers_as_user();
                 self.common.surface_images.clear();
+                self.common.last_blur_rects.clear();
                 self.common.update_wallpapers(&self.flags.user_data);
             }
             Message::DropdownToggle(dropdown) => {
@@ -1074,6 +1338,23 @@ impl cosmic::Application for App {
                         cosmic::task::message(cosmic::Action::App(Message::Error(err.to_string())))
                     });
             }
+            Message::Shutdown => {
+                #[cfg(feature = "logind")]
+                return cosmic::Task::future(async move { crate::logind::power_off().await.err() })
+                    .and_then(|err| {
+                        tracing::error!("failed to power off: {:?}", err);
+                        cosmic::task::message(cosmic::Action::App(Message::Error(err.to_string())))
+                    });
+            }
+            Message::Restart => {
+                #[cfg(feature = "logind")]
+                return cosmic::Task::future(async move { crate::logind::reboot().await.err() })
+                    .and_then(|err| {
+                        tracing::error!("failed to reboot: {:?}", err);
+                        cosmic::task::message(cosmic::Action::App(Message::Error(err.to_string())))
+                    });
+            }
+
             Message::TimeAppletConfig(config) => {
                 self.flags.user_data.time_applet_config = config;
             }
@@ -1108,6 +1389,10 @@ impl cosmic::Application for App {
                 }
             },
             Message::Unlock => {
+                if self.flags.test_window {
+                    tracing::info!("test window mode: unlocked, exiting cleanly");
+                    process::exit(0);
+                }
                 match self.state {
                     State::Locked { .. } => {
                         tracing::info!("sessing unlocking");
@@ -1158,9 +1443,24 @@ impl cosmic::Application for App {
         Task::none()
     }
 
-    // Not used for layer surface window
     fn view(&self) -> Element<'_, Self::Message> {
-        unimplemented!()
+        if self.flags.test_window {
+            let img = self
+                .common
+                .surface_images
+                .values()
+                .next()
+                .unwrap_or(&self.common.fallback_background);
+            let bg: Element<'_, Self::Message> = widget::image(img)
+                .content_fit(iced::ContentFit::Cover)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+            let menu = self.menu(SurfaceId::RESERVED);
+            iced::widget::stack(vec![bg, menu]).into()
+        } else {
+            unimplemented!()
+        }
     }
 
     /// Creates a view after each update.
@@ -1213,7 +1513,7 @@ impl cosmic::Application for App {
         );
 
         #[cfg(feature = "logind")]
-        {
+        if !self.flags.test_window {
             subscriptions.push(crate::logind::subscription());
         }
 

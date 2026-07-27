@@ -85,6 +85,7 @@ image = { version = "0.25", default-features = false, features = [
     "webp",
     "hdr",
 ] }
+rayon = "1.10.0"
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
