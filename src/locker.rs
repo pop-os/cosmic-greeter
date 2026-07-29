@@ -79,6 +79,8 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     // We are already the user at this point
     user_data.load_config_as_user();
 
+    let logind_available = cfg!(feature = "logind") && crate::logind::is_available();
+
     let flags = Flags {
         user_icon: user_data
             .icon_opt
@@ -86,6 +88,7 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
             .map(widget::image::Handle::from_bytes),
         user_data,
         lockfile_opt: lockfile_opt(),
+        logind_available,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -247,6 +250,7 @@ pub struct Flags {
     user_data: UserData,
     user_icon: Option<widget::image::Handle>,
     lockfile_opt: Option<PathBuf>,
+    logind_available: bool,
 }
 
 ///TODO: this is custom code that should be better handled by libcosmic
@@ -429,7 +433,7 @@ impl App {
             }
 
             //TODO: implement these buttons
-            let button_row = iced::widget::row![
+            let mut button_row = iced::widget::row![
                 /*TODO: greeter accessibility options
                 widget::button::custom(widget::icon::from_name(
                     "applications-accessibility-symbolic"
@@ -442,16 +446,17 @@ impl App {
                     widget::text(fl!("keyboard-layout")),
                     widget::tooltip::Position::Top
                 ),
-                widget::tooltip(
+            ];
+            if cfg!(feature = "logind") && self.flags.logind_available {
+                button_row = button_row.push(widget::tooltip(
                     widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
                         .padding(12.0)
                         .on_press(Message::Suspend),
                     widget::text(fl!("suspend")),
-                    widget::tooltip::Position::Top
-                ),
-            ]
-            .padding([16.0, 0.0, 0.0, 0.0])
-            .spacing(8.0);
+                    widget::tooltip::Position::Top,
+                ));
+            }
+            let button_row = button_row.padding([16.0, 0.0, 0.0, 0.0]).spacing(8.0);
 
             widget::container(iced::widget::column![
                 date_time_column,
@@ -679,18 +684,18 @@ impl cosmic::Application for App {
             authenticating: false,
         };
 
-        let task = if cfg!(feature = "logind") {
+        let task = if cfg!(feature = "logind") && app.flags.logind_available {
             if already_locked {
                 // Recover previously locked state
                 tracing::info!("recovering previous locked state");
                 app.state = State::Locking;
                 lock()
             } else {
-                // When logind feature is used, wait for lock signal
+                // When logind is available, wait for lock signal
                 Task::none()
             }
         } else {
-            // When logind feature not used, lock immediately
+            // When logind is not available, lock immediately
             tracing::info!("locking immediately");
             app.state = State::Locking;
             lock()
@@ -1005,11 +1010,11 @@ impl cosmic::Application for App {
                         self.common.window_size.remove(surface_id);
                         commands.push(destroy_lock_surface(*surface_id));
                     }
-                    if cfg!(feature = "logind") {
+                    if cfg!(feature = "logind") && self.flags.logind_available {
                         return Task::batch(commands);
-                        // When using logind feature, stick around for more lock signals
+                        // When logind is available, stick around for more lock signals
                     } else {
-                        // When not using logind feature, exit immediately after unlocking
+                        // When logind is not available, exit immediately after unlocking
                         //TODO: cleaner method to exit?
                         process::exit(0);
                     }
@@ -1212,8 +1217,7 @@ impl cosmic::Application for App {
             }),
         );
 
-        #[cfg(feature = "logind")]
-        {
+        if cfg!(feature = "logind") && self.flags.logind_available {
             subscriptions.push(crate::logind::subscription());
         }
 

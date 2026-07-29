@@ -13,6 +13,27 @@ use zbus::Connection;
 use crate::common;
 use crate::locker::Message;
 
+/// Checks whether logind (either elogind or systemd-logind) is reachable on the system bus.
+pub fn is_available() -> bool {
+    fn ping() -> zbus::Result<()> {
+        let connection = zbus::blocking::Connection::system()?;
+        connection.call_method(
+            Some("org.freedesktop.login1"),
+            "/org/freedesktop/login1",
+            Some("org.freedesktop.DBus.Peer"),
+            "Ping",
+            &(),
+        )?;
+        Ok(())
+    }
+    if let Err(err) = ping() {
+        tracing::info!("logind not available: {}", err);
+        false
+    } else {
+        true
+    }
+}
+
 pub async fn power_off() -> zbus::Result<()> {
     let connection = Connection::system().await?;
     let manager = ManagerProxy::new(&connection).await?;
