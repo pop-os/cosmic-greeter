@@ -582,12 +582,31 @@ impl App {
                 }
             };
 
+
+            let layout_code = self
+                .common
+                .active_layouts
+                .get(self.common.current_keyboard_layout)
+                .map(|l| l.description.as_str())
+                .unwrap_or("")
+                .to_uppercase();
+            
+            let space_width = if !layout_code.is_empty() { 4.0 } else { 0.0 };
+            
+            let button_content = widget::row::with_children(vec![
+                widget::icon::from_name("input-keyboard-symbolic").into(),
+                widget::space::horizontal().width(space_width).into(),
+                widget::text(layout_code).into(),
+            ])
+            .align_y(Alignment::Center);
+            
             let mut input_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
-                    .padding(12.0)
+                widget::button::custom(button_content)
+                    .padding([10.0, 14.0])
                     .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
             )
             .position(widget::popover::Position::Bottom);
+
             if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
                 let mut items = Vec::with_capacity(self.common.active_layouts.len());
                 for (i, layout) in self.common.active_layouts.iter().enumerate() {
@@ -599,7 +618,6 @@ impl App {
                 }
                 input_button = input_button.popup(dropdown_menu(items));
             }
-
             let mut user_button = widget::popover(
                 widget::button::custom(widget::icon::from_name("system-users-symbolic"))
                     .padding(12.0)
