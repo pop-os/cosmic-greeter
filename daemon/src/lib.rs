@@ -72,6 +72,27 @@ pub struct UserData {
     pub kdl_output_lists: Vec<String>,
 }
 
+/// Read an untrusted wallpaper path: non-blocking open, regular files only, size-capped
+fn read_wallpaper(path: &Path) -> std::io::Result<Vec<u8>> {
+    const MAX_WALLPAPER_BYTES: u64 = 256 * 1024 * 1024;
+
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "wallpaper path is not a regular file",
+        ));
+    }
+
+    let mut bytes = Vec::new();
+    file.take(MAX_WALLPAPER_BYTES).read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 impl UserData {
     pub fn load_wallpapers_as_user(&mut self) {
         //TODO: reload changed background files?
@@ -89,7 +110,7 @@ impl UserData {
             if let BgSource::Path(path) = source
                 && !self.bg_path_data.contains_key(path)
             {
-                match fs::read(path) {
+                match read_wallpaper(path) {
                     Ok(bytes) => {
                         self.bg_path_data.insert(path.clone(), bytes);
                     }
