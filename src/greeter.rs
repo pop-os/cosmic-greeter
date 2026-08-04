@@ -1182,10 +1182,6 @@ impl cosmic::Application for App {
                     && matches!(common_message, common::Message::Prompt(_, _, Some(_)))
                 {
                     self.authenticating = false;
-                    if let Some(handle) = self.spinner_handle.take() {
-                        handle.abort();
-                    }
-                    self.spinner_rotation = 0.0;
                 }
 
                 // In greetd's IPC protocol, the greeter must acknowledge auth messages by
