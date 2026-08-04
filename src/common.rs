@@ -3,14 +3,21 @@ use cosmic::iced::core::SmolStr;
 use cosmic::iced::event::wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent};
 use cosmic::iced::event::{self};
 use cosmic::iced::keyboard::{Event as KeyEvent, Key, Modifiers};
+use cosmic::iced::platform_specific::shell::commands::blur::blur;
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
+use cosmic::iced::runtime::platform_specific::wayland::CornerRadius;
 use cosmic::iced::{self, Rectangle, Size, Subscription};
-use cosmic::widget;
-use cosmic_config::{ConfigSet, CosmicConfigEntry};
-use cosmic_greeter_daemon::{BgSource, CosmicCompConfig, UserData};
-use std::collections::HashMap;
+use cosmic::surface::corner_radius::rounded_rect_strips;
+use cosmic::widget::rectangle_tracker::{RectangleUpdate, rectangle_tracker_subscription};
+use cosmic::widget::{self, RectangleTracker};
+use cosmic_greeter_daemon::{BgSource, UserData};
+use cosmic_protocols::keyboard_layout::v1::client::zcosmic_keyboard_layout_v1::ZcosmicKeyboardLayoutV1;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use wayland_client::protocol::wl_output::WlOutput;
+use wayland_client::{Connection, Proxy};
+
+use crate::keyboard_layout_wayland;
 
 pub const DEFAULT_MENU_ITEM_HEIGHT: f32 = 36.;
 
@@ -22,13 +29,15 @@ pub struct ActiveLayout {
 }
 
 pub struct Common<M> {
+    pub wayland_connection: Option<Connection>,
+    pub keyboard_layout: Option<ZcosmicKeyboardLayoutV1>,
+    pub current_keyboard_layout: usize,
     pub active_layouts: Vec<ActiveLayout>,
     pub active_surface_id_opt: Option<SurfaceId>,
     pub on_battery: bool,
     pub battery_percent: f64,
     pub charging_limit: Option<bool>,
     pub caps_lock: bool,
-    pub comp_config_handler: Option<cosmic_config::Config>,
     pub core: Core,
     pub error_opt: Option<String>,
     pub fallback_background: widget::image::Handle,
@@ -39,8 +48,12 @@ pub struct Common<M> {
     pub output_names: HashMap<WlOutput, String>,
     pub power_info_opt: Option<(widget::Icon, f64)>,
     pub prompt_opt: Option<(String, bool, Option<String>)>,
+    pub rectangle_tracker: Option<RectangleTracker<(SurfaceId, bool)>>,
+    pub rectangles: HashMap<(SurfaceId, bool), iced::Rectangle>,
+    pub include_menu: bool,
     pub subsurface_rects: HashMap<WlOutput, Rectangle>,
     pub surface_ids: HashMap<WlOutput, SurfaceId>,
+    pub subsurface_outputs: HashMap<SurfaceId, WlOutput>,
     pub surface_images: HashMap<SurfaceId, widget::image::Handle>,
     pub surface_names: HashMap<SurfaceId, String>,
     pub text_input_ids: HashMap<String, widget::Id>,
@@ -54,12 +67,15 @@ pub enum Message {
     Focus(SurfaceId),
     Key(Modifiers, Key, Option<SmolStr>),
     NetworkIcon(Option<&'static str>),
+    SubsurfaceOpened(SurfaceId),
     OutputEvent(OutputEvent, WlOutput),
     PowerInfo(Option<(f64, bool, bool)>),
     Prompt(String, bool, Option<String>),
     SessionLockEvent(SessionLockEvent),
     Tick,
     Tz(jiff::tz::TimeZone),
+    Rectangle(RectangleUpdate<(SurfaceId, bool)>),
+    KeyboardLayoutWayland(keyboard_layout_wayland::Event),
 }
 
 impl<M: From<Message> + Send + 'static> Common<M> {
@@ -72,17 +88,6 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         core.window.show_minimize = false;
         core.window.use_template = false;
 
-        let comp_config_handler = match cosmic_config::Config::new(
-            "com.system76.CosmicComp",
-            CosmicCompConfig::VERSION,
-        ) {
-            Ok(config_handler) => Some(config_handler),
-            Err(err) => {
-                tracing::error!("failed to create cosmic-comp config handler: {}", err);
-                None
-            }
-        };
-
         let layouts_opt = match xkb_data::all_keyboard_layouts() {
             Ok(ok) => Some(Arc::new(ok)),
             Err(err) => {
@@ -92,10 +97,12 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         };
 
         let app = Self {
+            wayland_connection: None,
+            keyboard_layout: None,
+            current_keyboard_layout: 0,
             active_layouts: Vec::new(),
             active_surface_id_opt: None,
             caps_lock: false,
-            comp_config_handler,
             core,
             error_opt: None,
             fallback_background: widget::image::Handle::from_bytes(
@@ -118,6 +125,10 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             battery_percent: 0.0,
             on_battery: false,
             charging_limit: None,
+            subsurface_outputs: HashMap::new(),
+            rectangle_tracker: None,
+            rectangles: HashMap::new(),
+            include_menu: false,
         };
         (
             app,
@@ -126,27 +137,6 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 crate::time::tz_updates().map(|tz| cosmic::Action::App(Message::Tz(tz).into())),
             ]),
         )
-    }
-
-    pub fn set_xkb_config(&self, user_data: &UserData) {
-        if let Some(mut xkb_config) = user_data.xkb_config_opt.clone() {
-            xkb_config.layout = String::new();
-            xkb_config.variant = String::new();
-            for (i, layout) in self.active_layouts.iter().enumerate() {
-                if i > 0 {
-                    xkb_config.layout.push(',');
-                    xkb_config.variant.push(',');
-                }
-                xkb_config.layout.push_str(&layout.layout);
-                xkb_config.variant.push_str(&layout.variant);
-            }
-            if let Some(comp_config_handler) = &self.comp_config_handler {
-                match comp_config_handler.set("xkb_config", xkb_config) {
-                    Ok(()) => tracing::info!("updated cosmic-comp xkb_config"),
-                    Err(err) => tracing::error!("failed to update cosmic-comp xkb_config: {}", err),
-                }
-            }
-        }
     }
 
     pub fn update_wallpapers(&mut self, user_data: &UserData) {
@@ -287,6 +277,11 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                     network_icon_opt.map(|name| widget::icon::from_name(name).into());
             }
             Message::OutputEvent(output_event, output) => {
+                if self.wayland_connection.is_none() {
+                    if let Some(backend) = output.backend().upgrade() {
+                        self.wayland_connection = Some(Connection::from_backend(backend));
+                    }
+                }
                 if let Some(on_output_event) = &self.on_output_event {
                     return Task::done(cosmic::Action::App(on_output_event(output_event, output)));
                 }
@@ -322,13 +317,88 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             Message::Tz(tz) => {
                 self.time.set_tz(tz);
             }
+            Message::SubsurfaceOpened(id) => {
+                return self.blur_rects(id);
+            }
+            Message::Rectangle(u) => match u {
+                RectangleUpdate::Rectangle(r) => {
+                    self.rectangles.insert(r.0, r.1);
+
+                    return self.blur_rects(r.0.0);
+                }
+                RectangleUpdate::Init(tracker) => {
+                    self.rectangle_tracker.replace(tracker);
+                }
+            },
+            Message::KeyboardLayoutWayland(w) => match w {
+                keyboard_layout_wayland::Event::KeyboardLayout(keyboard_layout) => {
+                    self.keyboard_layout = Some(keyboard_layout);
+                }
+                keyboard_layout_wayland::Event::Group(group) => {
+                    self.current_keyboard_layout = group;
+                }
+            },
+        }
+        Task::none()
+    }
+
+    pub(crate) fn dropdown_blur_rects(&mut self, enable: bool) -> Task<M> {
+        let mut ids = HashSet::new();
+        for r in self.rectangles.keys() {
+            ids.insert(r.0);
+        }
+        self.include_menu = enable;
+        Task::batch(
+            ids.into_iter()
+                .map(|i| self.blur_rects(i))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn blur_rects(&mut self, id: SurfaceId) -> Task<M> {
+        if let Some(output) = self.subsurface_outputs.get(&id) {
+            if let Some(rect) = self.subsurface_rects.get(output) {
+                let x = rect.x;
+                let y = rect.y;
+                if let Some(rect) = self.rectangles.get(&(id, false)) {
+                    let mut offset_rect = *rect;
+                    offset_rect.x += x;
+                    offset_rect.y += y;
+                    let rad = CornerRadius {
+                        top_left: 16,
+                        top_right: 16,
+                        bottom_left: 16,
+                        bottom_right: 16,
+                    };
+                    let mut rects = rounded_rect_strips(offset_rect, rad);
+                    if let Some(other_rect) = self.rectangles.get(&(id, true))
+                        && self.include_menu
+                    {
+                        let mut other = *other_rect;
+                        other.x += x;
+                        other.y += y;
+                        let rad = CornerRadius {
+                            top_left: 8,
+                            top_right: 8,
+                            bottom_left: 8,
+                            bottom_right: 8,
+                        };
+                        rects.append(&mut rounded_rect_strips(other, rad));
+                    }
+
+                    return blur(id, Some(rects)).discard();
+                } else {
+                    tracing::error!("no rectangle for surface {id:?}");
+                }
+            }
         }
         Task::none()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = Vec::with_capacity(3);
-
+        subscriptions
+            .push(rectangle_tracker_subscription(0).map(|update| Message::Rectangle(update.1)));
         subscriptions.push(event::listen_with(|event, status, id| match event {
             iced::Event::Keyboard(KeyEvent::KeyPressed {
                 key,
@@ -351,11 +421,20 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 WaylandEvent::SessionLock(lock_event) => {
                     Some(Message::SessionLockEvent(lock_event))
                 }
+                iced::event::wayland::Event::Subsurface(
+                    iced::event::wayland::SubsurfaceEvent::Created,
+                ) => Some(Message::SubsurfaceOpened(id)),
                 _ => None,
             },
             iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(id)),
             _ => None,
         }));
+
+        if let Some(conn) = self.wayland_connection.clone() {
+            subscriptions.push(
+                keyboard_layout_wayland::subscription(conn).map(Message::KeyboardLayoutWayland),
+            );
+        }
 
         #[cfg(feature = "networkmanager")]
         {

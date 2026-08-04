@@ -79,6 +79,8 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     // We are already the user at this point
     user_data.load_config_as_user();
 
+    let logind_available = cfg!(feature = "logind") && crate::logind::is_available();
+
     let flags = Flags {
         user_icon: user_data
             .icon_opt
@@ -86,6 +88,7 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
             .map(widget::image::Handle::from_bytes),
         user_data,
         lockfile_opt: lockfile_opt(),
+        logind_available,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -247,6 +250,7 @@ pub struct Flags {
     user_data: UserData,
     user_icon: Option<widget::image::Handle>,
     lockfile_opt: Option<PathBuf>,
+    logind_available: bool,
 }
 
 ///TODO: this is custom code that should be better handled by libcosmic
@@ -274,7 +278,6 @@ pub enum Message {
     Error(String),
     Lock,
     Unlock,
-    SpinnerTick,
 }
 
 impl From<common::Message> for Message {
@@ -312,8 +315,6 @@ pub struct App {
     inhibit_opt: Option<Arc<OwnedFd>>,
     value_tx_opt: Option<mpsc::Sender<String>>,
     authenticating: bool,
-    spinner_rotation: f32,
-    spinner_handle: Option<cosmic::iced::task::Handle>,
 }
 
 impl App {
@@ -375,7 +376,7 @@ impl App {
             let dropdown_menu = |items: Vec<_>| {
                 let item_cnt = items.len();
 
-                let items = widget::column::with_children(items);
+                let items = widget::menu::menu_column::MenuColumn::with_children(items);
                 let items = if item_cnt > 7 {
                     Element::from(
                         widget::scrollable(items)
@@ -385,25 +386,32 @@ impl App {
                     Element::from(items)
                 };
 
-                widget::container(items)
-                    .padding(1)
-                    //TODO: move style to libcosmic
-                    .class(theme::Container::custom(|theme| {
-                        let cosmic = theme.cosmic();
-                        let component = &cosmic.background.component;
-                        widget::container::Style {
-                            icon_color: Some(component.on.into()),
-                            text_color: Some(component.on.into()),
-                            background: Some(Background::Color(component.base.into())),
-                            border: Border {
-                                radius: 8.0.into(),
-                                width: 1.0,
-                                color: component.divider.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }))
-                    .width(Length::Fixed(240.0))
+                let menu: widget::Container<'_, Message, cosmic::prelude::Theme> =
+                    widget::container(items)
+                        .padding(1)
+                        //TODO: move style to libcosmic
+                        .class(theme::Container::custom(|theme| {
+                            let cosmic = theme.cosmic();
+                            let component = &cosmic.background(theme.transparent).component;
+                            widget::container::Style {
+                                icon_color: Some(component.on.into()),
+                                text_color: Some(component.on.into()),
+                                background: Some(Background::Color(component.base.into())),
+                                border: Border {
+                                    radius: 8.0.into(),
+                                    width: 1.0,
+                                    color: component.divider.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }))
+                        .width(Length::Fixed(240.0));
+
+                if let Some(t) = self.common.rectangle_tracker.as_ref() {
+                    Element::from(t.container((surface_id, true), menu))
+                } else {
+                    menu.into()
+                }
             };
 
             let mut input_button = widget::popover(
@@ -417,7 +425,7 @@ impl App {
                 for (i, layout) in self.common.active_layouts.iter().enumerate() {
                     items.push(menu_checklist(
                         &layout.description,
-                        i == 0,
+                        i == self.common.current_keyboard_layout,
                         Message::KeyboardLayout(i),
                     ));
                 }
@@ -425,7 +433,7 @@ impl App {
             }
 
             //TODO: implement these buttons
-            let button_row = iced::widget::row![
+            let mut button_row = iced::widget::row![
                 /*TODO: greeter accessibility options
                 widget::button::custom(widget::icon::from_name(
                     "applications-accessibility-symbolic"
@@ -438,16 +446,17 @@ impl App {
                     widget::text(fl!("keyboard-layout")),
                     widget::tooltip::Position::Top
                 ),
-                widget::tooltip(
+            ];
+            if cfg!(feature = "logind") && self.flags.logind_available {
+                button_row = button_row.push(widget::tooltip(
                     widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
                         .padding(12.0)
                         .on_press(Message::Suspend),
                     widget::text(fl!("suspend")),
-                    widget::tooltip::Position::Top
-                ),
-            ]
-            .padding([16.0, 0.0, 0.0, 0.0])
-            .spacing(8.0);
+                    widget::tooltip::Position::Top,
+                ));
+            }
+            let button_row = button_row.padding([16.0, 0.0, 0.0, 0.0]).spacing(8.0);
 
             widget::container(iced::widget::column![
                 date_time_column,
@@ -566,14 +575,7 @@ impl App {
                         widget::row::with_capacity(2)
                             .spacing(8.0)
                             .align_y(Alignment::Center)
-                            .push(
-                                widget::icon::from_name("process-working-symbolic")
-                                    .size(16)
-                                    .icon()
-                                    .rotation(iced::Rotation::Floating(iced::Radians(
-                                        self.spinner_rotation.to_radians(),
-                                    ))),
-                            )
+                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
                             .push(widget::text(fl!("authenticating"))),
                     )
                     .width(Length::Fill)
@@ -595,30 +597,34 @@ impl App {
                 .align_x(Alignment::Center)
                 .width(Length::Fill)
         };
-
+        let menu = widget::layer_container(
+            iced::widget::row![left_element, right_element].align_y(Alignment::Start),
+        )
+        .layer(cosmic::cosmic_theme::Layer::Background)
+        .padding(16)
+        .class(cosmic::theme::Container::Custom(Box::new(
+            |theme: &cosmic::Theme| {
+                // Use background appearance as the base
+                let mut appearance =
+                    widget::container::Catalog::style(theme, &cosmic::theme::Container::Background);
+                let c: iced::Color = theme.cosmic().background(theme.transparent).base.into();
+                appearance.background = Some(iced::Background::Color(c));
+                appearance.border = iced::Border::default().rounded(16.0);
+                appearance
+            },
+        )))
+        .width(Length::Fill)
+        .height(Length::Shrink);
+        let menu = if let Some(t) = self.common.rectangle_tracker.as_ref() {
+            Element::from(t.container((surface_id, false), menu))
+        } else {
+            menu.into()
+        };
         widget::container(widget::column::with_children(vec![
             widget::space::vertical()
                 .height(Length::FillPortion(1))
                 .into(),
-            widget::layer_container(
-                iced::widget::row![left_element, right_element].align_y(Alignment::Start),
-            )
-            .layer(cosmic::cosmic_theme::Layer::Background)
-            .padding(16)
-            .class(cosmic::theme::Container::Custom(Box::new(
-                |theme: &cosmic::Theme| {
-                    // Use background appearance as the base
-                    let mut appearance = widget::container::Catalog::style(
-                        theme,
-                        &cosmic::theme::Container::Background,
-                    );
-                    appearance.border = iced::Border::default().rounded(16.0);
-                    appearance
-                },
-            )))
-            .width(Length::Fill)
-            .height(Length::Shrink)
-            .into(),
+            menu,
             widget::space::vertical()
                 .height(Length::FillPortion(4))
                 .into(),
@@ -654,7 +660,8 @@ impl cosmic::Application for App {
     }
 
     /// Creates the application, and optionally emits command on initialize.
-    fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
+    fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
+        core.set_app_type(cosmic::core::AppType::System);
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
@@ -675,22 +682,20 @@ impl cosmic::Application for App {
             inhibit_opt: None,
             value_tx_opt: None,
             authenticating: false,
-            spinner_rotation: 0.0,
-            spinner_handle: None,
         };
 
-        let task = if cfg!(feature = "logind") {
+        let task = if cfg!(feature = "logind") && app.flags.logind_available {
             if already_locked {
                 // Recover previously locked state
                 tracing::info!("recovering previous locked state");
                 app.state = State::Locking;
                 lock()
             } else {
-                // When logind feature is used, wait for lock signal
+                // When logind is available, wait for lock signal
                 Task::none()
             }
         } else {
-            // When logind feature not used, lock immediately
+            // When logind is not available, lock immediately
             tracing::info!("locking immediately");
             app.state = State::Locking;
             lock()
@@ -708,10 +713,6 @@ impl cosmic::Application for App {
                     && matches!(common_message, common::Message::Prompt(_, _, Some(_)))
                 {
                     self.authenticating = false;
-                    if let Some(handle) = self.spinner_handle.take() {
-                        handle.abort();
-                    }
-                    self.spinner_rotation = 0.0;
                 }
 
                 return self.common.update(common_message);
@@ -735,6 +736,10 @@ impl cosmic::Application for App {
                             );
                             return Task::none();
                         }
+
+                        self.common
+                            .subsurface_outputs
+                            .insert(subsurface_id, output.clone());
 
                         let size = if let Some((w, h)) =
                             output_info_opt.as_ref().and_then(|info| info.logical_size)
@@ -813,11 +818,11 @@ impl cosmic::Application for App {
                         );
 
                         if matches!(self.state, State::Locked { .. }) {
-                            return Task::batch([get_lock_surface(surface_id, output).chain({
+                            return get_lock_surface(surface_id, output).chain({
                                 cosmic::task::message(cosmic::Action::Cosmic(
                                     cosmic::app::Action::Surface(msg),
                                 ))
-                            })]);
+                            });
                         }
                     }
                     OutputEvent::Removed => {
@@ -967,11 +972,15 @@ impl cosmic::Application for App {
                             .zip(self.common.output_names.get(output))
                         {
                             let subsurface_id = SurfaceId::unique();
+                            self.common
+                                .subsurface_outputs
+                                .insert(subsurface_id, output.clone());
                             let surface_id = *surface_id;
                             self.common.surface_names.insert(surface_id, name.clone());
                             self.common
                                 .surface_names
                                 .insert(subsurface_id, name.clone());
+
                             let msg = cosmic::surface::action::subsurface(
                                 move |_: &mut App| SctkSubsurfaceSettings {
                                     parent: surface_id,
@@ -992,7 +1001,7 @@ impl cosmic::Application for App {
                                 cosmic::app::Action::Surface(msg),
                             )));
                         } else {
-                            tracing::error!("no rectangle for subsurface...");
+                            tracing::error!("no rectangle for subsurface creation...");
                         }
                     }
                     return Task::batch(commands);
@@ -1007,11 +1016,11 @@ impl cosmic::Application for App {
                         self.common.window_size.remove(surface_id);
                         commands.push(destroy_lock_surface(*surface_id));
                     }
-                    if cfg!(feature = "logind") {
+                    if cfg!(feature = "logind") && self.flags.logind_available {
                         return Task::batch(commands);
-                        // When using logind feature, stick around for more lock signals
+                        // When logind is available, stick around for more lock signals
                     } else {
-                        // When not using logind feature, exit immediately after unlocking
+                        // When logind is not available, exit immediately after unlocking
                         //TODO: cleaner method to exit?
                         process::exit(0);
                     }
@@ -1031,8 +1040,10 @@ impl cosmic::Application for App {
             Message::DropdownToggle(dropdown) => {
                 if self.dropdown_opt == Some(dropdown) {
                     self.dropdown_opt = None;
+                    return self.common.dropdown_blur_rects(false);
                 } else {
                     self.dropdown_opt = Some(dropdown);
+                    return self.common.dropdown_blur_rects(true);
                 }
             }
             Message::Inhibit(inhibit) => match self.state {
@@ -1044,12 +1055,13 @@ impl cosmic::Application for App {
                 }
             },
             Message::KeyboardLayout(layout_i) => {
-                if layout_i < self.common.active_layouts.len() {
-                    self.common.active_layouts.swap(0, layout_i);
-                    self.common.set_xkb_config(&self.flags.user_data);
+                if let Some(keyboard_layout) = &self.common.keyboard_layout {
+                    keyboard_layout.set_group(layout_i as u32);
                 }
+                self.common.current_keyboard_layout = layout_i;
                 if self.dropdown_opt == Some(Dropdown::Keyboard) {
-                    self.dropdown_opt = None
+                    self.dropdown_opt = None;
+                    return self.common.dropdown_blur_rects(false);
                 }
             }
             Message::Submit(value) => {
@@ -1057,39 +1069,10 @@ impl cosmic::Application for App {
                 match self.value_tx_opt.take() {
                     Some(value_tx) => {
                         self.authenticating = true;
-                        // Start spinner animation if not already running
-                        if self.spinner_handle.is_none() {
-                            let (spinner_task, handle) =
-                                cosmic::task::stream(cosmic::iced::stream::channel(
-                                    1,
-                                    |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
-                                        let mut interval =
-                                            tokio::time::interval(Duration::from_millis(16)); // ~60fps
-                                        loop {
-                                            msg_tx
-                                                .send(cosmic::Action::App(Message::SpinnerTick))
-                                                .await
-                                                .unwrap();
-                                            interval.tick().await;
-                                        }
-                                    },
-                                ))
-                                .abortable();
-                            self.spinner_handle = Some(handle);
-
-                            return Task::batch([
-                                spinner_task,
-                                cosmic::task::future(async move {
-                                    value_tx.send(value).await.unwrap();
-                                    Message::Channel(value_tx)
-                                }),
-                            ]);
-                        } else {
-                            return cosmic::task::future(async move {
-                                value_tx.send(value).await.unwrap();
-                                Message::Channel(value_tx)
-                            });
-                        }
+                        return cosmic::task::future(async move {
+                            value_tx.send(value).await.unwrap();
+                            Message::Channel(value_tx)
+                        });
                     }
                     None => {
                         self.authenticating = false;
@@ -1111,16 +1094,6 @@ impl cosmic::Application for App {
             Message::Error(error) => {
                 self.common.error_opt = Some(error);
                 self.authenticating = false;
-
-                // Stop spinner animation
-                if let Some(handle) = self.spinner_handle.take() {
-                    handle.abort();
-                }
-                self.spinner_rotation = 0.0;
-            }
-            Message::SpinnerTick => {
-                // Update spinner rotation angle (360 degrees per second = 6 degrees per frame at 60fps)
-                self.spinner_rotation = (self.spinner_rotation + 6.0) % 360.0;
             }
             Message::Lock => match self.state {
                 State::Unlocked => {
@@ -1132,10 +1105,6 @@ impl cosmic::Application for App {
                     self.value_tx_opt = None;
                     // Reset authenticating state
                     self.authenticating = false;
-                    if let Some(handle) = self.spinner_handle.take() {
-                        handle.abort();
-                    }
-                    self.spinner_rotation = 0.0;
                     // Try to create lockfile when locking
                     if let Some(ref lockfile) = self.flags.lockfile_opt
                         && let Err(err) = fs::File::create(lockfile)
@@ -1164,11 +1133,6 @@ impl cosmic::Application for App {
                         // Stop authenticating
                         self.authenticating = false;
 
-                        // Stop spinner animation
-                        if let Some(handle) = self.spinner_handle.take() {
-                            handle.abort();
-                        }
-                        self.spinner_rotation = 0.0;
                         // Try to delete lockfile when unlocking
                         if let Some(ref lockfile) = self.flags.lockfile_opt
                             && let Err(err) = fs::remove_file(lockfile)
@@ -1262,8 +1226,7 @@ impl cosmic::Application for App {
             }),
         );
 
-        #[cfg(feature = "logind")]
-        {
+        if cfg!(feature = "logind") && self.flags.logind_available {
             subscriptions.push(crate::logind::subscription());
         }
 
