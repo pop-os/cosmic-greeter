@@ -27,3 +27,10 @@ shutdown-timeout =
        *[other] { $seconds } sekúndur.
     }
 user = Notandi
+
+authenticating = Auðkenni...
+auth-error-default = Auðkenning mistókst. Reyndu aftur.
+auth-error-credentials = Rangt lykilorð. Athugaðu lyklaborðsskipanina og reyndu aftur.
+auth-error-denied = Aðgangi hafnað.
+auth-error-maxtries = Of margar misheppnaðar auðkenningartilraunir.
+auth-error-account = Reikningurinn er ekki tiltækur eða óvirkur.
