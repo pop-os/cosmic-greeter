@@ -1059,18 +1059,19 @@ impl cosmic::Application for App {
                 }
             }
             Message::Submit(value) => {
-                if !value.is_empty() {
-                    self.common.error_opt = None;
-                    self.authenticating = true;
-                    match self.value_tx_opt.take() {
-                        Some(value_tx) => {
-                            return cosmic::task::future(async move {
-                                value_tx.send(value).await.unwrap();
-                                Message::Channel(value_tx)
-                            });
-                        }
-                        None => tracing::warn!("tried to submit when value_tx_opt not set"),
+                if value.is_empty() {
+                    return Task::none();
+                }
+                self.common.error_opt = None;
+                self.authenticating = true;
+                match self.value_tx_opt.take() {
+                    Some(value_tx) => {
+                        return cosmic::task::future(async move {
+                            value_tx.send(value).await.unwrap();
+                            Message::Channel(value_tx)
+                        });
                     }
+                    None => tracing::warn!("tried to submit when value_tx_opt not set"),
                 }
             }
             Message::Suspend => {
