@@ -363,6 +363,9 @@ pub enum Message {
     Common(common::Message),
     OutputEvent(OutputEvent, WlOutput),
     Auth(Option<String>),
+    /// Non-fatal error message from PAM (`PAM_ERROR_MSG`), reported by greetd as an auth
+    /// message of type `Error`. Unlike [`Message::Error`] the conversation stays alive.
+    AuthError(String),
     ConfigUpdateUser,
     DialogCancel,
     DialogConfirm,
@@ -1489,6 +1492,13 @@ impl cosmic::Application for App {
                 self.common.error_opt = None;
                 self.authenticating = true;
                 self.send_request(Request::PostAuthMessageResponse { response });
+            }
+            Message::AuthError(error) => {
+                // The conversation continues, so acknowledge like any other
+                // non-interactive auth message rather than cancelling the session.
+                self.common.error_opt = Some(error);
+                self.authenticating = false;
+                self.send_request(Request::PostAuthMessageResponse { response: None });
             }
             Message::Login => {
                 self.common.prompt_opt = None;
