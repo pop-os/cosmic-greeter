@@ -19,6 +19,7 @@ cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
 dirs = "6"
+jxl-oxide = { version = "0.12.6", features = ["image"] }
 libcosmic = { workspace = true, features = [
     "autosize",
     "winit",

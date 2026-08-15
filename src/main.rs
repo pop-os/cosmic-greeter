@@ -28,6 +28,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    // Wallpapers may be in formats the image crate cannot decode natively,
+    // such as JPEG XL; register the same decoding hook cosmic-bg uses so
+    // they render instead of showing a blank background.
+    let _ = jxl_oxide::integration::register_image_decoding_hook();
+
     match pwd::Passwd::current_user() {
         Some(current_user) => match current_user.name.as_str() {
             "cosmic-greeter" => greeter::main(),
