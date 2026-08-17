@@ -79,12 +79,15 @@ cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
 color-eyre.workspace = true
 image = { version = "0.25", default-features = false, features = [
+    "avif-native",
     "jpeg",
     "png",
     "rayon",
     "webp",
     "hdr",
 ] }
+# JPEG-XL support
+jxl-oxide = { version = "0.12.6", features = ["image"] }
 
 [dependencies.greetd_ipc]
 version = "0.10.3"
