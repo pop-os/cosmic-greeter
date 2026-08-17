@@ -1486,6 +1486,9 @@ impl cosmic::Application for App {
                 }
             }
             Message::Auth(response) => {
+                if response.as_deref() == Some("") {
+                    return Task::none();
+                }
                 self.common.error_opt = None;
                 self.authenticating = true;
                 self.send_request(Request::PostAuthMessageResponse { response });
