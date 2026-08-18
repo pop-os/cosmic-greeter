@@ -23,7 +23,7 @@ use std::any::TypeId;
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{env, fs, process};
 use tokio::sync::mpsc;
 use tracing::level_filters::LevelFilter;
@@ -1021,6 +1021,11 @@ impl cosmic::Application for App {
                                         }
 
                                         tracing::info!("starting fingerprint authentication");
+                                        const RETRY_MIN: Duration = Duration::from_secs(1);
+                                        const RETRY_MAX: Duration = Duration::from_secs(64);
+                                        const ARMED_AFTER: Duration = Duration::from_millis(500);
+                                        let mut retry_delay = RETRY_MIN;
+
                                         loop {
                                             msg_tx
                                                 .send(cosmic::Action::App(
@@ -1029,15 +1034,18 @@ impl cosmic::Application for App {
                                                 .await
                                                 .unwrap();
 
-                                            match run_pam_worker(
+                                            let started = Instant::now();
+                                            let outcome = run_pam_worker(
                                                 "cosmic-greeter-fingerprint",
                                                 &username,
                                                 &mut msg_tx,
                                                 None,
                                                 true,
                                             )
-                                            .await
-                                            {
+                                            .await;
+                                            let armed = started.elapsed() >= ARMED_AFTER;
+
+                                            match outcome {
                                                 WorkerOutcome::Success => {
                                                     tracing::info!(
                                                         "successfully authenticated (fingerprint)"
@@ -1052,13 +1060,22 @@ impl cosmic::Application for App {
                                                     tracing::info!(
                                                         "fingerprint attempt failed: {message}"
                                                     );
-                                                    tokio::time::sleep(Duration::from_secs(1))
-                                                        .await;
                                                 }
-                                                WorkerOutcome::Aborted => {
-                                                    tokio::time::sleep(Duration::from_secs(1))
-                                                        .await;
-                                                }
+                                                WorkerOutcome::Aborted => {}
+                                            }
+
+                                            if armed {
+                                                retry_delay = RETRY_MIN;
+                                            } else {
+                                                tracing::warn!(
+                                                    "fingerprint worker gave up after {:?} without arming the reader, retrying in {:?}",
+                                                    started.elapsed(),
+                                                    retry_delay
+                                                );
+                                            }
+                                            tokio::time::sleep(retry_delay).await;
+                                            if !armed {
+                                                retry_delay = (retry_delay * 2).min(RETRY_MAX);
                                             }
                                         }
                                     }
