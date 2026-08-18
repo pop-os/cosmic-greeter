@@ -155,6 +155,9 @@ async fn run_pam_worker(
     let mut stdin = child.stdin.take().expect("worker stdin piped");
     let mut lines = BufReader::new(stdout).lines();
 
+    let mut standing_prompt: Option<String> = None;
+    let mut saw_scan_result = false;
+
     loop {
         let line = match lines.next_line().await {
             Ok(Some(line)) => line,
@@ -181,6 +184,9 @@ async fn run_pam_worker(
                 // Fingerprint sensor text gets its own status line; password
                 // info replaces the prompt label (matching the old behavior).
                 let action = if is_fingerprint {
+                    if standing_prompt.is_none() {
+                        standing_prompt = Some(text.clone());
+                    }
                     Message::FingerprintInfo(Some(text))
                 } else {
                     common::Message::Prompt(text, false, None).into()
@@ -190,6 +196,7 @@ async fn run_pam_worker(
             }
             WorkerMsg::Error(text) => {
                 let action = if is_fingerprint {
+                    saw_scan_result = true;
                     Message::FingerprintInfo(Some(text))
                 } else {
                     Message::Error(text)
@@ -198,7 +205,16 @@ async fn run_pam_worker(
                 continue;
             }
             WorkerMsg::Success => return WorkerOutcome::Success,
-            WorkerMsg::Failure(message) => return WorkerOutcome::Failure(message),
+            WorkerMsg::Failure(message) => {
+                if is_fingerprint && !saw_scan_result {
+                    let _ = msg_tx
+                        .send(cosmic::Action::App(Message::FingerprintInfo(
+                            standing_prompt.take(),
+                        )))
+                        .await;
+                }
+                return WorkerOutcome::Failure(message);
+            }
         };
 
         // A prompt needs typed input. Only the password stack has an input
