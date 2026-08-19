@@ -1,4 +1,4 @@
-cancel = Annuller
+cancel = Afbryd
 restart = Genstart
 caps-lock = Skiftelås er aktiv.
 enter-user = Indtast navn manuelt...
