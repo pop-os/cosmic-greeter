@@ -709,6 +709,12 @@ impl cosmic::Application for App {
         match message {
             Message::None => {}
             Message::Common(common_message) => {
+                if matches!(&common_message, common::Message::Prompt(_, _, Some(_)))
+                    && self.authenticating
+                {
+                    self.authenticating = false;
+                    self.common.prompt_opt = None;
+                }
                 return self.common.update(common_message);
             }
             Message::OutputEvent(output_event, output) => {
