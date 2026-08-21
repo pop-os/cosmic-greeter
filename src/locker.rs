@@ -967,7 +967,11 @@ impl cosmic::Application for App {
                                                 .unwrap();
 
                                             match run_pam_worker(
-                                                "cosmic-greeter",
+                                                // Password-only stack: reusing
+                                                // "cosmic-greeter" pulls in
+                                                // common-auth, so both workers
+                                                // would claim the same reader.
+                                                "cosmic-greeter-password",
                                                 &username,
                                                 &mut msg_tx,
                                                 Some(value_rx),

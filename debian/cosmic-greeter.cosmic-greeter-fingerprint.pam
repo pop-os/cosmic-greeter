@@ -1,5 +1,5 @@
 #%PAM-1.0
 # Fingerprint-only stack, run in parallel with the password stack
-# (cosmic-greeter). timeout/max-tries keep a stuck reader from blocking.
+# (cosmic-greeter-password). timeout/max-tries keep a stuck reader from blocking.
 auth    required        pam_fprintd.so timeout=60 max-tries=1
 @include common-account
