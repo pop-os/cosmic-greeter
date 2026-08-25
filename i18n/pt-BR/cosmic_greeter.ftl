@@ -29,7 +29,7 @@ shutdown-timeout =
     }
 suspend = Suspender
 user = Usuário
-authenticating = Autenticando…
+authenticating = Autenticando...
 auth-error-default = A autenticação falhou. Tente novamente.
 auth-error-credentials = Senha incorreta. Verifique o layout do seu teclado e tente novamente.
 auth-error-denied = Acesso negado.

@@ -115,7 +115,8 @@ pub fn subscription() -> Subscription<Message> {
                                                 .await;
                                         }
                                         greetd_ipc::AuthMessageType::Error => {
-                                            _ = sender.send(Message::Error(auth_message)).await;
+                                            // PAM_ERROR_MSG: a failed attempt, not a dead session.
+                                            _ = sender.send(Message::AuthError(auth_message)).await;
                                         }
                                     },
                                     greetd_ipc::Response::Error {
