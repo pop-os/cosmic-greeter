@@ -280,6 +280,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions
     };
 
+    let logind_available = cfg!(feature = "logind") && crate::logind::is_available();
+
     let flags = Flags {
         user_icons: user_datas
             .iter_mut()
@@ -289,6 +291,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions,
         greeter_config,
         greeter_config_handler,
+        logind_available,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -305,6 +308,7 @@ pub struct Flags {
     sessions: HashMap<String, (Vec<String>, Vec<String>)>,
     greeter_config: CosmicGreeterConfig,
     greeter_config_handler: Option<cosmic_config::Config>,
+    logind_available: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -359,6 +363,9 @@ pub enum Message {
     Common(common::Message),
     OutputEvent(OutputEvent, WlOutput),
     Auth(Option<String>),
+    /// Non-fatal error message from PAM (`PAM_ERROR_MSG`), reported by greetd as an auth
+    /// message of type `Error`. Unlike [`Message::Error`] the conversation stays alive.
+    AuthError(String),
     ConfigUpdateUser,
     DialogCancel,
     DialogConfirm,
@@ -586,7 +593,7 @@ impl App {
                 for (i, layout) in self.common.active_layouts.iter().enumerate() {
                     items.push(menu_checklist(
                         &layout.description,
-                        i == 0,
+                        i == self.common.current_keyboard_layout,
                         Message::KeyboardLayout(i),
                     ));
                 }
@@ -688,7 +695,7 @@ impl App {
 
             let accessibility_button = accessibility_dropdown;
 
-            let button_row = iced::widget::row![
+            let mut button_row = iced::widget::row![
                 widget::tooltip(
                     accessibility_button,
                     text(fl!("accessibility")),
@@ -709,30 +716,32 @@ impl App {
                     text(fl!("session")),
                     widget::tooltip::Position::Top
                 ),
-                widget::tooltip(
-                    widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Suspend),
-                    text(fl!("suspend")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    widget::button::custom(widget::icon::from_name("system-reboot-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Restart),
-                    text(fl!("restart")),
-                    widget::tooltip::Position::Top
-                ),
-                widget::tooltip(
-                    widget::button::custom(widget::icon::from_name("system-shutdown-symbolic"))
-                        .padding(12.0)
-                        .on_press(Message::Shutdown),
-                    text(fl!("shutdown")),
-                    widget::tooltip::Position::Top
-                )
-            ]
-            .padding([16.0, 0.0, 0.0, 0.0])
-            .spacing(8.0);
+            ];
+            if self.flags.logind_available {
+                button_row = button_row
+                    .push(widget::tooltip(
+                        widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
+                            .padding(12.0)
+                            .on_press(Message::Suspend),
+                        text(fl!("suspend")),
+                        widget::tooltip::Position::Top,
+                    ))
+                    .push(widget::tooltip(
+                        widget::button::custom(widget::icon::from_name("system-reboot-symbolic"))
+                            .padding(12.0)
+                            .on_press(Message::Restart),
+                        text(fl!("restart")),
+                        widget::tooltip::Position::Top,
+                    ))
+                    .push(widget::tooltip(
+                        widget::button::custom(widget::icon::from_name("system-shutdown-symbolic"))
+                            .padding(12.0)
+                            .on_press(Message::Shutdown),
+                        text(fl!("shutdown")),
+                        widget::tooltip::Position::Top,
+                    ));
+            }
+            let button_row = button_row.padding([16.0, 0.0, 0.0, 0.0]).spacing(8.0);
 
             widget::container(iced::widget::column![
                 date_time_column,
@@ -1029,19 +1038,6 @@ impl App {
         }
     }
 
-    fn set_xkb_config(&self) {
-        let user_data = match self
-            .selected_username
-            .data_idx
-            .and_then(|i| self.flags.user_datas.get(i))
-        {
-            Some(some) => some,
-            None => return,
-        };
-
-        self.common.set_xkb_config(user_data);
-    }
-
     fn update_user_data(&mut self) -> Task<Message> {
         let user_data = match self
             .selected_username
@@ -1055,9 +1051,6 @@ impl App {
         };
 
         self.common.update_user_data(user_data);
-
-        // Ensure that user's xkb config is used
-        self.common.set_xkb_config(user_data);
 
         if let Some(builder) = &user_data.theme_builder_opt {
             self.theme_builder = builder.clone();
@@ -1502,9 +1495,19 @@ impl cosmic::Application for App {
                 }
             }
             Message::Auth(response) => {
+                if response.as_deref() == Some("") {
+                    return Task::none();
+                }
                 self.common.error_opt = None;
                 self.authenticating = true;
                 self.send_request(Request::PostAuthMessageResponse { response });
+            }
+            Message::AuthError(error) => {
+                // The conversation continues, so acknowledge like any other
+                // non-interactive auth message rather than cancelling the session.
+                self.common.error_opt = Some(error);
+                self.authenticating = false;
+                self.send_request(Request::PostAuthMessageResponse { response: None });
             }
             Message::Login => {
                 self.common.prompt_opt = None;
@@ -1578,10 +1581,10 @@ impl cosmic::Application for App {
                 }
             }
             Message::KeyboardLayout(layout_i) => {
-                if layout_i < self.common.active_layouts.len() {
-                    self.common.active_layouts.swap(0, layout_i);
-                    self.set_xkb_config();
+                if let Some(keyboard_layout) = &self.common.keyboard_layout {
+                    keyboard_layout.set_group(layout_i as u32);
                 }
+                self.common.current_keyboard_layout = layout_i;
                 if self.dropdown_opt == Some(Dropdown::Keyboard) {
                     self.dropdown_opt = None
                 }
