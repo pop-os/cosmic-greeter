@@ -1190,6 +1190,19 @@ impl cosmic::Application for App {
                     self.send_request(Request::PostAuthMessageResponse { response: None });
                 }
 
+                // A second interactive prompt (e.g. a PAM module stacked ahead of the
+                // real password check asks its own question first, then declines and
+                // falls through to a genuine password request) must clear
+                // `authenticating`, or the `!self.authenticating` check in
+                // `view_window()` leaves the spinner up forever with no way to answer
+                // the new prompt, even though it's already sitting in `prompt_opt`.
+                // This same message also carries every keystroke into an
+                // already-visible field, but `authenticating` is already false
+                // whenever that's happening, so this is a no-op there.
+                if let common::Message::Prompt(_, _, Some(_)) = &common_message {
+                    self.authenticating = false;
+                }
+
                 return self.common.update(common_message);
             }
             Message::OutputEvent(output_event, output) => {
