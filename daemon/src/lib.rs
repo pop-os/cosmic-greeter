@@ -89,8 +89,14 @@ fn read_wallpaper(path: &Path) -> std::io::Result<Vec<u8>> {
         ));
     }
 
-    let size = metadata.len().min(MAX_WALLPAPER_BYTES);
-    let mut bytes = vec![0; size as usize];
+    if metadata.len() > MAX_WALLPAPER_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "wallpaper file exceeds maximum size",
+        ));
+    }
+
+    let mut bytes = vec![0; metadata.len() as usize];
     file.read_exact(&mut bytes)?;
     Ok(bytes)
 }
