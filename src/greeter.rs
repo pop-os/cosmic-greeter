@@ -589,9 +589,8 @@ impl App {
                 .map(|l| l.layout.as_str())
                 .unwrap_or("");
 
-            let mut button_widgets: Vec<Element<_>> = vec![
-                widget::icon::from_name("input-keyboard-symbolic").into()
-            ];
+            let mut button_row =
+                widget::row::with_capacity(3).spacing(6.0).align_y(Alignment::Center).push(widget::icon::from_name("input-keyboard-symbolic").into());
 
             if !layout_code.is_empty() {
                 button_widgets.push(widget::space::horizontal().width(4.0).into());
