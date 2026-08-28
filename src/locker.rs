@@ -1179,16 +1179,7 @@ impl cosmic::Application for App {
 
     /// Creates a view after each update.
     fn view_window(&self, surface_id: SurfaceId) -> Element<'_, Self::Message> {
-        let img = self
-            .common
-            .surface_images
-            .get(&surface_id)
-            .unwrap_or(&self.common.fallback_background);
-        widget::image(img)
-            .content_fit(iced::ContentFit::Cover)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        widget::text("").into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
