@@ -76,8 +76,8 @@ async fn user_data_dbus() -> Result<Vec<UserData>, Box<dyn Error>> {
     Ok(user_datas)
 }
 
-fn user_data_fallback() -> Vec<UserData> {
-    let user_filter = UserFilter::new();
+async fn user_data_fallback() -> Vec<UserData> {
+    let user_filter = UserFilter::new().await;
 
     // The pwd::Passwd method is unsafe (but not labelled as such) due to using global state (libc pwent functions).
     /* unsafe */
@@ -129,7 +129,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         Ok(ok) => ok,
         Err(err) => {
             tracing::error!("failed to load user data from daemon: {}", err);
-            user_data_fallback()
+            runtime.block_on(user_data_fallback())
         }
     };
 
