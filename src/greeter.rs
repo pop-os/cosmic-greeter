@@ -581,24 +581,58 @@ impl App {
                 }
             };
 
-            let mut input_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
-                    .padding(12.0)
-                    .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
-            )
-            .position(widget::popover::Position::Bottom);
-            if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
-                let mut items = Vec::with_capacity(self.common.active_layouts.len());
-                for (i, layout) in self.common.active_layouts.iter().enumerate() {
-                    items.push(menu_checklist(
-                        &layout.description,
-                        i == self.common.current_keyboard_layout,
-                        Message::KeyboardLayout(i),
-                    ));
+            let current_layout_opt = self
+                .common
+                .active_layouts
+                .get(self.common.current_keyboard_layout);
+
+            let mut button_row =
+                widget::row::with_capacity(3).spacing(6.0).align_y(Alignment::Center).push(widget::icon::from_name("input-keyboard-symbolic").into());
+
+            if let Some(active_layout) = current_layout_opt {
+                if !active_layout.layout.is_empty() {
+                    let label = if active_layout.variant.is_empty() {
+                        active_layout.layout.to_uppercase()
+                    } else {
+                        format!(
+                            "{} {}",
+                            active_layout.layout.to_uppercase(),
+                            active_layout.variant.to_uppercase()
+                        )
+                    };
+                    button_row = button_row.push(widget::text(label));
                 }
-                input_button = input_button.popup(dropdown_menu(items));
             }
 
+            let button = widget::button::custom(button_row)
+                .padding(if current_layout_opt.is_some() {
+                    [10.0, 14.0]
+                } else {
+                    [12.0, 12.0]
+                })
+                .on_press(Message::DropdownToggle(Dropdown::Keyboard));
+
+            let input_button = if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
+                let items = self
+                    .common
+                    .active_layouts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, layout)| {
+                        menu_checklist(
+                            &layout.description,
+                            i == self.common.current_keyboard_layout,
+                            Message::KeyboardLayout(i),
+                        )
+                    })
+                    .collect();
+
+                widget::popover(button)
+                    .position(widget::popover::Position::Bottom)
+                    .popup(dropdown_menu(items))
+            } else {
+                widget::popover(button).position(widget::popover::Position::Bottom)
+            };
             let mut user_button = widget::popover(
                 widget::button::custom(widget::icon::from_name("system-users-symbolic"))
                     .padding(12.0)
