@@ -16,6 +16,7 @@ use cosmic::iced::{
 };
 use cosmic::{Element, executor, surface, theme, widget};
 use cosmic_config::CosmicConfigEntry;
+use cosmic_greeter_config::{AuthenticationInput, Config as CosmicGreeterConfig};
 use cosmic_greeter_daemon::{TimeAppletConfig, UserData};
 use std::any::TypeId;
 use std::ffi::{CStr, CString};
@@ -78,6 +79,7 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     let mut user_data = UserData::from(user);
     // We are already the user at this point
     user_data.load_config_as_user();
+    let (greeter_config, _) = CosmicGreeterConfig::load();
 
     let logind_available = cfg!(feature = "logind") && crate::logind::is_available();
 
@@ -87,6 +89,7 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
             .take()
             .map(widget::image::Handle::from_bytes),
         user_data,
+        default_authentication_input: greeter_config.default_authentication_input,
         lockfile_opt: lockfile_opt(),
         logind_available,
     };
@@ -249,6 +252,7 @@ impl pam_client::ConversationHandler for Conversation {
 pub struct Flags {
     user_data: UserData,
     user_icon: Option<widget::image::Handle>,
+    default_authentication_input: AuthenticationInput,
     lockfile_opt: Option<PathBuf>,
     logind_available: bool,
 }
@@ -447,6 +451,7 @@ impl App {
                     widget::tooltip::Position::Top
                 ),
             ];
+            button_row = button_row.push(common::pin_pad_toggle(self.common.pin_pad.is_visible()));
             if cfg!(feature = "logind") && self.flags.logind_available {
                 button_row = button_row.push(widget::tooltip(
                     widget::button::custom(widget::icon::from_name("system-suspend-symbolic"))
@@ -481,85 +486,103 @@ impl App {
 
             // Add top spacing for better visual appearance
             // Bottom of the password text input field should align with bottom of time widget
-            column = column.push(widget::space::vertical().height(Length::Fixed(space_height)));
+            if !self.common.pin_pad.is_visible() {
+                column = column.push(widget::space::vertical().height(Length::Fixed(space_height)));
+            }
 
             // Display user icon or empty transparent box
-            if let Some(icon_handle) = &self.flags.user_icon {
-                column = column.push(
-                    widget::container(
-                        widget::image(icon_handle)
-                            .width(Length::Fixed(78.0))
-                            .height(Length::Fixed(78.0))
-                            .content_fit(iced::ContentFit::Fill),
-                    )
-                    .padding(0.0)
-                    .width(Length::Fill)
-                    .height(Length::Fixed(78.0))
-                    .align_x(Alignment::Center),
-                );
-            } else {
-                // Empty transparent box for users without icons
-                column = column.push(
-                    widget::container(widget::space::horizontal().width(Length::Fixed(78.0)))
+            if !self.common.pin_pad.is_visible() {
+                if let Some(icon_handle) = &self.flags.user_icon {
+                    column = column.push(
+                        widget::container(
+                            widget::image(icon_handle)
+                                .width(Length::Fixed(78.0))
+                                .height(Length::Fixed(78.0))
+                                .content_fit(iced::ContentFit::Fill),
+                        )
                         .padding(0.0)
                         .width(Length::Fill)
                         .height(Length::Fixed(78.0))
                         .align_x(Alignment::Center),
+                    );
+                } else {
+                    // Empty transparent box for users without icons
+                    column = column.push(
+                        widget::container(widget::space::horizontal().width(Length::Fixed(78.0)))
+                            .padding(0.0)
+                            .width(Length::Fill)
+                            .height(Length::Fixed(78.0))
+                            .align_x(Alignment::Center),
+                    );
+                }
+
+                column = column.push(
+                    widget::container(widget::text::title4(&self.flags.user_data.full_name))
+                        .width(Length::Fill)
+                        .align_x(Alignment::Center),
                 );
             }
-
-            column = column.push(
-                widget::container(widget::text::title4(&self.flags.user_data.full_name))
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
-            );
 
             if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
                 match value_opt {
                     Some(value) => {
-                        let text_input_id = self
-                            .common
-                            .surface_names
-                            .get(&surface_id)
-                            .and_then(|id| self.common.text_input_ids.get(id))
-                            .cloned()
-                            .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
+                        if *secret && self.common.pin_pad.is_visible() {
+                            for elem in common::pin_pad_area(
+                                value,
+                                self.authenticating,
+                                Message::Submit(value.clone()),
+                            ) {
+                                column = column.push(elem);
+                            }
+                        } else {
+                            let text_input_id = self
+                                .common
+                                .surface_names
+                                .get(&surface_id)
+                                .and_then(|id| self.common.text_input_ids.get(id))
+                                .cloned()
+                                .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
 
-                        let mut text_input = widget::secure_input(
-                            prompt.clone(),
-                            value.as_str(),
-                            Some(
-                                common::Message::Prompt(
-                                    prompt.clone(),
-                                    !*secret,
-                                    Some(value.clone()),
-                                )
-                                .into(),
-                            ),
-                            *secret,
-                        )
-                        .id(text_input_id);
+                            let mut text_input = widget::secure_input(
+                                prompt.clone(),
+                                value.as_str(),
+                                Some(
+                                    common::Message::Prompt(
+                                        prompt.clone(),
+                                        !*secret,
+                                        Some(value.clone()),
+                                    )
+                                    .into(),
+                                ),
+                                *secret,
+                            )
+                            .id(text_input_id);
 
-                        // Don't allow input when authenticating
-                        if !self.authenticating {
-                            text_input = text_input
-                                .on_input(|input| {
-                                    common::Message::Prompt(prompt.clone(), *secret, Some(input))
+                            // Don't allow input when authenticating
+                            if !self.authenticating {
+                                text_input = text_input
+                                    .on_input(|input| {
+                                        common::Message::Prompt(
+                                            prompt.clone(),
+                                            *secret,
+                                            Some(input),
+                                        )
                                         .into()
-                                })
-                                .on_submit(Message::Submit);
-                        }
+                                    })
+                                    .on_submit(Message::Submit);
+                            }
 
-                        if *secret {
-                            text_input = text_input.password()
-                        }
+                            if *secret {
+                                text_input = text_input.password()
+                            }
 
-                        column = column.push(text_input);
+                            column = column.push(text_input);
 
-                        if self.common.caps_lock && !self.authenticating {
-                            column = column.push(widget::text(fl!("caps-lock")));
-                        } else if self.common.error_opt.is_none() {
-                            column = column.push(widget::text(""));
+                            if self.common.caps_lock && !self.authenticating {
+                                column = column.push(widget::text(fl!("caps-lock")));
+                            } else if self.common.error_opt.is_none() {
+                                column = column.push(widget::text(""));
+                            }
                         }
                     }
                     None => {
@@ -569,28 +592,13 @@ impl App {
             }
 
             // Show either authenticating message or error message in the same location
-            if self.authenticating {
-                column = column.push(
-                    widget::container(
-                        widget::row::with_capacity(2)
-                            .spacing(8.0)
-                            .align_y(Alignment::Center)
-                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
-                            .push(widget::text(fl!("authenticating"))),
-                    )
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
-                );
-            } else if let Some(error) = &self.common.error_opt {
-                column = column.push(
-                    widget::text(error)
-                        .class(theme::Text::Color(iced::Color::from_rgb(1.0, 0.0, 0.0))),
-                );
-                if !self.common.caps_lock {
-                    column = column.push(widget::text(""));
-                }
-            } else {
-                column = column.push(widget::text(""));
+            for elem in common::status_footer_elements(
+                self.authenticating,
+                self.common.pin_pad.is_visible(),
+                self.common.error_opt.as_deref(),
+                self.common.caps_lock,
+            ) {
+                column = column.push(elem);
             }
 
             widget::container(column)
@@ -663,6 +671,10 @@ impl cosmic::Application for App {
     fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         core.set_app_type(cosmic::core::AppType::System);
         let (mut common, common_task) = Common::init(core);
+        common.pin_pad.set_default_visible(matches!(
+            flags.default_authentication_input,
+            AuthenticationInput::Pin
+        ));
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
         }));
@@ -714,6 +726,12 @@ impl cosmic::Application for App {
                 {
                     self.authenticating = false;
                     self.common.prompt_opt = None;
+                }
+                if let common::Message::PinSubmit = &common_message {
+                    if let Some((_, _, Some(value))) = &self.common.prompt_opt {
+                        return self.update(Message::Submit(value.clone()));
+                    }
+                    return Task::none();
                 }
                 return self.common.update(common_message);
             }
@@ -1092,7 +1110,8 @@ impl cosmic::Application for App {
                 self.flags.user_data.time_applet_config = config;
             }
             Message::Error(error) => {
-                self.common.error_opt = Some(error);
+                self.common
+                    .handle_authentication_error(error, common::PinErrorHandling::ClearInput);
                 self.authenticating = false;
             }
             Message::Lock => match self.state {

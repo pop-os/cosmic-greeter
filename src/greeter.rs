@@ -716,6 +716,7 @@ impl App {
                     widget::tooltip::Position::Top
                 ),
             ];
+            button_row = button_row.push(common::pin_pad_toggle(self.common.pin_pad.is_visible()));
             if self.flags.logind_available {
                 button_row = button_row
                     .push(widget::tooltip(
@@ -770,7 +771,9 @@ impl App {
 
             // Add top spacing for better visual appearance
             // Bottom of the password text input field should align with bottom of time widget
-            column = column.push(widget::space::vertical().height(Length::Fixed(space_height)));
+            if !self.common.pin_pad.is_visible() {
+                column = column.push(widget::space::vertical().height(Length::Fixed(space_height)));
+            }
 
             match &self.socket_state {
                 SocketState::Pending => {
@@ -783,7 +786,9 @@ impl App {
                         .iter()
                         .zip(self.flags.user_icons.iter())
                     {
-                        if !self.entering_name && user_data.name == self.selected_username.username
+                        if !self.entering_name
+                            && user_data.name == self.selected_username.username
+                            && !self.common.pin_pad.is_visible()
                         {
                             // Display user icon or empty transparent box
                             if let Some(icon_handle) = user_icon {
@@ -833,7 +838,15 @@ impl App {
                         match value_opt {
                             Some(value) => {
                                 // Only show password input when not authenticating
-                                if !self.authenticating {
+                                if *secret && self.common.pin_pad.is_visible() {
+                                    for elem in common::pin_pad_area(
+                                        value,
+                                        self.authenticating,
+                                        Message::Auth(Some(value.clone())),
+                                    ) {
+                                        column = column.push(elem);
+                                    }
+                                } else if !self.authenticating {
                                     let text_input_id = self
                                         .common
                                         .surface_names
@@ -908,28 +921,13 @@ impl App {
             }
 
             // Show either authenticating message or error message in the same location
-            if self.authenticating {
-                column = column.push(
-                    widget::container(
-                        widget::row::with_capacity(2)
-                            .spacing(8.0)
-                            .align_y(Alignment::Center)
-                            .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
-                            .push(widget::text(fl!("authenticating"))),
-                    )
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
-                );
-            } else if let Some(error) = &self.common.error_opt {
-                column = column.push(
-                    widget::text(error)
-                        .class(theme::Text::Color(iced::Color::from_rgb(1.0, 0.0, 0.0))),
-                );
-                if !self.common.caps_lock {
-                    column = column.push(widget::text(""));
-                }
-            } else {
-                column = column.push(widget::text(""));
+            for elem in common::status_footer_elements(
+                self.authenticating,
+                self.common.pin_pad.is_visible(),
+                self.common.error_opt.as_deref(),
+                self.common.caps_lock,
+            ) {
+                column = column.push(elem);
             }
 
             id_container(
@@ -1102,6 +1100,10 @@ impl cosmic::Application for App {
         core.set_app_type(cosmic::core::AppType::System);
         let mut tasks = Vec::new();
         let (mut common, common_task) = Common::init(core);
+        common.pin_pad.set_default_visible(matches!(
+            flags.greeter_config.default_authentication_input,
+            cosmic_greeter_config::AuthenticationInput::Pin
+        ));
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
         }));
@@ -1193,6 +1195,12 @@ impl cosmic::Application for App {
                 // appear "stuck" on the last info message.
                 if let common::Message::Prompt(_, _secret, None) = &common_message {
                     self.send_request(Request::PostAuthMessageResponse { response: None });
+                }
+                if let common::Message::PinSubmit = &common_message {
+                    if let Some((_, _, Some(value))) = &self.common.prompt_opt {
+                        return self.update(Message::Auth(Some(value.clone())));
+                    }
+                    return Task::none();
                 }
 
                 return self.common.update(common_message);
@@ -1504,7 +1512,8 @@ impl cosmic::Application for App {
             Message::AuthError(error) => {
                 // The conversation continues, so acknowledge like any other
                 // non-interactive auth message rather than cancelling the session.
-                self.common.error_opt = Some(error);
+                self.common
+                    .handle_authentication_error(error, common::PinErrorHandling::PreserveInput);
                 self.authenticating = false;
                 self.send_request(Request::PostAuthMessageResponse { response: None });
             }
@@ -1522,7 +1531,8 @@ impl cosmic::Application for App {
                 }
             }
             Message::Error(error) => {
-                self.common.error_opt = Some(error);
+                self.common
+                    .handle_authentication_error(error, common::PinErrorHandling::ClearInput);
                 self.authenticating = false;
 
                 self.send_request(Request::CancelSession);
