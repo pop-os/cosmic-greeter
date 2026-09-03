@@ -2,12 +2,13 @@ use cosmic::app::{Core, Task};
 use cosmic::iced::core::SmolStr;
 use cosmic::iced::event::wayland::{Event as WaylandEvent, OutputEvent, SessionLockEvent};
 use cosmic::iced::event::{self};
-use cosmic::iced::keyboard::{Event as KeyEvent, Key, Modifiers};
+use cosmic::iced::keyboard::{Event as KeyEvent, Key, Modifiers, key::Named};
 use cosmic::iced::platform_specific::shell::commands::blur::blur;
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::CornerRadius;
-use cosmic::iced::{self, Rectangle, Size, Subscription};
+use cosmic::iced::{self, Alignment, Length, Rectangle, Size, Subscription};
 use cosmic::surface::corner_radius::rounded_rect_strips;
+use cosmic::theme;
 use cosmic::widget::rectangle_tracker::{RectangleUpdate, rectangle_tracker_subscription};
 use cosmic::widget::{self, RectangleTracker};
 use cosmic_greeter_daemon::{BgSource, UserData};
@@ -28,6 +29,70 @@ pub struct ActiveLayout {
     pub variant: String,
 }
 
+#[derive(Debug, Default)]
+pub struct PinPadState {
+    default_visible: bool,
+    prompt: Option<(String, bool)>,
+    visible: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PinErrorHandling {
+    ClearInput,
+    PreserveInput,
+}
+
+impl PinPadState {
+    pub fn set_default_visible(&mut self, default_visible: bool) {
+        self.default_visible = default_visible;
+    }
+
+    pub fn set_prompt(&mut self, prompt: &str, secret: bool) {
+        let prompt = (prompt.to_owned(), secret);
+        if self.prompt.as_ref() != Some(&prompt) {
+            self.prompt = Some(prompt);
+            self.visible = self.default_visible && secret;
+        }
+    }
+
+    pub fn toggle(&mut self) {
+        self.visible = !self.visible;
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    fn clear_input(&self, value: &mut String) -> bool {
+        if !self.visible {
+            return false;
+        }
+
+        value.clear();
+        true
+    }
+}
+
+fn pin_push_digit(value: &mut String, digit: char) {
+    if digit.is_ascii_digit() {
+        value.push(digit);
+    }
+}
+
+fn pin_backspace(value: &mut String) {
+    value.pop();
+}
+
+fn is_valid_pin(value: &str) -> bool {
+    value.chars().all(|c| c.is_ascii_digit())
+}
+
+pub(crate) const PIN_BUTTON_SIZE: f32 = 60.0;
+pub(crate) const PIN_BUTTON_ICON_SIZE: u16 = 20;
+pub(crate) const PIN_BUTTON_ICON_PADDING: f32 = (PIN_BUTTON_SIZE - 20.0) / 2.0;
+pub(crate) const PIN_PAD_SPACING: f32 = 4.0;
+pub(crate) const PIN_PAD_WIDTH: f32 = PIN_BUTTON_SIZE * 3.0 + PIN_PAD_SPACING * 2.0;
+
 pub struct Common<M> {
     pub wayland_connection: Option<Connection>,
     pub keyboard_layout: Option<ZcosmicKeyboardLayoutV1>,
@@ -47,6 +112,7 @@ pub struct Common<M> {
     pub on_session_lock_event: Option<Box<dyn Fn(SessionLockEvent) -> M>>,
     pub output_names: HashMap<WlOutput, String>,
     pub power_info_opt: Option<(widget::Icon, f64)>,
+    pub pin_pad: PinPadState,
     pub prompt_opt: Option<(String, bool, Option<String>)>,
     pub rectangle_tracker: Option<RectangleTracker<(SurfaceId, bool)>>,
     pub rectangles: HashMap<(SurfaceId, bool), iced::Rectangle>,
@@ -70,6 +136,10 @@ pub enum Message {
     SubsurfaceOpened(SurfaceId),
     OutputEvent(OutputEvent, WlOutput),
     PowerInfo(Option<(f64, bool, bool)>),
+    PinBackspace,
+    PinDigit(char),
+    PinPadToggle,
+    PinSubmit,
     Prompt(String, bool, Option<String>),
     SessionLockEvent(SessionLockEvent),
     Tick,
@@ -114,6 +184,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             on_session_lock_event: None,
             output_names: HashMap::new(),
             power_info_opt: None,
+            pin_pad: PinPadState::default(),
             prompt_opt: None,
             subsurface_rects: HashMap::new(),
             surface_ids: HashMap::new(),
@@ -234,6 +305,22 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         }
     }
 
+    pub fn handle_authentication_error(
+        &mut self,
+        error: String,
+        pin_error_handling: PinErrorHandling,
+    ) {
+        let suppress_error = match pin_error_handling {
+            PinErrorHandling::ClearInput => self
+                .prompt_opt
+                .as_mut()
+                .and_then(|(_, _, value_opt)| value_opt.as_mut())
+                .is_some_and(|value| self.pin_pad.clear_input(value)),
+            PinErrorHandling::PreserveInput => self.pin_pad.is_visible(),
+        };
+        self.error_opt = (!suppress_error).then_some(error);
+    }
+
     pub fn update(&mut self, message: Message) -> Task<M> {
         match message {
             Message::CapsLock(caps_lock) => {
@@ -250,25 +337,52 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 }
             }
             Message::Key(modifiers, key, text) => {
-                // Uncaptured keys with only shift modifiers go to the password box
-                if !modifiers.logo()
-                    && !modifiers.control()
-                    && !modifiers.alt()
-                    && matches!(key, Key::Character(_))
-                {
-                    if let Some(text) = text
-                        && let Some((_, _, Some(value))) = &mut self.prompt_opt
-                    {
-                        value.push_str(&text);
-                    }
+                if !modifiers.logo() && !modifiers.control() && !modifiers.alt() {
+                    if self.pin_pad.is_visible() {
+                        match &key {
+                            Key::Character(_) if !modifiers.shift() => {
+                                if let Some(text) = text {
+                                    for ch in text.chars() {
+                                        if ch.is_ascii_digit()
+                                            && let Some((_, _, Some(value))) = &mut self.prompt_opt
+                                        {
+                                            pin_push_digit(value, ch);
+                                        }
+                                    }
+                                }
+                            }
+                            Key::Named(Named::Backspace) => {
+                                if let Some((_, _, Some(value))) = &mut self.prompt_opt {
+                                    pin_backspace(value);
+                                }
+                            }
+                            Key::Named(Named::Enter) => {
+                                if let Some((_, true, Some(value))) = &self.prompt_opt
+                                    && !value.is_empty()
+                                {
+                                    return Task::done(cosmic::Action::App(M::from(
+                                        Message::PinSubmit,
+                                    )));
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if matches!(key, Key::Character(_)) {
+                        // Uncaptured keys with only shift modifiers go to the password box
+                        if let Some(text) = text
+                            && let Some((_, _, Some(value))) = &mut self.prompt_opt
+                        {
+                            value.push_str(&text);
+                        }
 
-                    if let Some(surface_id) = self.active_surface_id_opt
-                        && let Some(text_input_id) = self
-                            .surface_names
-                            .get(&surface_id)
-                            .and_then(|id| self.text_input_ids.get(id))
-                    {
-                        return widget::text_input::focus(text_input_id.clone());
+                        if let Some(surface_id) = self.active_surface_id_opt
+                            && let Some(text_input_id) = self
+                                .surface_names
+                                .get(&surface_id)
+                                .and_then(|id| self.text_input_ids.get(id))
+                        {
+                            return widget::text_input::focus(text_input_id.clone());
+                        }
                     }
                 }
             }
@@ -292,8 +406,32 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                     self.update_battery(level, on_battery);
                 }
             }
+            Message::PinBackspace => {
+                if let Some((_, _, Some(value))) = &mut self.prompt_opt {
+                    pin_backspace(value);
+                }
+            }
+            Message::PinDigit(digit) => {
+                if let Some((_, _, Some(value))) = &mut self.prompt_opt {
+                    pin_push_digit(value, digit);
+                }
+            }
+            Message::PinPadToggle => {
+                if matches!(self.prompt_opt, Some((_, true, Some(_)))) {
+                    let was_visible = self.pin_pad.is_visible();
+                    self.pin_pad.toggle();
+                    if !was_visible
+                        && let Some((_, _, Some(value))) = &mut self.prompt_opt
+                        && !is_valid_pin(value)
+                    {
+                        value.clear();
+                    }
+                }
+            }
+            Message::PinSubmit => {}
             Message::Prompt(prompt, secret, value_opt) => {
                 let prompt_was_none = self.prompt_opt.is_none();
+                self.pin_pad.set_prompt(&prompt, secret);
                 self.prompt_opt = Some((prompt, secret, value_opt));
                 if prompt_was_none
                     && let Some(surface_id) = self.active_surface_id_opt
@@ -447,6 +585,190 @@ impl<M: From<Message> + Send + 'static> Common<M> {
         }
 
         Subscription::batch(subscriptions)
+    }
+}
+
+fn pin_digit_button<'a, M>(
+    label: &'static str,
+    digit: char,
+    enabled: bool,
+) -> cosmic::Element<'a, M>
+where
+    M: From<Message> + Clone + 'static,
+{
+    widget::button::custom(widget::text(label).size(20).center())
+        .width(Length::Fixed(PIN_BUTTON_SIZE))
+        .height(Length::Fixed(PIN_BUTTON_SIZE))
+        .on_press_maybe(enabled.then(|| Message::PinDigit(digit).into()))
+        .into()
+}
+
+fn pin_pad_row<'a, M>(children: Vec<cosmic::Element<'a, M>>) -> cosmic::Element<'a, M>
+where
+    M: Clone + 'static,
+{
+    widget::container(
+        widget::row::with_children(children)
+            .spacing(PIN_PAD_SPACING)
+            .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .align_x(Alignment::Center)
+    .into()
+}
+
+pub fn pin_pad<'a, M>(value: &str, submit: M, enabled: bool) -> cosmic::Element<'a, M>
+where
+    M: From<Message> + Clone + 'static,
+{
+    let backspace_message: Option<M> =
+        (enabled && !value.is_empty()).then(|| Message::PinBackspace.into());
+    let backspace = widget::tooltip(
+        widget::button::custom(
+            widget::icon(widget::icon::from_name("edit-clear-symbolic").handle())
+                .size(PIN_BUTTON_ICON_SIZE),
+        )
+        .width(Length::Fixed(PIN_BUTTON_SIZE))
+        .height(Length::Fixed(PIN_BUTTON_SIZE))
+        .padding(PIN_BUTTON_ICON_PADDING)
+        .on_press_maybe(backspace_message),
+        widget::text(crate::fl!("pin-pad-backspace")),
+        widget::tooltip::Position::Top,
+    );
+    let submit = widget::tooltip(
+        widget::button::custom(
+            widget::icon(widget::icon::from_name("emblem-ok-symbolic").handle())
+                .size(PIN_BUTTON_ICON_SIZE),
+        )
+        .width(Length::Fixed(PIN_BUTTON_SIZE))
+        .height(Length::Fixed(PIN_BUTTON_SIZE))
+        .padding(PIN_BUTTON_ICON_PADDING)
+        .class(cosmic::theme::Button::Suggested)
+        .on_press_maybe((enabled && !value.is_empty()).then_some(submit)),
+        widget::text(crate::fl!("pin-pad-submit")),
+        widget::tooltip::Position::Top,
+    );
+
+    widget::column::with_children(vec![
+        pin_pad_row(vec![
+            pin_digit_button("1", '1', enabled),
+            pin_digit_button("2", '2', enabled),
+            pin_digit_button("3", '3', enabled),
+        ]),
+        pin_pad_row(vec![
+            pin_digit_button("4", '4', enabled),
+            pin_digit_button("5", '5', enabled),
+            pin_digit_button("6", '6', enabled),
+        ]),
+        pin_pad_row(vec![
+            pin_digit_button("7", '7', enabled),
+            pin_digit_button("8", '8', enabled),
+            pin_digit_button("9", '9', enabled),
+        ]),
+        pin_pad_row(vec![
+            backspace.into(),
+            pin_digit_button("0", '0', enabled),
+            submit.into(),
+        ]),
+    ])
+    .spacing(PIN_PAD_SPACING)
+    .width(Length::Fill)
+    .into()
+}
+
+pub fn pin_pad_mask(value: &str) -> String {
+    "•".repeat(value.chars().count())
+}
+
+pub fn pin_pad_toggle<'a, M>(visible: bool) -> cosmic::Element<'a, M>
+where
+    M: From<Message> + Clone + 'static,
+{
+    let label = if visible {
+        crate::fl!("hide-pin-pad")
+    } else {
+        crate::fl!("show-pin-pad")
+    };
+    let button = widget::button::custom(widget::icon::from_name("input-dialpad-symbolic").size(16))
+        .padding(12.0)
+        .on_press(Message::PinPadToggle.into());
+
+    widget::tooltip(button, widget::text(label), widget::tooltip::Position::Top).into()
+}
+
+pub(crate) fn pin_pad_area<'a, M>(
+    value: &str,
+    authenticating: bool,
+    submit: M,
+) -> Vec<cosmic::Element<'a, M>>
+where
+    M: From<Message> + Clone + 'static,
+{
+    let display = if authenticating {
+        widget::container(
+            widget::row::with_capacity(2)
+                .spacing(8.0)
+                .align_y(Alignment::Center)
+                .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
+                .push(widget::text(crate::fl!("authenticating"))),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(40.0))
+        .align_x(Alignment::Center)
+        .into()
+    } else {
+        widget::container(
+            iced::widget::text_input("", &pin_pad_mask(value))
+                .align_x(Alignment::Center)
+                .width(Length::Fixed(PIN_PAD_WIDTH)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(40.0))
+        .align_x(Alignment::Center)
+        .into()
+    };
+
+    vec![display, pin_pad(value, submit, !authenticating)]
+}
+
+pub(crate) fn status_footer_elements<'a, M>(
+    authenticating: bool,
+    pin_pad_visible: bool,
+    error_opt: Option<&'a str>,
+    caps_lock: bool,
+) -> Vec<cosmic::Element<'a, M>>
+where
+    M: Clone + 'static,
+{
+    if authenticating && !pin_pad_visible {
+        vec![
+            widget::container(
+                widget::row::with_capacity(2)
+                    .spacing(8.0)
+                    .align_y(Alignment::Center)
+                    .push(widget::indeterminate_circular().size(16.0).bar_height(2.0))
+                    .push(widget::text(crate::fl!("authenticating"))),
+            )
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+            .into(),
+        ]
+    } else if !pin_pad_visible {
+        if let Some(error) = error_opt {
+            let mut elements = vec![
+                widget::text(error)
+                    .class(theme::Text::Color(iced::Color::from_rgb(1.0, 0.0, 0.0)))
+                    .into(),
+            ];
+            if !caps_lock {
+                elements.push(widget::text("").into());
+            }
+            elements
+        } else {
+            vec![widget::text("").into()]
+        }
+    } else {
+        vec![]
     }
 }
 

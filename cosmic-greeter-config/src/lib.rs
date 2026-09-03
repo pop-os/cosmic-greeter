@@ -12,10 +12,19 @@ use std::num::NonZeroU32;
 pub const APP_ID: &str = "com.system76.CosmicGreeter";
 pub const CONFIG_VERSION: u64 = 1;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthenticationInput {
+    #[default]
+    Password,
+    Pin,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, CosmicConfigEntry, Deserialize, Serialize)]
 #[version = 1]
 #[id = "com.system76.CosmicGreeter"]
 pub struct Config {
+    pub default_authentication_input: AuthenticationInput,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub users: HashMap<NonZeroU32, user::UserState>,
     pub last_user: Option<NonZeroU32>,
