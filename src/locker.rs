@@ -662,6 +662,7 @@ impl cosmic::Application for App {
     /// Creates the application, and optionally emits command on initialize.
     fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         core.set_app_type(cosmic::core::AppType::System);
+        core.set_auto_blur(enumflags2::BitFlags::empty());
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
@@ -1179,16 +1180,7 @@ impl cosmic::Application for App {
 
     /// Creates a view after each update.
     fn view_window(&self, surface_id: SurfaceId) -> Element<'_, Self::Message> {
-        let img = self
-            .common
-            .surface_images
-            .get(&surface_id)
-            .unwrap_or(&self.common.fallback_background);
-        widget::image(img)
-            .content_fit(iced::ContentFit::Cover)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        widget::text("").into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
