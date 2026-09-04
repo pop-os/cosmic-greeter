@@ -1328,6 +1328,7 @@ dependencies = [
  "cosmic-settings-accessibility-subscription",
  "cosmic-settings-daemon-config",
  "dirs",
+ "enumflags2",
  "futures-util",
  "greetd_ipc",
  "i18n-embed",
