@@ -37,6 +37,7 @@ use kdl::KdlDocument;
 use std::collections::{HashMap, hash_map};
 use std::error::Error;
 use std::num::NonZeroU32;
+use std::os::unix::fs::PermissionsExt;
 use std::process::Stdio;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -55,6 +56,11 @@ use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT};
 use crate::fl;
 
 static USERNAME_ID: LazyLock<iced::id::Id> = LazyLock::new(|| iced::id::Id::new("username-id"));
+
+/// Debian and derivatives expect X11 sessions to be started through this
+/// script, which sources `/etc/X11/Xsession.d/*` to set up the session
+/// environment.
+const XSESSION: &str = "/etc/X11/Xsession";
 
 #[proxy(
     interface = "com.system76.CosmicGreeter",
@@ -162,6 +168,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     let sessions = {
         let mut sessions = HashMap::new();
         let locales = get_languages_from_env();
+        let xsession_available = fs::metadata(XSESSION)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0);
         for (session_dir, session_type) in session_dirs {
             let read_dir = match fs::read_dir(&session_dir) {
                 Ok(ok) => ok,
@@ -254,7 +262,22 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     command.push(arg.clone());
                 }
 
-                match shlex::split(exec) {
+                // Start X11 sessions through Xsession, unless Exec already
+                // invokes it, which would nest Xsession inside itself.
+                let start_via_xsession = xsession_available
+                    && matches!(session_type, SessionType::X11)
+                    && exec.split_whitespace().next() != Some(XSESSION);
+
+                // Xsession takes exactly one argument and word-splits it
+                // itself, so Exec is passed unsplit; more than one argument
+                // makes it fall back to the default session.
+                let args = if start_via_xsession {
+                    Some(vec![XSESSION.to_string(), exec.to_string()])
+                } else {
+                    shlex::split(exec)
+                };
+
+                match args {
                     Some(args) => {
                         for arg in args {
                             command.push(arg)
