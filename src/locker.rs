@@ -79,8 +79,6 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
     // We are already the user at this point
     user_data.load_config_as_user();
 
-    let logind_available = cfg!(feature = "logind") && crate::logind::is_available();
-
     let flags = Flags {
         user_icon: user_data
             .icon_opt
@@ -88,7 +86,10 @@ pub fn main(user: pwd::Passwd) -> Result<(), Box<dyn std::error::Error>> {
             .map(widget::image::Handle::from_bytes),
         user_data,
         lockfile_opt: lockfile_opt(),
-        logind_available,
+        #[cfg(feature = "logind")]
+        logind_available: crate::logind::is_available(),
+        #[cfg(not(feature = "logind"))]
+        logind_available: false,
     };
 
     let settings = Settings::default().no_main_window(true);
@@ -272,7 +273,7 @@ pub enum Message {
     KeyboardLayout(usize),
     Inhibit(Arc<OwnedFd>),
     Submit(String),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
     Suspend,
     TimeAppletConfig(TimeAppletConfig),
     Error(String),
@@ -662,6 +663,7 @@ impl cosmic::Application for App {
     /// Creates the application, and optionally emits command on initialize.
     fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         core.set_app_type(cosmic::core::AppType::System);
+        core.set_auto_blur(enumflags2::BitFlags::empty());
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
@@ -709,6 +711,12 @@ impl cosmic::Application for App {
         match message {
             Message::None => {}
             Message::Common(common_message) => {
+                if matches!(&common_message, common::Message::Prompt(_, _, Some(_)))
+                    && self.authenticating
+                {
+                    self.authenticating = false;
+                    self.common.prompt_opt = None;
+                }
                 return self.common.update(common_message);
             }
             Message::OutputEvent(output_event, output) => {
@@ -813,9 +821,7 @@ impl cosmic::Application for App {
 
                         if matches!(self.state, State::Locked { .. }) {
                             return get_lock_surface(surface_id, output).chain({
-                                cosmic::task::message(cosmic::Action::Cosmic(
-                                    cosmic::app::Action::Surface(msg),
-                                ))
+                                cosmic::task::message(cosmic::Action::Surface(msg))
                             });
                         }
                     }
@@ -991,9 +997,7 @@ impl cosmic::Application for App {
                                     app.menu(subsurface_id).map(cosmic::Action::App)
                                 })),
                             );
-                            commands.push(cosmic::task::message(cosmic::Action::Cosmic(
-                                cosmic::app::Action::Surface(msg),
-                            )));
+                            commands.push(cosmic::task::message(cosmic::Action::Surface(msg)));
                         } else {
                             tracing::error!("no rectangle for subsurface creation...");
                         }
@@ -1158,9 +1162,7 @@ impl cosmic::Application for App {
                 }
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()
@@ -1172,17 +1174,8 @@ impl cosmic::Application for App {
     }
 
     /// Creates a view after each update.
-    fn view_window(&self, surface_id: SurfaceId) -> Element<'_, Self::Message> {
-        let img = self
-            .common
-            .surface_images
-            .get(&surface_id)
-            .unwrap_or(&self.common.fallback_background);
-        widget::image(img)
-            .content_fit(iced::ContentFit::Cover)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+    fn view_window(&self, _surface_id: SurfaceId) -> Element<'_, Self::Message> {
+        widget::space::horizontal().into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
@@ -1220,7 +1213,8 @@ impl cosmic::Application for App {
             }),
         );
 
-        if cfg!(feature = "logind") && self.flags.logind_available {
+        #[cfg(feature = "logind")]
+        if self.flags.logind_available {
             subscriptions.push(crate::logind::subscription());
         }
 

@@ -1,0 +1,108 @@
+{
+  lib,
+  stdenv,
+  fetchFromGitHub,
+  rustPlatform,
+  libcosmicAppHook,
+  cmake,
+  just,
+  cosmic-randr,
+  dav1d,
+  libinput,
+  linux-pam,
+  udev,
+  coreutils,
+  xkeyboard_config,
+  nixosTests,
+  orca,
+  withLogind ? true,
+  withUpower ? true,
+  withNetworkManager ? true,
+}:
+
+rustPlatform.buildRustPackage (finalAttrs: {
+  pname = "cosmic-greeter";
+  version = "1.6.0";
+
+  src = fetchFromGitHub {
+    owner = "pop-os";
+    repo = "cosmic-greeter";
+    tag = "epoch-${finalAttrs.version}";
+    hash = "sha256-hDVdl2+7NVLA+YxO2HToni57IEr0i4OGTsYDc3YGTuw=";
+  };
+
+  postPatch = ''
+    substituteInPlace src/greeter.rs --replace-fail '/usr/bin/env' '${lib.getExe' coreutils "env"}'
+    substituteInPlace src/greeter.rs --replace-fail '/usr/bin/orca' '${lib.getExe orca}'
+  '';
+
+  cargoHash = "sha256-vHR9go8/iVUT7oBV8h+mmBvhi2oSKNBKtV0uoDOr6go=";
+
+  buildNoDefaultFeatures = true;
+
+  buildFeatures =
+    lib.optionals withLogind [ "logind" ]
+    ++ lib.optionals withUpower [ "upower" ]
+    ++ lib.optionals withNetworkManager [ "networkmanager" ];
+
+  separateDebugInfo = true;
+  __structuredAttrs = true;
+
+  env.VERGEN_GIT_SHA = finalAttrs.src.tag;
+
+  nativeBuildInputs = [
+    rustPlatform.bindgenHook
+    cmake
+    just
+    libcosmicAppHook
+  ];
+
+  buildInputs = [
+    cosmic-randr
+    dav1d
+    libinput
+    linux-pam
+    udev
+    orca
+  ];
+
+  dontUseJustBuild = true;
+  dontUseJustCheck = true;
+
+  justFlags = [
+    "--set"
+    "prefix"
+    (placeholder "out")
+    "--set"
+    "cargo-target-dir"
+    "target/${stdenv.hostPlatform.rust.cargoShortTarget}"
+  ];
+
+  preFixup = ''
+    libcosmicAppWrapperArgs+=(
+      --prefix PATH : ${lib.makeBinPath [ cosmic-randr ]}
+      --set-default X11_BASE_RULES_XML ${xkeyboard_config}/share/X11/xkb/rules/base.xml
+      --set-default X11_BASE_EXTRA_RULES_XML ${xkeyboard_config}/share/X11/xkb/rules/extra.xml
+    )
+  '';
+
+  passthru = {
+    tests = {
+      inherit (nixosTests)
+        cosmic
+        cosmic-autologin
+        cosmic-noxwayland
+        cosmic-autologin-noxwayland
+        ;
+    };
+  };
+
+  meta = {
+    homepage = "https://github.com/pop-os/cosmic-greeter";
+    description = "Greeter for the COSMIC Desktop Environment";
+    mainProgram = "cosmic-greeter";
+    license = lib.licenses.gpl3Only;
+    teams = [ lib.teams.cosmic ];
+    platforms = lib.platforms.linux;
+  };
+})
