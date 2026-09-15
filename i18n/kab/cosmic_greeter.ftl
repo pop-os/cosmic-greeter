@@ -1,4 +1,4 @@
-cancel = Sefsex
+cancel = Semmet
 restart-timeout =
     Anagraw ad yales tanekra s wudem awurman
     { $seconds ->

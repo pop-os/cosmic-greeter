@@ -13,3 +13,5 @@ shutdown-timeout =
         [1] d’aquí 1 segondas.
        *[other] d’aquí { $seconds } segondas.
     }
+cancel = Anullar
+user = Utilizaire
