@@ -18,6 +18,7 @@ cosmic-comp-config.workspace = true
 cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
+cosmic-osk-config = { git = "https://github.com/pop-os/cosmic-osk" }
 dirs = "6"
 libcosmic = { workspace = true, features = [
     "autosize",

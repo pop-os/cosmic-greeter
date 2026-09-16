@@ -4,6 +4,7 @@
 use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
+use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
 use cosmic::iced::event::wayland::{OutputEvent, SessionLockEvent};
 use cosmic::iced::futures::{self, SinkExt};
 use cosmic::iced::platform_specific::shell::wayland::commands::session_lock::{
@@ -34,7 +35,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 use wayland_client::Proxy;
 use wayland_client::protocol::wl_output::WlOutput;
 
-use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT};
+use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT, MAX_WIDTH};
 use crate::fl;
 
 fn lockfile_opt() -> Option<PathBuf> {
@@ -326,9 +327,9 @@ impl App {
             .window_size
             .get(&surface_id)
             .map(|s| s.width)
-            .unwrap_or(800.);
-        let menu_width = if window_width > 800. {
-            800.
+            .unwrap_or(MAX_WIDTH);
+        let menu_width = if window_width > MAX_WIDTH {
+            MAX_WIDTH
         } else {
             window_width
         };
@@ -417,9 +418,19 @@ impl App {
             };
 
             let mut input_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
+                widget::container(
+                    widget::button::custom(
+                        widget::text(
+                            self.common.active_layouts[self.common.current_keyboard_layout].name(),
+                        )
+                        .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
+                        .height(16)
+                        .center(),
+                    )
                     .padding(12.0)
                     .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
+                )
+                .max_width(92),
             )
             .position(widget::popover::Position::Bottom);
             if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
@@ -443,6 +454,13 @@ impl App {
                 .padding(12.0)
                 .on_press(Message::None),
                 */
+                widget::tooltip(
+                    widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Common(common::Message::OnScreenKeyboard)),
+                    widget::text(fl!("on-screen-keyboard")),
+                    widget::tooltip::Position::Top,
+                ),
                 widget::tooltip(
                     input_button,
                     widget::text(fl!("keyboard-layout")),
@@ -783,10 +801,10 @@ impl cosmic::Application for App {
                         let unwrapped_size = size
                             .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
                             .unwrap_or((1920, 1080));
-                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
+                        let (loc, sub_size) = if unwrapped_size.0 as f32 > MAX_WIDTH {
                             (
                                 Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
-                                Size::new(800., unwrapped_size.1 as f32 - 32.),
+                                Size::new(MAX_WIDTH, unwrapped_size.1 as f32 - 32.),
                             )
                         } else {
                             (
@@ -864,10 +882,10 @@ impl cosmic::Application for App {
                         let unwrapped_size = size
                             .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
                             .unwrap_or((1920, 1080));
-                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
+                        let (loc, sub_size) = if unwrapped_size.0 as f32 > MAX_WIDTH {
                             (
                                 Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
-                                Size::new(800., unwrapped_size.1 as f32 - 32.),
+                                Size::new(MAX_WIDTH, unwrapped_size.1 as f32 - 32.),
                             )
                         } else {
                             (Point::ORIGIN, Size::new(1920., 1080.))

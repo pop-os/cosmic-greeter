@@ -9,6 +9,7 @@ caps-lock = Caps Lock is active.
 enter-user = Enter name manually...
 type-username = Username:
 keyboard-layout = Keyboard layout
+on-screen-keyboard = On-screen keyboard
 restart = Restart
 restart-now = Restart now?
 restart-timeout = The system will restart automatically
