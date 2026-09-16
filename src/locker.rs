@@ -7,13 +7,14 @@ use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity
 use cosmic::iced::event::wayland::{OutputEvent, SessionLockEvent};
 use cosmic::iced::futures::{self, SinkExt};
 use cosmic::iced::platform_specific::shell::wayland::commands::session_lock::{
-    destroy_lock_surface, get_lock_surface, lock, unlock,
+    destroy_lock_surface, lock, unlock,
 };
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
 use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfaceSettings;
 use cosmic::iced::{
     self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription,
 };
+use cosmic::surface::action::LiveSettings;
 use cosmic::{Element, executor, surface, theme, widget};
 use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{TimeAppletConfig, UserData};
@@ -663,7 +664,7 @@ impl cosmic::Application for App {
     /// Creates the application, and optionally emits command on initialize.
     fn init(mut core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         core.set_app_type(cosmic::core::AppType::System);
-        core.set_auto_blur(enumflags2::BitFlags::empty());
+
         let (mut common, common_task) = Common::init(core);
         common.on_output_event = Some(Box::new(|output_event, output| {
             Message::OutputEvent(output_event, output)
@@ -820,9 +821,19 @@ impl cosmic::Application for App {
                         );
 
                         if matches!(self.state, State::Locked { .. }) {
-                            return get_lock_surface(surface_id, output).chain({
-                                cosmic::task::message(cosmic::Action::Surface(msg))
-                            });
+                            return cosmic::task::message(cosmic::Action::Surface(
+                                cosmic::surface::action::lock(
+                                    || LiveSettings {
+                                        padding: None,
+                                        corners: None,
+                                        blur: Some(false),
+                                    },
+                                    surface_id,
+                                    output,
+                                    None::<fn() -> cosmic::Element<'static, cosmic::Action<Message>>>,
+                                ),
+                            ))
+                            .chain(cosmic::task::message(cosmic::Action::Surface(msg)));
                         }
                     }
                     OutputEvent::Removed => {
@@ -962,7 +973,18 @@ impl cosmic::Application for App {
 
                     // Create lock surfaces
                     for (output, surface_id) in self.common.surface_ids.iter() {
-                        commands.push(get_lock_surface(*surface_id, output.clone()));
+                        commands.push(cosmic::task::message(cosmic::Action::Surface(
+                            cosmic::surface::action::lock(
+                                || LiveSettings {
+                                    padding: None,
+                                    corners: None,
+                                    blur: Some(false),
+                                },
+                                *surface_id,
+                                output.clone(),
+                                None::<fn() -> cosmic::Element<'static, cosmic::Action<Message>>>,
+                            ),
+                        )));
 
                         if let Some((rect, name)) = self
                             .common

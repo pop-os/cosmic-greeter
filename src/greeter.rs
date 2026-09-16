@@ -18,7 +18,7 @@ use cosmic::iced::platform_specific::runtime::wayland::layer_surface::{
     IcedMargin, IcedOutput, SctkLayerSurfaceSettings,
 };
 use cosmic::iced::platform_specific::shell::wayland::commands::layer_surface::{
-    Anchor, KeyboardInteractivity, Layer, destroy_layer_surface, get_layer_surface,
+    Anchor, KeyboardInteractivity, Layer, destroy_layer_surface,
 };
 use cosmic::iced::platform_specific::shell::wayland::commands::subsurface::reposition_subsurface;
 use cosmic::iced::runtime::core::window::Id as SurfaceId;
@@ -26,6 +26,7 @@ use cosmic::iced::runtime::platform_specific::wayland::subsurface::SctkSubsurfac
 use cosmic::iced::{
     self, Alignment, Background, Border, Length, Point, Rectangle, Size, Subscription, window,
 };
+use cosmic::surface::action::{LiveSettings, app_layer_shell};
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
@@ -1291,24 +1292,40 @@ impl cosmic::Application for App {
                         );
                         return Task::batch([
                             self.update_user_data(),
-                            get_layer_surface(SctkLayerSurfaceSettings {
-                                id: surface_id,
-                                layer: Layer::Overlay,
-                                keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                                input_zone: None,
-                                anchor: Anchor::TOP | Anchor::LEFT | Anchor::BOTTOM | Anchor::RIGHT,
-                                output: IcedOutput::Output(output),
-                                namespace: "cosmic-locker".into(),
-                                size: Some((None, None)),
-                                margin: IcedMargin {
-                                    top: 0,
-                                    bottom: 0,
-                                    left: 0,
-                                    right: 0,
+                            cosmic::surface::surface_task(app_layer_shell(
+                                |_: &App| LiveSettings {
+                                    padding: None,
+                                    corners: None,
+                                    blur: Some(false),
                                 },
-                                exclusive_zone: -1,
-                                size_limits: iced::Limits::NONE.min_width(1.0).min_height(1.0),
-                            }),
+                                move |_: &mut App| {
+                                    let output = output.clone();
+                                    SctkLayerSurfaceSettings {
+                                        id: surface_id,
+                                        layer: Layer::Overlay,
+                                        keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                                        input_zone: None,
+                                        anchor: Anchor::TOP
+                                            | Anchor::LEFT
+                                            | Anchor::BOTTOM
+                                            | Anchor::RIGHT,
+                                        output: IcedOutput::Output(output),
+                                        namespace: "cosmic-locker".into(),
+                                        size: Some((None, None)),
+                                        margin: IcedMargin {
+                                            top: 0,
+                                            bottom: 0,
+                                            left: 0,
+                                            right: 0,
+                                        },
+                                        exclusive_zone: -1,
+                                        size_limits: iced::Limits::NONE
+                                            .min_width(1.0)
+                                            .min_height(1.0),
+                                    }
+                                },
+                                None,
+                            )),
                             cosmic::task::message(cosmic::Action::Surface(msg)),
                         ]);
                     }
