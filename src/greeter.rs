@@ -11,6 +11,7 @@ use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity
 use cosmic::cosmic_config::{self, ConfigSet};
 use cosmic::cosmic_theme::{self, CosmicPalette};
 use cosmic::desktop::fde::{DesktopEntry, get_languages_from_env};
+use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
 use cosmic::iced::event::listen_with;
 use cosmic::iced::event::wayland::OutputEvent;
 use cosmic::iced::futures::SinkExt;
@@ -41,7 +42,7 @@ use std::num::NonZeroU32;
 use std::process::Stdio;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
-use std::{fs, io, process};
+use std::{fs, io, process, thread};
 use tokio::process::Child;
 use tokio::time;
 use tracing::metadata::LevelFilter;
@@ -52,7 +53,7 @@ use wayland_client::Proxy;
 use wayland_client::protocol::wl_output::WlOutput;
 use zbus::{Connection, proxy};
 
-use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT};
+use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT, MAX_WIDTH};
 use crate::fl;
 
 static USERNAME_ID: LazyLock<iced::id::Id> = LazyLock::new(|| iced::id::Id::new("username-id"));
@@ -280,6 +281,15 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions
     };
 
+    match process::Command::new("cosmic-osk").spawn() {
+        Ok(mut child) => {
+            thread::spawn(move || child.wait().unwrap());
+        }
+        Err(err) => {
+            tracing::warn!("failed to spawn cosmic-osk: {}", err);
+        }
+    }
+
     let flags = Flags {
         user_icons: user_datas
             .iter_mut()
@@ -482,9 +492,9 @@ impl App {
             .window_size
             .get(&id)
             .map(|s| s.width)
-            .unwrap_or(800.);
-        let menu_width = if window_width > 800. {
-            800.
+            .unwrap_or(MAX_WIDTH);
+        let menu_width = if window_width > MAX_WIDTH {
+            MAX_WIDTH
         } else {
             window_width
         };
@@ -584,9 +594,19 @@ impl App {
             };
 
             let mut input_button = widget::popover(
-                widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
+                widget::container(
+                    widget::button::custom(
+                        widget::text(
+                            self.common.active_layouts[self.common.current_keyboard_layout].name(),
+                        )
+                        .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
+                        .height(16)
+                        .center(),
+                    )
                     .padding(12.0)
                     .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
+                )
+                .max_width(92),
             )
             .position(widget::popover::Position::Bottom);
             if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
@@ -701,6 +721,13 @@ impl App {
                     accessibility_button,
                     text(fl!("accessibility")),
                     widget::tooltip::Position::Top
+                ),
+                widget::tooltip(
+                    widget::button::custom(widget::icon::from_name("input-keyboard-symbolic"))
+                        .padding(12.0)
+                        .on_press(Message::Common(common::Message::OnScreenKeyboard)),
+                    text(fl!("on-screen-keyboard")),
+                    widget::tooltip::Position::Top,
                 ),
                 widget::tooltip(
                     input_button,
@@ -965,7 +992,7 @@ impl App {
                 appearance
             },
         )))
-        .width(Length::Fixed(800.0));
+        .width(Length::Fixed(MAX_WIDTH));
         let menu = if let Some(t) = self.common.rectangle_tracker.as_ref() {
             Element::from(t.container((id, false), menu))
         } else {
@@ -1253,10 +1280,10 @@ impl cosmic::Application for App {
                         let unwrapped_size = size
                             .map(|s| (s.0.unwrap_or(1920), s.1.unwrap_or(1080)))
                             .unwrap_or((1920, 1080));
-                        let (loc, sub_size) = if unwrapped_size.0 > 800 {
+                        let (loc, sub_size) = if unwrapped_size.0 as f32 > MAX_WIDTH {
                             (
-                                Point::new(unwrapped_size.0 as f32 / 2. - 400., 32.),
-                                Size::new(800., unwrapped_size.1 as f32 - 32.),
+                                Point::new((unwrapped_size.0 as f32 - MAX_WIDTH) / 2., 32.),
+                                Size::new(MAX_WIDTH, unwrapped_size.1 as f32 - 32.),
                             )
                         } else {
                             (
@@ -1872,8 +1899,8 @@ impl cosmic::Application for App {
                     tracing::error!("Failed to find subsurface menu id");
                     return Task::none();
                 };
-                let loc = if size.width > 800. {
-                    Point::new(size.width / 2. - 400., 32.)
+                let loc = if size.width > MAX_WIDTH {
+                    Point::new((size.width - MAX_WIDTH) / 2., 32.)
                 } else {
                     Point::new(0., 32.)
                 };

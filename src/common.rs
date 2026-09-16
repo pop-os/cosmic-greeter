@@ -10,6 +10,7 @@ use cosmic::iced::{self, Rectangle, Size, Subscription};
 use cosmic::surface::corner_radius::rounded_rect_strips;
 use cosmic::widget::rectangle_tracker::{RectangleUpdate, rectangle_tracker_subscription};
 use cosmic::widget::{self, RectangleTracker};
+use cosmic_config::CosmicConfigEntry;
 use cosmic_greeter_daemon::{BgSource, UserData};
 use cosmic_protocols::keyboard_layout::v1::client::zcosmic_keyboard_layout_v1::ZcosmicKeyboardLayoutV1;
 use std::collections::{HashMap, HashSet};
@@ -19,6 +20,7 @@ use wayland_client::{Connection, Proxy};
 
 use crate::keyboard_layout_wayland;
 
+pub const MAX_WIDTH: f32 = 866.;
 pub const DEFAULT_MENU_ITEM_HEIGHT: f32 = 36.;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -26,6 +28,18 @@ pub struct ActiveLayout {
     pub layout: String,
     pub description: String,
     pub variant: String,
+}
+
+impl ActiveLayout {
+    pub fn name(&self) -> String {
+        let mut name = self.layout.clone();
+        if !self.variant.is_empty() {
+            name.push_str(" (");
+            name.push_str(&self.variant);
+            name.push_str(")");
+        }
+        name
+    }
 }
 
 pub struct Common<M> {
@@ -67,6 +81,7 @@ pub enum Message {
     Focus(SurfaceId),
     Key(Modifiers, Key, Option<SmolStr>),
     NetworkIcon(Option<&'static str>),
+    OnScreenKeyboard,
     SubsurfaceOpened(SurfaceId),
     OutputEvent(OutputEvent, WlOutput),
     PowerInfo(Option<(f64, bool, bool)>),
@@ -275,6 +290,26 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             Message::NetworkIcon(network_icon_opt) => {
                 self.network_icon_opt =
                     network_icon_opt.map(|name| widget::icon::from_name(name).into());
+            }
+            Message::OnScreenKeyboard => {
+                use cosmic_osk_config::Config;
+                match Config::handler() {
+                    Ok(handler) => {
+                        let mut config = match Config::get_entry(&handler) {
+                            Ok(config) => config,
+                            Err((errs, config)) => {
+                                tracing::warn!("failed to parse OSK config: {:?}", errs);
+                                config
+                            }
+                        };
+                        if let Err(err) = config.set_always_shown(&handler, !config.always_shown) {
+                            tracing::error!("failed to set OSK always_shown config: {}", err);
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!("failed to create OSK config handler: {}", err);
+                    }
+                }
             }
             Message::OutputEvent(output_event, output) => {
                 if self.wayland_connection.is_none() {
