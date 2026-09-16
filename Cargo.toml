@@ -160,8 +160,8 @@ default-features = false
 features = ["advanced-shaping"]
 
 [patch."https://github.com/pop-os/cosmic-protocols"]
-cctk = { git = "https://github.com/pop-os/cosmic-protocols//", package = "cosmic-client-toolkit", rev = "32283d7" }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "32283d7" }
+cctk = { git = "https://github.com/pop-os/cosmic-protocols//", package = "cosmic-client-toolkit", rev = "c0cff4d" }
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "c0cff4d" }
 
 # [patch."https://github.com/pop-os/libcosmic"]
 # iced_core = { git = "https://github.com/pop-os/libcosmic//", branch = "theme-v2" }
