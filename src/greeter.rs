@@ -281,12 +281,18 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         sessions
     };
 
-    match process::Command::new("cosmic-osk").spawn() {
+    match process::Command::new("cosmic-osk")
+        .env("RUST_LOG", "cosmic_osk=info")
+        .spawn()
+    {
         Ok(mut child) => {
-            thread::spawn(move || child.wait().unwrap());
+            thread::spawn(move || match child.wait() {
+                Ok(status) => tracing::warn!("cosmic-osk exited: {}", status),
+                Err(err) => tracing::error!("failed to wait on cosmic-osk: {}", err),
+            });
         }
         Err(err) => {
-            tracing::warn!("failed to spawn cosmic-osk: {}", err);
+            tracing::error!("failed to spawn cosmic-osk: {}", err);
         }
     }
 
@@ -1329,7 +1335,7 @@ impl cosmic::Application for App {
                                     let output = output.clone();
                                     SctkLayerSurfaceSettings {
                                         id: surface_id,
-                                        layer: Layer::Overlay,
+                                        layer: Layer::Bottom,
                                         keyboard_interactivity: KeyboardInteractivity::Exclusive,
                                         input_zone: None,
                                         anchor: Anchor::TOP
@@ -1337,7 +1343,7 @@ impl cosmic::Application for App {
                                             | Anchor::BOTTOM
                                             | Anchor::RIGHT,
                                         output: IcedOutput::Output(output),
-                                        namespace: "cosmic-locker".into(),
+                                        namespace: "cosmic-greeter".into(),
                                         size: Some((None, None)),
                                         margin: IcedMargin {
                                             top: 0,
