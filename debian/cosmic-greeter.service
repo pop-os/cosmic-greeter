@@ -1,8 +1,8 @@
 [Unit]
 Description=COSMIC Greeter
 After=systemd-user-sessions.service plymouth-quit-wait.service cosmic-greeter-daemon.service
-After=getty@tty1.service
-Conflicts=getty@tty1.service
+After=getty@tty1.service ksmcon@tty1.service
+Conflicts=getty@tty1.service kmscon@tty1.service
 Wants=cosmic-greeter-daemon.service
 
 [Service]
