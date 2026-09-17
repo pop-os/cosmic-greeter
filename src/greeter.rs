@@ -612,7 +612,7 @@ impl App {
                     .padding(12.0)
                     .on_press(Message::DropdownToggle(Dropdown::Keyboard)),
                 )
-                .max_width(92),
+                .max_width(80),
             )
             .position(widget::popover::Position::Bottom);
             if matches!(self.dropdown_opt, Some(Dropdown::Keyboard)) {
