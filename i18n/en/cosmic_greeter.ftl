@@ -9,6 +9,9 @@ caps-lock = Caps Lock is active.
 enter-user = Enter name manually...
 type-username = Username:
 keyboard-layout = Keyboard layout
+hide-pin-pad = Hide numeric keypad
+pin-pad-backspace = Delete last digit
+pin-pad-submit = Submit
 restart = Restart
 restart-now = Restart now?
 restart-timeout = The system will restart automatically
@@ -27,6 +30,7 @@ shutdown-timeout = The system will shut down automatically
     *[other] in {$seconds} seconds.
   }
 suspend = Suspend
+show-pin-pad = Show numeric keypad
 user = User
 
 # Authentication errors
