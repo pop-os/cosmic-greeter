@@ -282,6 +282,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     };
 
     match process::Command::new("cosmic-osk")
+        .arg("overlay")
         .env("RUST_LOG", "cosmic_osk=info")
         .spawn()
     {
@@ -1335,7 +1336,7 @@ impl cosmic::Application for App {
                                     let output = output.clone();
                                     SctkLayerSurfaceSettings {
                                         id: surface_id,
-                                        layer: Layer::Bottom,
+                                        layer: Layer::Top,
                                         keyboard_interactivity: KeyboardInteractivity::Exclusive,
                                         input_zone: None,
                                         anchor: Anchor::TOP
