@@ -1552,11 +1552,17 @@ impl cosmic::Application for App {
                 self.send_request(Request::PostAuthMessageResponse { response });
             }
             Message::AuthError(error) => {
-                // The conversation continues, so acknowledge like any other
-                // non-interactive auth message rather than cancelling the session.
                 self.common.error_opt = Some(error);
-                self.authenticating = false;
-                self.send_request(Request::PostAuthMessageResponse { response: None });
+                if self.authenticating {
+                    // A submitted password failed: cancel the session so the PAM
+                    // transaction completes and pam_faillock records the failure.
+                    self.authenticating = false;
+                    self.send_request(Request::CancelSession);
+                } else {
+                    // Non-interactive auth error (e.g. pam_fprintd mismatch): acknowledge
+                    // and keep the session alive so retries work without losing device claim.
+                    self.send_request(Request::PostAuthMessageResponse { response: None });
+                }
             }
             Message::Login => {
                 self.common.prompt_opt = None;
