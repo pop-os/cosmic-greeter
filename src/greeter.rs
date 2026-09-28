@@ -604,7 +604,11 @@ impl App {
                 widget::container(
                     widget::button::custom(
                         widget::text(
-                            self.common.active_layouts[self.common.current_keyboard_layout].name(),
+                            self.common
+                                .active_layouts
+                                .get(self.common.current_keyboard_layout)
+                                .map(|x| x.name())
+                                .unwrap_or_default(),
                         )
                         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
                         .height(16)
