@@ -65,15 +65,20 @@ impl UserFilter {
         }
     }
 
-    pub fn filter(&self, user: &pwd::Passwd) -> bool {
-        if (user.uid < self.uid_min || user.uid > self.uid_max)
-            && !self.homed_uids.contains(&user.uid)
-        {
-            // Skip system accounts
-            return false;
-        }
+    // Minimum UID allowed for human accounts
+    pub fn uid_min(&self) -> u32 {
+        self.uid_min
+    }
 
-        match Path::new(&user.shell).file_name().and_then(|x| x.to_str()) {
+    // Maximum UID allowed for local human accounts
+    pub fn uid_max(&self) -> u32 {
+        self.uid_max
+    }
+
+    // Validates whether the account shell is an interactive login shell.
+    // Rejects non-interactive/disabled shells.
+    fn has_valid_shell(shell: &str) -> bool {
+        match Path::new(shell).file_name().and_then(|x| x.to_str()) {
             // Skip shell ending in false
             Some("false") => false,
             // Skip shell ending in nologin
@@ -81,6 +86,83 @@ impl UserFilter {
             _ => true,
         }
     }
+
+    // Filter for local users 
+    pub fn filter_local(&self, user: &pwd::Passwd) -> bool {
+        // Enforces UID_MIN ... UID_MAX range and discard pseudo users
+        if ((user.uid < self.uid_min || user.uid > self.uid_max)
+            && !self.homed_uids.contains(&user.uid))
+            || user.uid == 65534
+            || user.uid == u32::MAX
+        {
+            return false;
+        }
+        // Has valid shell?
+        Self::has_valid_shell(&user.shell)
+    }
+
+    // Filter for cached AccountsService
+    pub fn filter_cached(&self, user: &pwd::Passwd) -> bool {
+        // Enforces UID >= UID_MIN but no upper bound to allow 32-bit mapped enterprise UIDs
+        // Discard pseudo users
+        if user.uid < self.uid_min || user.uid == 65534 || user.uid == u32::MAX {
+            return false;
+        }
+        // Has valid shell?
+        Self::has_valid_shell(&user.shell)
+    }
+
+    // Default filter applied to user accounts. 
+    pub fn filter(&self, user: &pwd::Passwd) -> bool {
+        // Delegate to `filter_cached` to support both local and enterprise accounts.
+        self.filter_cached(user)
+    }
+}
+
+// D-Bus proxy interface for AccountsService manager (`org.freedesktop.Accounts`).
+// Used to discover cached domain/local user accounts and persist newly authenticated users.
+#[zbus::proxy(
+    default_service = "org.freedesktop.Accounts",
+    default_path = "/org/freedesktop/Accounts",
+    interface = "org.freedesktop.Accounts"
+)]
+pub trait Accounts {
+    // Lists object paths of all cached users on the system
+    fn list_cached_users(&self) -> zbus::Result<Vec<zbus::zvariant::OwnedObjectPath>>;
+    // Finds a user's D-Bus object path given their username.
+    fn find_user_by_name(&self, name: &str) -> zbus::Result<zbus::zvariant::OwnedObjectPath>;
+    // Caches a user by name in AccountsService so they persist in the cached user list across reboots.
+    fn cache_user(&self, name: &str) -> zbus::Result<zbus::zvariant::OwnedObjectPath>;
+}
+
+// D-Bus proxy interface for individual AccountsService user objects (`org.freedesktop.Accounts.User`).
+// Exposes account metadata including full name, avatar icon path, UID, shell, and account status flags.
+#[zbus::proxy(
+    default_service = "org.freedesktop.Accounts",
+    interface = "org.freedesktop.Accounts.User"
+)]
+pub trait AccountsUser {
+    // Login username
+    #[zbus(property)]
+    fn user_name(&self) -> zbus::Result<String>;
+    // Real user name
+    #[zbus(property)]
+    fn real_name(&self) -> zbus::Result<String>;
+    // POSIX UID
+    #[zbus(property)]
+    fn uid(&self) -> zbus::Result<u64>;
+    // File path to user avatar icon image.
+    #[zbus(property)]
+    fn icon_file(&self) -> zbus::Result<String>;
+    // User's default login shell.
+    #[zbus(property)]
+    fn shell(&self) -> zbus::Result<String>;
+    // True if the account is flagged as a system/service account.
+    #[zbus(property)]
+    fn system_account(&self) -> zbus::Result<bool>;
+    // True if the account is administratively locked/disabled.
+    #[zbus(property)]
+    fn locked(&self) -> zbus::Result<bool>;
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -128,20 +210,45 @@ impl UserData {
         }
     }
 
-    fn load_icon_as_user(&mut self) {
-        //TODO: use accountsservice?
-        let icon_paths = [
-            //IMPORTANT: This file is owned by root and safe to read (it won't be a link to /etc/shadow for example)
-            // It may not exist if the user uses one of the system icons. In that case, we should read the
-            // information in /var/lib/AccountsService/users, and then read the icon path as the user
-            Path::new("/var/lib/AccountsService/icons").join(&self.name),
-            // systemd-homed cache
-            Path::new("/var/cache/systemd/home")
-                .join(&self.name)
-                .join("avatar"),
-        ];
+    // Loads the user's desktop configuration without an explicit AccountsService icon path.
+    pub fn load_config_as_user(&mut self) {
+        self.load_config_as_user_with_icon(None);
+    }
 
-        for icon_path in icon_paths {
+    // Loads the user's desktop configuration (theme, wallpaper, keyboard, applets) and resolves their avatar icon.
+    //
+    // Icon resolution order:
+    // 1. Explicit path from AccountsService `IconFile` property (`icon_file_opt`), opened securely with `O_NOFOLLOW`.
+    // 2. Fallback to `/var/lib/AccountsService/icons/<username>`.
+    pub fn load_config_as_user_with_icon(&mut self, icon_file_opt: Option<&str>) {
+        self.icon_opt = None;
+        self.theme_opt = None;
+        self.theme_builder_opt = None;
+        self.bg_state = Default::default();
+        self.xkb_config_opt = None;
+        self.time_applet_config = Default::default();
+
+        // Read icon from AccountsService icon_file if provided
+        if let Some(icon_path_str) = icon_file_opt {
+            let icon_path = Path::new(icon_path_str);
+            if icon_path.is_file() {
+                if let Ok(mut file) = fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW)
+                    .open(icon_path)
+                {
+                    let mut icon_data = Vec::new();
+                    if let Ok(count) = file.read_to_end(&mut icon_data) {
+                        icon_data.truncate(count);
+                        self.icon_opt = Some(icon_data);
+                    }
+                }
+            }
+        }
+
+        // Fallback to /var/lib/AccountsService/icons/<username>
+        if self.icon_opt.is_none() {
+            let icon_path = Path::new("/var/lib/AccountsService/icons").join(&self.name);
             match fs::OpenOptions::new()
                 .read(true)
                 // Do not follow symlinks
@@ -154,7 +261,6 @@ impl UserData {
                         Ok(count) => {
                             icon_data.truncate(count);
                             self.icon_opt = Some(icon_data);
-                            return;
                         }
                         Err(err) => {
                             tracing::error!("failed to read icon data {:?}: {:?}", icon_path, err);
@@ -166,19 +272,6 @@ impl UserData {
                 }
             }
         }
-
-        tracing::error!("failed to load icon for user {:?}", self.name)
-    }
-
-    pub fn load_config_as_user(&mut self) {
-        self.icon_opt = None;
-        self.theme_opt = None;
-        self.theme_builder_opt = None;
-        self.bg_state = Default::default();
-        self.xkb_config_opt = None;
-        self.time_applet_config = Default::default();
-
-        self.load_icon_as_user();
 
         let mut is_dark = true;
         match cosmic_theme::ThemeMode::config() {
