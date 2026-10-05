@@ -1,3 +1,9 @@
+cosmic-greeter (1.10.0) noble; urgency=medium
+
+  * Epoch 1.10.0 version update
+
+ -- Michael Murphy <michael@mmurphy.dev>  Mon, 05 Oct 2026 21:20:24 +0200
+
 cosmic-greeter (0.1.0) jammy; urgency=medium
 
   * Initial release.
