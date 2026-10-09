@@ -35,3 +35,4 @@ auth-error-credentials = Felaktigt lösenord. Kontrollera din tangentbordslayout
 auth-error-denied = Åtkomst nekas.
 auth-error-maxtries = För många misslyckade försök att autentisera.
 auth-error-account = Kontot är otillgängligt eller avaktiverat.
+on-screen-keyboard = Virtuellt tangentbord

@@ -37,3 +37,4 @@ auth-error-denied = Доступ відхилено.
 auth-error-maxtries = Забагато невдалих спроб автентифікації.
 auth-error-account = Обліковий запис недоступний або вимкнений.
 authenticating = Автентифікація...
+on-screen-keyboard = Екранна клавіатура

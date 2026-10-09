@@ -35,3 +35,4 @@ auth-error-denied = Zugriff verweigert.
 auth-error-maxtries = Zu viele fehlgeschlagene Authentifizierungsversuche.
 auth-error-account = Konto ist nicht verfügbar oder deaktiviert.
 authenticating = Authentifizierung ...
+on-screen-keyboard = Bildschirmtastatur

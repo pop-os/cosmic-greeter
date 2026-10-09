@@ -35,3 +35,4 @@ auth-error-credentials = Неверный пароль. Проверьте ра�
 auth-error-denied = Отказано в доступе.
 auth-error-maxtries = Слишком много неудачных попыток аутентификации.
 auth-error-account = Учетная запись недоступна или отключена.
+on-screen-keyboard = Экранная клавиатура

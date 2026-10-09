@@ -35,3 +35,4 @@ authenticating = Πιστοποίηση...
 auth-error-default = Η πιστοποίηση απέτυχε. Δοκιμάστε ξανά.
 auth-error-denied = Δεν επιτράπηκε η πρόσβαση.
 auth-error-maxtries = Πάρα πολλές αποτυχημένες απόπειρες πιστοποίησης.
+on-screen-keyboard = Πληκτρολόγιο οθόνης

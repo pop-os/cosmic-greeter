@@ -35,3 +35,4 @@ auth-error-credentials = Mot de passe incorrect. Vérifiez votre disposition de 
 auth-error-denied = Accès refusé.
 auth-error-maxtries = Trop de tentatives d'authentification échouées.
 auth-error-account = Compte indisponible ou désactivé.
+on-screen-keyboard = Clavier virtuel
