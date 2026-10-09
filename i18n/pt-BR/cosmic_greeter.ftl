@@ -35,3 +35,4 @@ auth-error-credentials = Senha incorreta. Verifique o layout do seu teclado e te
 auth-error-denied = Acesso negado.
 auth-error-maxtries = Muitas tentativas de autenticação falharam.
 auth-error-account = A conta está indisponível ou desativada.
+on-screen-keyboard = Teclado virtual

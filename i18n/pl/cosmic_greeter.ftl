@@ -35,3 +35,4 @@ auth-error-credentials = Nieprawidłowe hasło. Sprawdź układ klawiatury i spr
 auth-error-denied = Odmowa dostępu.
 auth-error-maxtries = Zbyt dużo nieudanych prób uwierzytelnienia.
 auth-error-account = Konto jest niedostępne lub wyłączone.
+on-screen-keyboard = Klawiatura ekranowa

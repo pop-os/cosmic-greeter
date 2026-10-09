@@ -35,3 +35,4 @@ auth-error-credentials = 密碼錯誤。請檢查您的鍵盤配置並再試一�
 auth-error-denied = 拒絕存取。
 auth-error-maxtries = 身分驗證失敗次數過多。
 auth-error-account = 帳號無法使用或已停用。
+on-screen-keyboard = 熒幕鍵盤

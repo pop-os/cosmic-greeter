@@ -35,3 +35,4 @@ auth-error-credentials = 密码错误。请检查您的键盘布局并重试。
 auth-error-denied = 访问被拒绝。
 auth-error-maxtries = 身份验证失败次数过多。
 auth-error-account = 账户不可用或已被禁用。
+on-screen-keyboard = 屏幕键盘
