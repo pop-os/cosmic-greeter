@@ -869,7 +869,9 @@ impl App {
                             .on_submit(Message::Username),
                         )
                     }
-                    if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt {
+                    if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt
+                        && !self.entering_name
+                    {
                         match value_opt {
                             Some(value) => {
                                 // Only show password input when not authenticating
