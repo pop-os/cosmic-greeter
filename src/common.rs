@@ -312,11 +312,10 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                 }
             }
             Message::OutputEvent(output_event, output) => {
-                if self.wayland_connection.is_none() {
-                    if let Some(backend) = output.backend().upgrade() {
+                if self.wayland_connection.is_none()
+                    && let Some(backend) = output.backend().upgrade() {
                         self.wayland_connection = Some(Connection::from_backend(backend));
                     }
-                }
                 if let Some(on_output_event) = &self.on_output_event {
                     return Task::done(cosmic::Action::App(on_output_event(output_event, output)));
                 }
@@ -391,8 +390,8 @@ impl<M: From<Message> + Send + 'static> Common<M> {
     }
 
     pub fn blur_rects(&mut self, id: SurfaceId) -> Task<M> {
-        if let Some(output) = self.subsurface_outputs.get(&id) {
-            if let Some(rect) = self.subsurface_rects.get(output) {
+        if let Some(output) = self.subsurface_outputs.get(&id)
+            && let Some(rect) = self.subsurface_rects.get(output) {
                 let x = rect.x;
                 let y = rect.y;
                 if let Some(rect) = self.rectangles.get(&(id, false)) {
@@ -426,7 +425,6 @@ impl<M: From<Message> + Send + 'static> Common<M> {
                     tracing::error!("no rectangle for surface {id:?}");
                 }
             }
-        }
         Task::none()
     }
 
