@@ -35,3 +35,4 @@ shutdown-timeout =
        *[other] { $seconds } sekunnin kuluttua.
     }
 type-username = Käyttäjätunnus:
+on-screen-keyboard = Näyttönäppäimistö

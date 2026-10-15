@@ -35,3 +35,4 @@ auth-error-credentials = Қате пароль. Пернетақта жайма�
 auth-error-denied = Қол жеткізуге тыйым салынды.
 auth-error-maxtries = Аутентификациялау әрекеттері тым көп болды.
 auth-error-account = Тіркелгі қолжетімсіз немесе сөндірілген.
+on-screen-keyboard = Экрандағы пернетақта

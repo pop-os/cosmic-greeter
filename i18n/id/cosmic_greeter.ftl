@@ -35,3 +35,4 @@ auth-error-credentials = Kata sandi salah. Silakan periksa tata letak papan keti
 auth-error-denied = Akses ditolak.
 auth-error-maxtries = Terlalu banyak percobaan autentikasi yang gagal.
 auth-error-account = Akun tidak tersedia atau dinonaktifkan.
+on-screen-keyboard = Papan ketik di layar
