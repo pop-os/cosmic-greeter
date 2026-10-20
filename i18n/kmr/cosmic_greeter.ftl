@@ -35,3 +35,4 @@ auth-error-credentials = Borînpeyv şaş e. Tika ye awayê kilîtdankê xwe kon
 auth-error-denied = Gihîştin hate astengkirin.
 auth-error-maxtries = Gelek hewldanên rastandinê yên şaş.
 auth-error-account = Jimarê bikarhêner tune ye yan jî neçalak e.
+on-screen-keyboard = Kilîtdanka li ser dîmenderê

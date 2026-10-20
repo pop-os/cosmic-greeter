@@ -15,3 +15,4 @@ shutdown-timeout =
     }
 cancel = Anullar
 user = Utilizaire
+on-screen-keyboard = Clavièr virtual
