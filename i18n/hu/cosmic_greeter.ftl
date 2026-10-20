@@ -35,3 +35,4 @@ auth-error-credentials = Hibás jelszó. Ellenőrizd a billentyűzetkiosztást �
 auth-error-denied = Hozzáférés megtagadva.
 auth-error-account = A fiók nem érhető el vagy le van tiltva.
 auth-error-maxtries = Túl sok sikertelen bejelentkezési kísérlet.
+on-screen-keyboard = Képernyő-billentyűzet

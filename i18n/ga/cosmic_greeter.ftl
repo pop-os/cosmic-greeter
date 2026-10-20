@@ -35,3 +35,4 @@ auth-error-credentials = Pasfhocal mícheart. Seiceáil leagan amach do mhéarch
 auth-error-denied = Rochtain diúltaithe.
 auth-error-maxtries = An iomarca iarrachtaí fíordheimhnithe nár éirigh leo.
 auth-error-account = Níl an cuntas ar fáil nó díchumasaithe é.
+on-screen-keyboard = Méarchlár ar an scáileán
