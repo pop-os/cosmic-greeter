@@ -38,6 +38,12 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::common::{self, Common, DEFAULT_MENU_ITEM_HEIGHT, MAX_WIDTH};
 use crate::fl;
 
+/// Minimum time duration of a PAM attempt.
+///
+/// If a failed PAM attempt takes less time than this, wait out the rest of
+/// this duration before retrying.
+const PAM_MIN_ATTEMPT_DURATION: Duration = Duration::from_millis(500);
+
 fn lockfile_opt() -> Option<PathBuf> {
     let runtime_dir = dirs::runtime_dir()?;
     let session_id = env::var("XDG_SESSION_ID").ok()?;
@@ -935,6 +941,7 @@ impl cosmic::Application for App {
 
                                 let pam_future = async {
                                     loop {
+                                        let attempt_start = tokio::time::Instant::now();
                                         let (value_tx, value_rx) = mpsc::channel(16);
                                         msg_tx
                                             .send(cosmic::Action::App(Message::Channel(value_tx)))
@@ -973,6 +980,9 @@ impl cosmic::Application for App {
                                                     .unwrap();
                                             }
                                         }
+
+                                        let retry_at = attempt_start + PAM_MIN_ATTEMPT_DURATION;
+                                        tokio::time::sleep_until(retry_at).await;
                                     }
                                 };
 
