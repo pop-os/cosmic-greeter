@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Enable jpeg-xl support for image-rs.
-    let _ = jxl_oxide::integration::register_image_decoding_hook();
+    jxl_image_rs_integration::register_image_decoding_hook();
 
     match pwd::Passwd::current_user() {
         Some(current_user) => match current_user.name.as_str() {
