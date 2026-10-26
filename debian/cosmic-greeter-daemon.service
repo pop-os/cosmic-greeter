@@ -1,5 +1,7 @@
 [Unit]
 Description=COSMIC Greeter Daemon
+Wants=systemd-logind.service
+After=systemd-logind.service
 
 [Service]
 Type=dbus
