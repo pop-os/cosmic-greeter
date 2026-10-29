@@ -88,7 +88,7 @@ image = { version = "0.25", default-features = false, features = [
     "hdr",
 ] }
 # JPEG-XL support
-jxl-oxide = { version = "0.12.6", features = ["image"] }
+jxl-image-rs-integration = "0.8"
 enumflags2 = "0.7.12"
 
 [dependencies.greetd_ipc]
@@ -116,7 +116,7 @@ members = ["cosmic-greeter-config", "daemon"]
 resolver = "3"
 
 [workspace.package]
-rust-version = "1.93"
+rust-version = "1.95"
 
 [workspace.dependencies]
 tracing = "0.1"
