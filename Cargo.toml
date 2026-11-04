@@ -17,7 +17,7 @@ cosmic-bg-config.workspace = true
 cosmic-comp-config.workspace = true
 cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
-cosmic-greeter-daemon = { path = "daemon" }
+cosmic-greeter-daemon = { path = "daemon", default-features = false }
 cosmic-osk-config = { git = "https://github.com/pop-os/cosmic-osk" }
 dirs = "7"
 libcosmic = { workspace = true, features = [
@@ -50,11 +50,6 @@ cosmic-settings-accessibility-subscription = { git = "https://github.com/pop-os/
 cosmic-settings-a11y-manager-subscription = { git = "https://github.com/pop-os/cosmic-settings", default-features = false }
 cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", default-features = false, features = [
     "greeter",
-] }
-
-cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit" }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = [
-    "client",
 ] }
 
 # For network status using networkmanager feature
@@ -91,14 +86,25 @@ image = { version = "0.25", default-features = false, features = [
 jxl-image-rs-integration = "0.8"
 enumflags2 = "0.7.12"
 
+[dependencies.cctk]
+git = "https://github.com/pop-os/cosmic-protocols"
+package = "cosmic-client-toolkit"
+rev = "c0cff4d"
+
+[dependencies.cosmic-protocols]
+git = "https://github.com/pop-os/cosmic-protocols"
+default-features = false
+features = [ "client" ]
+rev = "c0cff4d"
+
 [dependencies.greetd_ipc]
 version = "0.10.3"
 features = ["tokio-codec"]
 
 [features]
 default = ["logind", "networkmanager", "upower", "systemd"]
-logind = ["cosmic-login1-zbus", "systemd"]
-systemd = ["tracing-journald"]
+logind = ["cosmic-login1-zbus"]
+systemd = ["tracing-journald", "cosmic-greeter-daemon/systemd"]
 networkmanager = ["cosmic-dbus-networkmanager"]
 upower = ["upower-zbus"]
 
@@ -159,10 +165,6 @@ default-features = false
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
 features = ["advanced-shaping"]
-
-[patch."https://github.com/pop-os/cosmic-protocols"]
-cctk = { git = "https://github.com/pop-os/cosmic-protocols//", package = "cosmic-client-toolkit", rev = "c0cff4d" }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "c0cff4d" }
 
 # [patch."https://github.com/pop-os/libcosmic"]
 # iced_core = { git = "https://github.com/pop-os/libcosmic//", branch = "theme-v2" }
