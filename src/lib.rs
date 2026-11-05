@@ -18,6 +18,8 @@ mod logind;
 #[cfg(feature = "networkmanager")]
 mod networkmanager;
 
+mod platform;
+
 #[cfg(feature = "upower")]
 mod upower;
 
