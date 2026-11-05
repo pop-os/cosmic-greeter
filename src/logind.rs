@@ -123,6 +123,7 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Message>) -> Result<(), Box<dyn E
                                 }
                                 // Immediately update time when resuming from sleep.
                                 msg_tx.send(Message::Common(common::Message::Tick)).await?;
+                                msg_tx.send(Message::Resume).await?;
                             }
                         },
                         Err(err) => {
