@@ -9,7 +9,7 @@ vergen = { version = "8", features = ["git", "gitcl"] }
 [dependencies]
 anyhow = "1"
 async-fn-stream = "0.3"
-icu = { version = "2.2.0", features = ["compiled_data"] }
+icu = { version = "2.4.0", features = ["compiled_data"] }
 jiff = "0.2"
 jiff-icu = "0.2"
 cosmic-applets-config.workspace = true
@@ -19,7 +19,7 @@ cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
 cosmic-greeter-daemon = { path = "daemon" }
 cosmic-osk-config = { git = "https://github.com/pop-os/cosmic-osk" }
-dirs = "6"
+dirs = "7"
 libcosmic = { workspace = true, features = [
     "autosize",
     "winit",
@@ -35,12 +35,12 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 pam-client = "0.5.0"
 pwd.workspace = true
 ron.workspace = true
-shlex = "1.3.0"
+shlex = "2.0"
 xkb-data = "0.2"
 xdg = "3.0"
 #TODO: reduce features
 tokio = { workspace = true, features = ["full"] }
-wayland-client = "0.31.14"
+wayland-client = "0.31.15"
 # cosmic-settings-subscriptions = { git = "https://github.com/pop-os/cosmic-settings-subscriptions", default-features = false, features = [
 #     "accessibility",
 #     "cosmic_a11y_manager",
@@ -60,9 +60,9 @@ cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default
 # For network status using networkmanager feature
 cosmic-dbus-networkmanager = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # For logind integration using logind feature
-logind-zbus = { version = "5", optional = true }
+cosmic-login1-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # For power status with upower feature
-upower_dbus = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
+upower-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings", optional = true }
 # Required for some features
 zbus = { workspace = true }
 # CLI arguments
@@ -74,8 +74,8 @@ i18n-embed = { version = "0.16", features = [
 ] }
 i18n-embed-fl = "0.10"
 rust-embed = "8"
-futures-util = "0.3.32"
-timedate-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
+futures-util = "0.3.34"
+timedate1-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
 cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
 color-eyre.workspace = true
@@ -97,10 +97,10 @@ features = ["tokio-codec"]
 
 [features]
 default = ["logind", "networkmanager", "upower", "systemd"]
-logind = ["logind-zbus", "systemd"]
+logind = ["cosmic-login1-zbus", "systemd"]
 systemd = ["tracing-journald"]
 networkmanager = ["cosmic-dbus-networkmanager"]
-upower = ["upower_dbus"]
+upower = ["upower-zbus"]
 
 [profile.dev.package.tiny-skia]
 opt-level = 2
@@ -126,8 +126,8 @@ color-eyre = "0.6.5"
 pwd = "1.4.0"
 ron = "0.12"
 serde = "1"
-tokio = "1.52.1"
-zbus = "5"
+tokio = "1.54.1"
+zbus = "6"
 kdl = "6"
 cosmic-randr-shell = { git = "https://github.com/pop-os/cosmic-randr", default-features = false }
 
