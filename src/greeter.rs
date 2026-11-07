@@ -384,6 +384,9 @@ pub enum Message {
     /// Non-fatal error message from PAM (`PAM_ERROR_MSG`), reported by greetd as an auth
     /// message of type `Error`. Unlike [`Message::Error`] the conversation stays alive.
     AuthError(String),
+    /// Non-fatal info message from PAM (`PAM_TEXT_INFO`), reported by greetd as an auth
+    /// message of type `Info`. Unlike [`Message::Error`], the conversation stays alive.
+    AuthInfo(String),
     ConfigUpdateUser,
     DialogCancel,
     DialogConfirm,
@@ -445,6 +448,7 @@ pub struct App {
 
     accessibility: Accessibility,
     authenticating: bool,
+    auth_infos: Vec<String>,
 }
 
 #[derive(Default)]
@@ -869,71 +873,58 @@ impl App {
                             .on_submit(Message::Username),
                         )
                     }
+
                     if let Some((prompt, secret, value_opt)) = &self.common.prompt_opt
                         && !self.entering_name
+                        && let Some(value) = value_opt
                     {
-                        match value_opt {
-                            Some(value) => {
-                                // Only show password input when not authenticating
-                                if !self.authenticating {
-                                    let text_input_id = self
-                                        .common
-                                        .surface_names
-                                        .get(&id)
-                                        .and_then(|id| self.common.text_input_ids.get(id))
-                                        .cloned()
-                                        .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
-                                    let mut text_input = widget::secure_input(
+                        // Only show password input when not authenticating
+                        if !self.authenticating {
+                            let text_input_id = self
+                                .common
+                                .surface_names
+                                .get(&id)
+                                .and_then(|id| self.common.text_input_ids.get(id))
+                                .cloned()
+                                .unwrap_or_else(|| cosmic::widget::Id::new("text_input"));
+                            let mut text_input = widget::secure_input(
+                                prompt.clone(),
+                                value.as_str(),
+                                Some(
+                                    common::Message::Prompt(
                                         prompt.clone(),
-                                        value.as_str(),
-                                        Some(
-                                            common::Message::Prompt(
-                                                prompt.clone(),
-                                                !*secret,
-                                                Some(value.clone()),
-                                            )
-                                            .into(),
-                                        ),
-                                        *secret,
+                                        !*secret,
+                                        Some(value.clone()),
                                     )
-                                    .id(text_input_id)
-                                    .on_input(|input| {
-                                        common::Message::Prompt(
-                                            prompt.clone(),
-                                            *secret,
-                                            Some(input),
-                                        )
-                                        .into()
-                                    })
-                                    .on_submit(|v| Message::Auth(Some(v)));
+                                    .into(),
+                                ),
+                                *secret,
+                            )
+                            .id(text_input_id)
+                            .on_input(|input| {
+                                common::Message::Prompt(prompt.clone(), *secret, Some(input)).into()
+                            })
+                            .on_submit(|v| Message::Auth(Some(v)));
 
-                                    if let Some(text_input_id) = self
-                                        .common
-                                        .surface_names
-                                        .get(&id)
-                                        .and_then(|id| self.common.text_input_ids.get(id))
-                                    {
-                                        text_input = text_input.id(text_input_id.clone());
-                                    }
-
-                                    if *secret {
-                                        text_input = text_input.password()
-                                    }
-
-                                    column = column.push(text_input);
-
-                                    if self.common.caps_lock {
-                                        column = column.push(widget::text(fl!("caps-lock")));
-                                    } else if self.common.error_opt.is_none() {
-                                        column = column.push(widget::text(""));
-                                    }
-                                }
+                            if let Some(text_input_id) = self
+                                .common
+                                .surface_names
+                                .get(&id)
+                                .and_then(|id| self.common.text_input_ids.get(id))
+                            {
+                                text_input = text_input.id(text_input_id.clone());
                             }
-                            None => {
-                                // `value_opt == None` is used for non-interactive auth messages
-                                // (e.g. PAM_TEXT_INFO via greetd). This is where fingerprint
-                                // prompts typically come through, so show the message to the user.
-                                column = column.push(widget::text(prompt));
+
+                            if *secret {
+                                text_input = text_input.password()
+                            }
+
+                            column = column.push(text_input);
+
+                            if self.common.caps_lock {
+                                column = column.push(widget::text(fl!("caps-lock")));
+                            } else if self.common.error_opt.is_none() {
+                                column = column.push(widget::text(""));
                             }
                         }
                     }
@@ -973,6 +964,16 @@ impl App {
             } else {
                 column = column.push(widget::text(""));
             }
+
+            // PAM info messages (`PAM_TEXT_INFO`), e.g. the pam_faillock lockout notice.
+            // Always pushed as a single widget so the number of children stays constant.
+            let mut infos = widget::column::with_capacity(self.auth_infos.len()).spacing(4.0);
+            if !self.entering_name {
+                for info in &self.auth_infos {
+                    infos = infos.push(widget::text(info).width(Length::Fill));
+                }
+            }
+            column = column.push(infos);
 
             id_container(
                 widget::container(column)
@@ -1214,6 +1215,7 @@ impl cosmic::Application for App {
             randr_list: None,
             surface_id_pairs: Vec::new(),
             authenticating: false,
+            auth_infos: Vec::new(),
         };
         (app, Task::batch(tasks))
     }
@@ -1228,15 +1230,6 @@ impl cosmic::Application for App {
                     self.authenticating = false;
                     self.common.prompt_opt = None;
                 }
-                // In greetd's IPC protocol, the greeter must acknowledge auth messages by
-                // sending PostAuthMessageResponse. For non-interactive "info" messages
-                // (fingerprint prompts typically come through here), the correct response
-                // is `None`. If we don't ACK, greetd will wait forever and the UI will
-                // appear "stuck" on the last info message.
-                if let common::Message::Prompt(_, _secret, None) = &common_message {
-                    self.send_request(Request::PostAuthMessageResponse { response: None });
-                }
-
                 return self.common.update(common_message);
             }
             Message::OutputEvent(output_event, output) => {
@@ -1393,6 +1386,7 @@ impl cosmic::Application for App {
             Message::Socket(socket_state) => {
                 self.socket_state = socket_state;
                 if let SocketState::Open = &self.socket_state {
+                    self.auth_infos.clear();
                     // When socket is opened, send create session
                     self.send_request(Request::CreateSession {
                         username: self.selected_username.username.clone(),
@@ -1568,6 +1562,16 @@ impl cosmic::Application for App {
                     // non-interactive auth message rather than cancelling the session.
                     self.send_request(Request::PostAuthMessageResponse { response: None });
                 }
+            }
+            Message::AuthInfo(info) => {
+                // Repeated prompts (e.g. fingerprint retries) send the same text again.
+                if self.auth_infos.last() != Some(&info) {
+                    self.auth_infos.push(info);
+                }
+                // A previous "wrong password" error is misleading once PAM explains
+                // the situation itself (e.g. account locked).
+                self.common.error_opt = None;
+                self.send_request(Request::PostAuthMessageResponse { response: None });
             }
             Message::Login => {
                 self.common.prompt_opt = None;

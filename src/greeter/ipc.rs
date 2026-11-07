@@ -103,16 +103,9 @@ pub fn subscription() -> Subscription<Message> {
                                                 .await;
                                         }
                                         greetd_ipc::AuthMessageType::Info => {
-                                            _ = sender
-                                                .send(
-                                                    common::Message::Prompt(
-                                                        auth_message,
-                                                        false,
-                                                        None,
-                                                    )
-                                                    .into(),
-                                                )
-                                                .await;
+                                            // PAM_TEXT_INFO: forward informational messages
+                                            // without interrupting authentication.
+                                            _ = sender.send(Message::AuthInfo(auth_message)).await;
                                         }
                                         greetd_ipc::AuthMessageType::Error => {
                                             // PAM_ERROR_MSG: a failed attempt, not a dead session.
