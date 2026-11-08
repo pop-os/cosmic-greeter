@@ -8,7 +8,7 @@ use cctk::sctk::reexports::calloop;
 use color_eyre::eyre::WrapErr;
 use cosmic::app::{Core, Settings, Task};
 use cosmic::cctk::wayland_protocols::xdg::shell::client::xdg_positioner::Gravity;
-use cosmic::cosmic_config::{self, ConfigSet};
+use cosmic::cosmic_config::{self, ConfigSet, CosmicConfigEntry};
 use cosmic::cosmic_theme::{self, CosmicPalette};
 use cosmic::desktop::fde::{DesktopEntry, get_languages_from_env};
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit};
@@ -31,6 +31,7 @@ use cosmic::surface::action::{LiveSettings, app_layer_shell};
 use cosmic::widget::{id_container, text};
 use cosmic::{Element, executor, surface, theme, widget};
 use cosmic_greeter_config::Config as CosmicGreeterConfig;
+use cosmic_greeter_daemon::{AccelConfig, AccelProfile, CosmicCompConfig, InputConfig};
 use cosmic_greeter_daemon::{UserData, UserFilter};
 use cosmic_randr_shell::{KdlParseWithError, List};
 use cosmic_settings_a11y_manager_subscription::{AccessibilityEvent, AccessibilityRequest};
@@ -1079,6 +1080,53 @@ impl App {
         }
     }
 
+    fn with_explicit_defaults(mut config: InputConfig) -> InputConfig {
+        if config.acceleration.is_none() {
+            config.acceleration = Some(AccelConfig {
+                profile: Some(AccelProfile::Adaptive),
+                speed: 0.0,
+            });
+        }
+        if config.left_handed.is_none() {
+            config.left_handed = Some(false);
+        }
+        config
+    }
+
+    fn apply_input_settings(&self) {
+        let Some(user_data) = self
+            .selected_username
+            .data_idx
+            .and_then(|i| self.flags.user_datas.get(i))
+        else {
+            return;
+        };
+
+        let handler = match cosmic_config::Config::new(
+            "com.system76.CosmicComp",
+            CosmicCompConfig::VERSION,
+        ) {
+            Ok(handler) => handler,
+            Err(err) => {
+                tracing::error!("failed to open cosmic-comp config: {err}");
+                return;
+            }
+        };
+
+        let input_default = Self::with_explicit_defaults(user_data.input_default.clone());
+        let input_touchpad = Self::with_explicit_defaults(user_data.input_touchpad.clone());
+
+        if let Err(err) = handler.set("input_default", &input_default) {
+            tracing::error!("failed to set input_default: {err}");
+        }
+        if let Err(err) = handler.set("input_touchpad", &input_touchpad) {
+            tracing::error!("failed to set input_touchpad: {err}");
+        }
+        if let Err(err) = handler.set("keyboard_config", &user_data.keyboard_config) {
+            tracing::error!("failed to set keyboard_config: {err}");
+        }
+    }
+    
     fn update_user_data(&mut self) -> Task<Message> {
         let user_data = match self
             .selected_username
@@ -1092,6 +1140,7 @@ impl App {
         };
 
         self.common.update_user_data(user_data);
+        self.apply_input_settings();
 
         if let Some(builder) = &user_data.theme_builder_opt {
             self.theme_builder = builder.clone();
@@ -1422,6 +1471,7 @@ impl cosmic::Application for App {
                         .position(|d| d.name == username),
                     username,
                 };
+                self.apply_input_settings();
                 if focus_input {
                     return Task::batch([
                         self.common.dropdown_blur_rects(false),
