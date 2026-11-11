@@ -1223,13 +1223,14 @@ dependencies = [
 [[package]]
 name = "cosmic-comp-config"
 version = "1.0.0"
-source = "git+https://github.com/pop-os/cosmic-comp#63dacd148f634023f904d27e94ce0da93eef6710"
+source = "git+https://github.com/hojjatabdollahi/cosmic-comp?branch=hojjat%2Ffix-output-arrangement#816b3a0d620ac954372fb37e28438398315f7b4b"
 dependencies = [
  "cosmic-config",
  "cosmic-randr-shell",
  "input",
  "ron 0.12.3",
  "serde",
+ "slotmap",
  "tracing",
 ]
 
