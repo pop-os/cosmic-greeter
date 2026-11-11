@@ -1,8 +1,8 @@
 use cosmic::iced::Subscription;
 use cosmic::iced::futures::channel::mpsc;
 use cosmic::iced::futures::{SinkExt, StreamExt};
-use logind_zbus::manager::{InhibitType, ManagerProxy};
-use logind_zbus::session::SessionProxy;
+use cosmic_login1_zbus::manager::{InhibitType, ManagerProxy};
+use cosmic_login1_zbus::session::SessionProxy;
 use std::any::TypeId;
 use std::error::Error;
 use std::os::fd::OwnedFd;
@@ -15,18 +15,20 @@ use crate::locker::Message;
 
 /// Checks whether logind (either elogind or systemd-logind) is reachable on the system bus.
 pub fn is_available() -> bool {
-    fn ping() -> zbus::Result<()> {
-        let connection = zbus::blocking::Connection::system()?;
-        connection.call_method(
-            Some("org.freedesktop.login1"),
-            "/org/freedesktop/login1",
-            Some("org.freedesktop.DBus.Peer"),
-            "Ping",
-            &(),
-        )?;
+    async fn ping() -> zbus::Result<()> {
+        let connection = zbus::Connection::system().await?;
+        connection
+            .call_method(
+                Some("org.freedesktop.login1"),
+                "/org/freedesktop/login1",
+                Some("org.freedesktop.DBus.Peer"),
+                "Ping",
+                &(),
+            )
+            .await?;
         Ok(())
     }
-    if let Err(err) = ping() {
+    if let Err(err) = zbus::block_on(ping()) {
         tracing::info!("logind not available: {}", err);
         false
     } else {
@@ -58,7 +60,7 @@ async fn inhibit(manager: &ManagerProxy<'_>) -> zbus::Result<OwnedFd> {
     let why = "COSMIC Greeter needs to display a lock screen";
     let mode = "delay";
     //TODO: update logind-zbus to fix inhibit signature
-    let fd: zbus::zvariant::OwnedFd = manager
+    let fd: zbus::OwnedFd = manager
         .inner()
         .call("Inhibit", &(what, who, why, mode))
         .await?;
@@ -92,7 +94,7 @@ pub async fn handler(msg_tx: &mut mpsc::Sender<Message>) -> Result<(), Box<dyn E
         .get_session_by_PID(std::os::unix::process::parent_id())
         .await?;
     let session = SessionProxy::builder(&connection)
-        .path(&session_path)?
+        .path(&session_path)
         .build()
         .await?;
 

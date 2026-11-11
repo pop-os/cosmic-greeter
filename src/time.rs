@@ -11,7 +11,7 @@ use icu::locale::preferences::extensions::unicode::keywords::HourCycle;
 use jiff::tz::TimeZone;
 use jiff_icu::ConvertFrom;
 use std::time::Duration;
-use timedate_zbus::TimeDateProxy;
+use timedate1_zbus::TimeDateProxy;
 use tokio::time;
 
 #[derive(Debug, Clone)]

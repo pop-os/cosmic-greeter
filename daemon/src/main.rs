@@ -129,9 +129,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .try_init()
         .wrap_err("failed to initialize logger")?;
 
-    let _conn = Builder::system()?
-        .name("com.system76.CosmicGreeter")?
-        .serve_at("/com/system76/CosmicGreeter", GreeterProxy)?
+    let _conn = Builder::system()
+        .name("com.system76.CosmicGreeter")
+        .serve_at("/com/system76/CosmicGreeter", GreeterProxy)
         .build()
         .await?;
 

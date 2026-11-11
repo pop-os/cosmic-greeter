@@ -4,7 +4,7 @@ use cosmic::iced::{Subscription, stream};
 use futures_util::select;
 use std::any::TypeId;
 use std::time::Duration;
-use upower_dbus::{BatteryState, BatteryType, UPowerProxy};
+use upower_zbus::{BatteryState, BatteryType, UPowerProxy};
 use zbus::{Connection, Result};
 
 pub fn subscription() -> Subscription<Option<(f64, bool, bool)>> {
