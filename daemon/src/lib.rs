@@ -11,7 +11,8 @@ use zbus::Connection;
 pub use cosmic_applets_config::time::TimeAppletConfig;
 pub use cosmic_bg_config::state::State as BgState;
 pub use cosmic_bg_config::{Color, Source as BgSource};
-pub use cosmic_comp_config::{CosmicCompConfig, XkbConfig, ZoomConfig};
+pub use cosmic_comp_config::input::{AccelConfig, AccelProfile, InputConfig};
+pub use cosmic_comp_config::{CosmicCompConfig, KeyboardConfig, XkbConfig, ZoomConfig};
 pub use cosmic_theme::{Theme, ThemeBuilder};
 
 pub struct UserFilter {
@@ -94,6 +95,9 @@ pub struct UserData {
     pub bg_state: BgState,
     pub bg_path_data: BTreeMap<PathBuf, Vec<u8>>,
     pub xkb_config_opt: Option<XkbConfig>,
+    pub input_default: InputConfig,
+    pub input_touchpad: InputConfig,
+    pub keyboard_config: KeyboardConfig,
     pub time_applet_config: TimeAppletConfig,
     pub accessibility_zoom: ZoomConfig,
     pub kdl_output_lists: Vec<String>,
@@ -176,6 +180,9 @@ impl UserData {
         self.theme_builder_opt = None;
         self.bg_state = Default::default();
         self.xkb_config_opt = None;
+        self.input_default = Default::default();
+        self.input_touchpad = Default::default();
+        self.keyboard_config = Default::default();
         self.time_applet_config = Default::default();
 
         self.load_icon_as_user();
@@ -270,6 +277,9 @@ impl UserData {
                     Ok(config) => {
                         self.xkb_config_opt = Some(config.xkb_config);
                         self.accessibility_zoom = config.accessibility_zoom;
+                        self.input_default = config.input_default;
+                        self.input_touchpad = config.input_touchpad;
+                        self.keyboard_config = config.keyboard_config;
                     }
                     Err((errs, config)) => {
                         tracing::error!("errors loading cosmic-comp config: {:?}", errs);
