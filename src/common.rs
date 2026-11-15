@@ -121,7 +121,7 @@ impl<M: From<Message> + Send + 'static> Common<M> {
             core,
             error_opt: None,
             fallback_background: widget::image::Handle::from_bytes(
-                include_bytes!("../res/background.jpg").as_slice(),
+                include_bytes!("../res/background.png").as_slice(),
             ),
             layouts_opt,
             network_icon_opt: None,
