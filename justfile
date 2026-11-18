@@ -28,6 +28,13 @@ daemon-dst := base-dir / 'bin' / name + '-daemon'
 start-src := name + '-start.sh'
 start-dst := base-dir / 'bin' / name + '-start'
 
+# Lock screen PAM stacks (debian/rules installs these via dh_installpam)
+pam-dir := absolute_path(clean(rootdir / 'etc' / 'pam.d'))
+pam-password-src := 'debian' / name + '.' + name + '-password.pam'
+pam-password-dst := pam-dir / name + '-password'
+pam-fingerprint-src := 'debian' / name + '.' + name + '-fingerprint.pam'
+pam-fingerprint-dst := pam-dir / name + '-fingerprint'
+
 dbus-src := 'dbus' / APPID + '.conf'
 dbus-dst := base-dir / 'share' / 'dbus-1' / 'system.d' / APPID + '.conf'
 
@@ -79,10 +86,12 @@ install-debian:
 install: install-debian
     install -Dm0644 {{sysusers-src}} {{sysusers-dst}}
     install -Dm0644 {{tmpfiles-src}} {{tmpfiles-dst}}
+    install -Dm0644 {{pam-password-src}} {{pam-password-dst}}
+    install -Dm0644 {{pam-fingerprint-src}} {{pam-fingerprint-dst}}
 
 # Uninstalls installed files
 uninstall:
-    rm {{start-dst}} {{bin-dst}} {{daemon-dst}} {{dbus-dst}} {{sysusers-dst}} {{tmpfiles-dst}}
+    rm {{start-dst}} {{bin-dst}} {{daemon-dst}} {{dbus-dst}} {{sysusers-dst}} {{tmpfiles-dst}} {{pam-password-dst}} {{pam-fingerprint-dst}}
 
 # Vendor dependencies locally
 vendor:
