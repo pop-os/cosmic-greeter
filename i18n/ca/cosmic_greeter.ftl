@@ -35,3 +35,4 @@ type-username = Usuari:
 keyboard-layout = Disposició de teclat
 session = Sessió
 user = Usuari
+on-screen-keyboard = Teclat en pantalla

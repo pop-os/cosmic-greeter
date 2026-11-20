@@ -13,21 +13,22 @@ authenticating = 인증 중...
 accessibility = 접근성
     .screen-reader = 스크린 리더
     .magnifier = 돋보기
-    .high-contrast = 고대비
+    .high-contrast = 고대비 모드
     .invert-colors = 색상 반전
 caps-lock = Caps Lock이 활성화되어 있습니다.
-auth-error-default = 인증에 실패했습니다. 재시도 해주세요.
+auth-error-default = 인증에 실패했습니다. 다시 시도해 주세요.
 shutdown-now = 지금 종료할까요?
 shutdown-timeout =
     { $seconds ->
         [0] 지금
        *[other] { $seconds }초 후
     } 시스템이 자동으로 종료됩니다.
-auth-error-credentials = 올바르지 않은 암호입니다. 키보드 레이아웃을 확인하고 다시 시도해주세요.
+auth-error-credentials = 올바르지 않은 암호입니다. 키보드 레이아웃을 확인하고 다시 시도해 주세요.
 suspend = 절전
 restart-now = 지금 재시작할까요?
 auth-error-denied = 접근이 거부되었습니다.
 auth-error-maxtries = 인증 시도 횟수를 초과했습니다.
-auth-error-account = 계정이 사용할 수 없거나 비활성화 되었습니다.
+auth-error-account = 계정을 사용할 수 없거나 비활성화되었습니다.
 enter-user = 직접 이름 입력...
 cancel = 취소
+on-screen-keyboard = 화상 키보드
