@@ -32,7 +32,7 @@ libcosmic = { workspace = true, features = [
 tracing.workspace = true
 tracing-journald = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-pam-client = "0.5.0"
+pam-client = { package = "pam-client2", version = "0.5" }
 pwd.workspace = true
 ron.workspace = true
 shlex = "2.0"
