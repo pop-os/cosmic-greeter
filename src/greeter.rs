@@ -1574,12 +1574,23 @@ impl cosmic::Application for App {
                 self.common.error_opt = None;
                 self.authenticating = false;
 
+                if !self.flags.sessions.contains_key(&self.selected_session)
+                    && let Some(first) = self.flags.sessions.keys().min()
+                {
+                    self.selected_session = first.clone();
+                }
+
                 match self.flags.sessions.get(&self.selected_session).cloned() {
                     Some((cmd, env)) => {
                         self.send_request(Request::StartSession { cmd, env });
                         return self.update(Message::ConfigUpdateUser);
                     }
-                    None => todo!("session {:?} not found", self.selected_session),
+                    None => {
+                        return self.update(Message::Error(format!(
+                            "session {:?} not found",
+                            self.selected_session
+                        )));
+                    }
                 }
             }
             Message::Error(error) => {
