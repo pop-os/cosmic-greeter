@@ -1,6 +1,6 @@
 accessibility = Acessibilidade
     .screen-reader = Leitor de tela
-    .magnifier = Ampliador de tela
+    .magnifier = Lupa
     .high-contrast = Alto contraste
     .invert-colors = Inverter cores
 cancel = Cancelar
