@@ -17,7 +17,7 @@ cosmic-bg-config.workspace = true
 cosmic-comp-config.workspace = true
 cosmic-config = { workspace = true, features = ["calloop", "macro"] }
 cosmic-greeter-config.workspace = true
-cosmic-greeter-daemon = { path = "daemon" }
+cosmic-greeter-daemon = { path = "daemon", default-features = false }
 cosmic-osk-config = { git = "https://github.com/pop-os/cosmic-osk" }
 dirs = "7"
 libcosmic = { workspace = true, features = [
@@ -75,7 +75,6 @@ i18n-embed = { version = "0.16", features = [
 i18n-embed-fl = "0.10"
 rust-embed = "8"
 futures-util = "0.3.34"
-timedate1-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
 cosmic-randr-shell = { workspace = true }
 kdl.workspace = true
 color-eyre.workspace = true
@@ -95,10 +94,16 @@ enumflags2 = "0.7.12"
 version = "0.10.3"
 features = ["tokio-codec"]
 
+[target.'cfg(target_os = "linux")'.dependencies]
+timedate1-zbus = { git = "https://github.com/pop-os/dbus-settings-bindings" }
+
+[target.'cfg(target_os = "freebsd")'.dependencies]
+rustix.workspace = true
+
 [features]
 default = ["logind", "networkmanager", "upower", "systemd"]
-logind = ["cosmic-login1-zbus", "systemd"]
-systemd = ["tracing-journald"]
+logind = ["cosmic-login1-zbus"]
+systemd = ["tracing-journald", "cosmic-greeter-daemon/systemd"]
 networkmanager = ["cosmic-dbus-networkmanager"]
 upower = ["upower-zbus"]
 
@@ -125,6 +130,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 color-eyre = "0.6.5"
 pwd = "1.4.0"
 ron = "0.12"
+rustix = { version = "1", features = [ "event", "fs" ] }
 serde = "1"
 tokio = "1.54.1"
 zbus = "6"

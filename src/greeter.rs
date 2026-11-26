@@ -1730,7 +1730,7 @@ impl cosmic::Application for App {
                         .is_none_or(|c| c.try_wait().is_ok())
                 {
                     self.accessibility.screen_reader =
-                        tokio::process::Command::new("/usr/bin/orca").spawn().ok();
+                        tokio::process::Command::new("orca").spawn().ok();
                 } else if let Some(mut c) = self.accessibility.screen_reader.take() {
                     return cosmic::task::future::<(), ()>(async move {
                         if let Err(err) = c.kill().await {
