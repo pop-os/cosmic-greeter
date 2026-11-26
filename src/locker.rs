@@ -44,6 +44,45 @@ use crate::fl;
 /// this duration before retrying.
 const PAM_MIN_ATTEMPT_DURATION: Duration = Duration::from_millis(500);
 
+async fn wait_for_fingerprint_device() {
+    let Ok(connection) = zbus::Connection::system().await else {
+        tracing::warn!("failed to connect to system D-Bus");
+        return;
+    };
+
+    let Ok(proxy) = zbus::Proxy::new(
+        &connection,
+        "net.reactivated.Fprint",
+        "/net/reactivated/Fprint/Manager",
+        "net.reactivated.Fprint.Manager",
+    )
+    .await
+    else {
+        tracing::warn!("failed to create fprintd manager proxy");
+        return;
+    };
+
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_secs(5);
+
+    loop {
+        let devices: zbus::Result<Vec<zbus::zvariant::OwnedObjectPath>> =
+            proxy.call("GetDevices", &()).await;
+
+        if matches!(devices, Ok(ref devices) if !devices.is_empty()) {
+            tracing::info!("fingerprint device available after resume");
+            return;
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            tracing::warn!("timed out waiting for fingerprint device after resume");
+            return;
+        }
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 fn lockfile_opt() -> Option<PathBuf> {
     let runtime_dir = dirs::runtime_dir()?;
     let session_id = env::var("XDG_SESSION_ID").ok()?;
@@ -286,6 +325,8 @@ pub enum Message {
     TimeAppletConfig(TimeAppletConfig),
     Error(String),
     Lock,
+    Resume,
+    RestartAuth,
     Unlock,
 }
 
@@ -327,6 +368,110 @@ pub struct App {
 }
 
 impl App {
+    fn start_auth_task(&mut self) -> Task<Message> {
+        let username = self.flags.user_data.name.clone();
+        let (locked_task, locked_handle) =
+            cosmic::task::stream(cosmic::iced::stream::channel(
+                16,
+                |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
+                    // Send heartbeat once a second to update time.
+                    let heartbeat_future = {
+                        let mut output = msg_tx.clone();
+                        async move {
+                            let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+                            loop {
+                                output
+                                    .send(cosmic::Action::App(Message::None))
+                                    .await
+                                    .unwrap();
+
+                                interval.tick().await;
+                            }
+                        }
+                    };
+
+                    let pam_future = async {
+                        loop {
+                            let attempt_start = tokio::time::Instant::now();
+                            let (value_tx, value_rx) = mpsc::channel(16);
+                            msg_tx
+                                .send(cosmic::Action::App(Message::Channel(value_tx)))
+                                .await
+                                .unwrap();
+
+                            let pam_res = {
+                                let username = username.clone();
+                                let msg_tx = msg_tx.clone();
+                                task::spawn_blocking(move || {
+                                    pam_thread(username, Conversation { msg_tx, value_rx })
+                                })
+                                .await
+                                .unwrap()
+                            };
+
+                            match pam_res {
+                                Ok(()) => {
+                                    tracing::info!("successfully authenticated");
+                                    msg_tx
+                                        .send(cosmic::Action::App(Message::Unlock))
+                                        .await
+                                        .unwrap();
+                                    break;
+                                }
+                                Err(err) => {
+                                    tracing::warn!("authentication error: {}", err);
+                                    msg_tx
+                                        .send(cosmic::Action::App(Message::Error(
+                                            pam_error_to_message(&err),
+                                        )))
+                                        .await
+                                        .unwrap();
+                                }
+                            }
+
+                            let retry_at = attempt_start + PAM_MIN_ATTEMPT_DURATION;
+                            tokio::time::sleep_until(retry_at).await;
+                        }
+                    };
+
+                    futures::pin_mut!(heartbeat_future);
+                    futures::pin_mut!(pam_future);
+                    futures::future::select(heartbeat_future, pam_future).await;
+                },
+            ))
+            .abortable();
+
+        self.state = State::Locked {
+            task_handle: locked_handle,
+        };
+        self.authenticating = false;
+
+        locked_task
+    }
+
+    fn restart_auth_task(&mut self) -> Task<Message> {
+        // Wake an old PAM conversation if it is blocked waiting for input.
+        self.value_tx_opt = None;
+
+        self.common.prompt_opt = None;
+        self.common.error_opt = None;
+        self.authenticating = false;
+
+        self.start_auth_task()
+    }
+
+    fn stop_auth_task(&mut self) {
+        if let State::Locked { task_handle } = &mut self.state {
+            task_handle.abort();
+        }
+
+        self.value_tx_opt = None;
+        self.common.prompt_opt = None;
+        self.common.error_opt = None;
+        self.authenticating = false;
+    }
+
     fn menu(&self, surface_id: SurfaceId) -> Element<'_, Message> {
         let window_width = self
             .common
@@ -740,13 +885,28 @@ impl cosmic::Application for App {
         match message {
             Message::None => {}
             Message::Common(common_message) => {
+                let empty_input_prompt = matches!(
+                    &common_message,
+                    common::Message::Prompt(_, _, Some(value)) if value.is_empty()
+                );
+
                 if matches!(&common_message, common::Message::Prompt(_, _, Some(_)))
                     && self.authenticating
                 {
                     self.authenticating = false;
                     self.common.prompt_opt = None;
                 }
-                return self.common.update(common_message);
+
+                let common_task = self.common.update(common_message);
+
+                if matches!(self.state, State::Locked { .. })
+                    && empty_input_prompt
+                    && !self.authenticating
+                {
+                    return Task::batch([common_task, self.restart_auth_task()]);
+                }
+
+                return common_task;
             }
             Message::OutputEvent(output_event, output) => {
                 match output_event {
@@ -916,89 +1076,10 @@ impl cosmic::Application for App {
                         return Task::none();
                     }
 
-                    let username = self.flags.user_data.name.clone();
-                    let (locked_task, locked_handle) =
-                        cosmic::task::stream(cosmic::iced::stream::channel(
-                            16,
-                            |mut msg_tx: futures::channel::mpsc::Sender<_>| async move {
-                                // Send heartbeat once a second to update time.
-                                let heartbeat_future = {
-                                    let mut output = msg_tx.clone();
-                                    async move {
-                                        let mut interval =
-                                            tokio::time::interval(Duration::from_secs(1));
-
-                                        loop {
-                                            output
-                                                .send(cosmic::Action::App(Message::None))
-                                                .await
-                                                .unwrap();
-
-                                            interval.tick().await;
-                                        }
-                                    }
-                                };
-
-                                let pam_future = async {
-                                    loop {
-                                        let attempt_start = tokio::time::Instant::now();
-                                        let (value_tx, value_rx) = mpsc::channel(16);
-                                        msg_tx
-                                            .send(cosmic::Action::App(Message::Channel(value_tx)))
-                                            .await
-                                            .unwrap();
-
-                                        let pam_res = {
-                                            let username = username.clone();
-                                            let msg_tx = msg_tx.clone();
-                                            task::spawn_blocking(move || {
-                                                pam_thread(
-                                                    username,
-                                                    Conversation { msg_tx, value_rx },
-                                                )
-                                            })
-                                            .await
-                                            .unwrap()
-                                        };
-
-                                        match pam_res {
-                                            Ok(()) => {
-                                                tracing::info!("successfully authenticated");
-                                                msg_tx
-                                                    .send(cosmic::Action::App(Message::Unlock))
-                                                    .await
-                                                    .unwrap();
-                                                break;
-                                            }
-                                            Err(err) => {
-                                                tracing::warn!("authentication error: {}", err);
-                                                msg_tx
-                                                    .send(cosmic::Action::App(Message::Error(
-                                                        pam_error_to_message(&err),
-                                                    )))
-                                                    .await
-                                                    .unwrap();
-                                            }
-                                        }
-
-                                        let retry_at = attempt_start + PAM_MIN_ATTEMPT_DURATION;
-                                        tokio::time::sleep_until(retry_at).await;
-                                    }
-                                };
-
-                                futures::pin_mut!(heartbeat_future);
-                                futures::pin_mut!(pam_future);
-                                futures::future::select(heartbeat_future, pam_future).await;
-                            },
-                        ))
-                        .abortable();
+                    let locked_task = self.start_auth_task();
 
                     let mut commands = Vec::with_capacity(self.common.surface_ids.len() + 1);
                     commands.push(locked_task);
-
-                    self.state = State::Locked {
-                        task_handle: locked_handle,
-                    };
 
                     // Allow suspend
                     self.inhibit_opt = None;
@@ -1171,6 +1252,22 @@ impl cosmic::Application for App {
                 }
                 State::Locking | State::Locked { .. } => {
                     tracing::info!("session already locking or locked");
+                }
+            },
+            Message::Resume => {
+                if matches!(self.state, State::Locked { .. }) {
+                    self.stop_auth_task();
+
+                    return cosmic::task::future(async {
+                        wait_for_fingerprint_device().await;
+                        Message::RestartAuth
+                    });
+                }
+            },
+            Message::RestartAuth => {
+                if matches!(self.state, State::Locked { .. }) {
+                    tracing::info!("forcing authentication restart after resume");
+                    return self.restart_auth_task();
                 }
             },
             Message::Unlock => {
