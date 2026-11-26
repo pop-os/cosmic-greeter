@@ -10,6 +10,10 @@ mod common;
 
 mod keyboard_layout_wayland;
 
+mod fprintd;
+
+pub mod pam_worker;
+
 mod localize;
 
 #[cfg(feature = "logind")]

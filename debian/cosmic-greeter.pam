@@ -1,7 +1,11 @@
 #%PAM-1.0
 auth    requisite       pam_nologin.so
 auth	required	pam_succeed_if.so user != root quiet_success
-@include common-auth
+# Password-only login: common-auth may pull in pam_fprintd (see cosmic-greeter-password)
+auth	[success=1 default=ignore]	pam_unix.so nullok try_first_pass
+auth	requisite			pam_deny.so
+auth	required			pam_permit.so
+auth	optional			pam_cap.so
 auth    optional        pam_gnome_keyring.so
 @include common-account
 # SELinux needs to be the first session rule. This ensures that any 

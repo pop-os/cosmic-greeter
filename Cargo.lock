@@ -1331,6 +1331,7 @@ dependencies = [
  "pwd",
  "ron",
  "rust-embed",
+ "serde",
  "shlex 2.0.1",
  "timedate1-zbus",
  "tokio",
